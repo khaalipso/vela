@@ -55,7 +55,8 @@ impl From<Error> for AppError {
             Error::HunkNotFound(_) => "hunk_not_found",
             Error::PatchFailed(_) => "patch_failed",
             Error::NothingToCommit => "nothing_to_commit",
-            Error::InvalidName(_) | Error::NoRepos => "invalid_input",
+            Error::InvalidName(_) | Error::NoRepos | Error::Invalid(_) => "invalid_input",
+            Error::LinkNotFound(_) => "link_not_found",
             Error::NoHome => "no_home",
         };
         AppError::new(kind, e.to_string())

@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use vela_core::Vela;
-use vela_core::model::{Agent, FileChange, Hunk, Space, StackItem};
+use vela_core::model::{
+    Agent, CommitGroup, CommitPlan, CommitRules, FileChange, Hunk, Link, Problem, Space, StackItem,
+};
 
 use crate::commands::{self, CommitResult, FileRef};
 use crate::error::{AppError, AppResult};
@@ -245,6 +247,88 @@ pub async fn commit(
         commands::commit(v, &space_id, &message, override_reason.as_deref())
     })
     .await
+}
+
+#[tauri::command]
+pub async fn commit_plan(vela: State<'_, Vela>, space_id: String) -> AppResult<CommitPlan> {
+    blocking(&vela, move |v| commands::commit_plan(v, &space_id)).await
+}
+
+#[tauri::command]
+pub fn validate_message(
+    message: String,
+    rules: CommitRules,
+    conventional: Option<bool>,
+) -> Vec<Problem> {
+    commands::validate_message(&message, &rules, conventional.unwrap_or(true))
+}
+
+#[tauri::command]
+pub async fn commit_groups(
+    vela: State<'_, Vela>,
+    space_id: String,
+    groups: Vec<CommitGroup>,
+    conventional: Option<bool>,
+    override_reason: Option<String>,
+) -> AppResult<CommitResult> {
+    blocking(&vela, move |v| {
+        commands::commit_groups(
+            v,
+            &space_id,
+            conventional.unwrap_or(true),
+            groups,
+            override_reason.as_deref(),
+        )
+    })
+    .await
+}
+
+// -- links ------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn links(vela: State<'_, Vela>, space_id: String) -> AppResult<Vec<Link>> {
+    blocking(&vela, move |v| commands::list_links(v, &space_id)).await
+}
+
+#[tauri::command]
+pub async fn add_link(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    url: String,
+    title: Option<String>,
+    source: Option<String>,
+) -> AppResult<Link> {
+    let id = space_id.clone();
+    let link = blocking(&vela, move |v| {
+        commands::add_link(v, &id, &url, title.as_deref(), source.as_deref())
+    })
+    .await?;
+    notify_state(&app, &space_id);
+    Ok(link)
+}
+
+#[tauri::command]
+pub async fn remove_link(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    link_id: String,
+) -> AppResult<()> {
+    let id = space_id.clone();
+    blocking(&vela, move |v| commands::remove_link(v, &id, &link_id)).await?;
+    notify_state(&app, &space_id);
+    Ok(())
+}
+
+/// Open a link in the default browser. Only http and https.
+#[tauri::command]
+pub fn open_url(app: AppHandle, url: String) -> AppResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let url = commands::check_openable(&url)?;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| AppError::new("open", e.to_string()))
 }
 
 // -- later milestones: empty or neutral --------------------------------------

@@ -22,6 +22,7 @@ pub fn run() {
     };
     let watchers = Arc::new(watch::Watchers::default());
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .manage(vela)
         .manage(watchers)
         .setup(|app| {
@@ -67,6 +68,13 @@ pub fn run() {
             c::write_file,
             c::draft_commit,
             c::commit,
+            c::commit_plan,
+            c::validate_message,
+            c::commit_groups,
+            c::links,
+            c::add_link,
+            c::remove_link,
+            c::open_url,
             c::agents,
             c::reasons,
             c::ask_agent,

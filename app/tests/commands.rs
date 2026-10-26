@@ -412,3 +412,98 @@ fn watcher_emits_for_a_real_edit() {
     assert_eq!(json["spaceId"], "fix-it");
     assert_eq!(json["kind"], "state");
 }
+
+#[test]
+fn commit_plan_validate_and_commit_groups() {
+    use vela_core::model::{CommitRules, CommitType};
+    let e = env();
+    let s = space(&e);
+    let w = wt(&s);
+    write(&w, "src/new.ts", "export const a = 1\n");
+    write(&w, "tests/new.test.ts", "test('a', () => {})\n");
+    sh(&w, &["add", "-A"]);
+    let plan = commands::commit_plan(&e.vela, "fix-it").unwrap();
+    assert_eq!(plan.groups.len(), 2);
+    assert_eq!(plan.groups[0].kind, CommitType::Feat);
+    assert_eq!(plan.groups[1].kind, CommitType::Test);
+    let json = serde_json::to_value(&plan).unwrap();
+    assert_eq!(json["groups"][0]["kind"], "feat");
+    assert!(json["rules"]["headerMax"].is_number());
+    assert!(json["groups"][0]["breakingReason"].is_null());
+
+    let rules = CommitRules::default();
+    assert!(commands::validate_message("feat: ok", &rules, true).is_empty());
+    assert_eq!(commands::validate_message("nope", &rules, true).len(), 1);
+    assert!(commands::validate_message("nope", &rules, false).is_empty());
+
+    let r = commands::commit_groups(&e.vela, "fix-it", true, plan.groups.clone(), Some("hotfix"))
+        .unwrap();
+    assert_eq!(r.repos, vec!["api"]);
+    assert_eq!(r.commits.len(), 2);
+    assert_eq!(r.branch, "feat/fix-it");
+    let body = sh(&w, &["log", "-1", "--format=%B"]);
+    assert!(body.contains("Vela-Override: hotfix"), "{body}");
+    let err = commands::commit_groups(&e.vela, "fix-it", true, vec![], None).unwrap_err();
+    assert_eq!(err.kind, "nothing_to_commit");
+}
+
+#[test]
+fn links_add_list_remove_and_open_rules() {
+    let e = env();
+    let s = space(&e);
+    let cfg = vela_core::links::IssueConfig::default();
+    assert!(
+        commands::list_links_with(&e.vela, "fix-it", &cfg)
+            .unwrap()
+            .is_empty()
+    );
+    let l =
+        commands::add_link(&e.vela, "fix-it", "https://staging.acme.dev/x", None, None).unwrap();
+    assert_eq!(l.title, "Staging acme.dev");
+    let p = commands::add_link(
+        &e.vela,
+        "fix-it",
+        "https://acme.dev/doc",
+        Some("Doc"),
+        Some("paste"),
+    )
+    .unwrap();
+    assert_eq!(serde_json::to_value(&p).unwrap()["source"], "paste");
+    let all = commands::list_links_with(&e.vela, "fix-it", &cfg).unwrap();
+    assert_eq!(all.len(), 2);
+    // Repo links show up through the worktree.
+    write(
+        &wt(&s),
+        ".vela/links.toml",
+        "[[links]]\nurl = \"https://grafana.acme.io/d/x/api\"\n",
+    );
+    assert_eq!(
+        commands::list_links_with(&e.vela, "fix-it", &cfg)
+            .unwrap()
+            .len(),
+        3
+    );
+    commands::remove_link(&e.vela, "fix-it", &l.id).unwrap();
+    assert_eq!(
+        commands::list_links_with(&e.vela, "fix-it", &cfg)
+            .unwrap()
+            .len(),
+        2
+    );
+    let err = commands::remove_link(&e.vela, "fix-it", &l.id).unwrap_err();
+    assert_eq!(err.kind, "link_not_found");
+    let bad = commands::add_link(&e.vela, "fix-it", "javascript:alert(1)", None, None).unwrap_err();
+    assert_eq!(bad.kind, "invalid_input");
+
+    assert!(commands::check_openable("https://acme.dev").is_ok());
+    assert!(commands::check_openable(" http://localhost:3000 ").is_ok());
+    for u in [
+        "file:///etc/passwd",
+        "javascript:alert(1)",
+        "ftp://x.y",
+        "mailto:a@b.c",
+        "",
+    ] {
+        assert!(commands::check_openable(u).is_err(), "{u}");
+    }
+}

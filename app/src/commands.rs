@@ -7,8 +7,13 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use vela_core::Vela;
+use vela_core::commitplan::{self, GroupCommit};
 use vela_core::git::git;
-use vela_core::model::{FileChange, Hunk, HunkState, Space, UpNext};
+use vela_core::links::{self, IssueConfig};
+use vela_core::model::{
+    CommitGroup, CommitPlan, CommitRules, FileChange, Hunk, HunkState, Link, LinkSource, Problem,
+    Space, UpNext,
+};
 use vela_core::{commit as core_commit, diff, paths, space, stage, status, store, upnext};
 
 use crate::error::{AppError, AppResult};
@@ -29,6 +34,9 @@ pub struct FileRef {
 pub struct CommitResult {
     pub repos: Vec<String>,
     pub branch: String,
+    /// One entry per commit made by the composer; empty for a plain commit.
+    #[serde(default)]
+    pub commits: Vec<GroupCommit>,
 }
 
 fn load(vela: &Vela, id: &str) -> AppResult<Space> {
@@ -288,7 +296,102 @@ pub fn commit(
     Ok(CommitResult {
         repos: done.into_iter().map(|(repo, _)| repo).collect(),
         branch: space.branch,
+        commits: Vec::new(),
     })
+}
+
+/// Propose commits for the staged hunks: grouped, typed, scoped, with ticket footers.
+pub fn commit_plan(vela: &Vela, id: &str) -> AppResult<CommitPlan> {
+    let space = load(vela, id)?;
+    let links = links::list_links(&space, &IssueConfig::from_env())?;
+    Ok(commitplan::plan(&space, &links)?)
+}
+
+/// Check a message against the repo rules (`conventional` false only checks the basics).
+pub fn validate_message(message: &str, rules: &CommitRules, conventional: bool) -> Vec<Problem> {
+    commitplan::validate_for(message, rules, conventional)
+}
+
+/// Commit the groups in order. A non empty `override_reason` becomes a `Vela-Override:` footer.
+/// TODO(M4): run the gate first.
+pub fn commit_groups(
+    vela: &Vela,
+    id: &str,
+    conventional: bool,
+    groups: Vec<CommitGroup>,
+    override_reason: Option<&str>,
+) -> AppResult<CommitResult> {
+    let space = load(vela, id)?;
+    let mut groups = groups;
+    if let Some(reason) = override_reason.map(str::trim).filter(|r| !r.is_empty()) {
+        for g in &mut groups {
+            g.footers.push(format!("Vela-Override: {reason}"));
+        }
+    }
+    let commits = commitplan::commit_groups(&space, conventional, &groups)?;
+    let mut repos: Vec<String> = Vec::new();
+    for c in &commits {
+        if !repos.contains(&c.repo) {
+            repos.push(c.repo.clone());
+        }
+    }
+    Ok(CommitResult {
+        repos,
+        branch: space.branch,
+        commits,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Links
+// ---------------------------------------------------------------------------
+
+/// Stored, detected and repo links of the space.
+pub fn list_links(vela: &Vela, id: &str) -> AppResult<Vec<Link>> {
+    list_links_with(vela, id, &IssueConfig::from_env())
+}
+
+pub fn list_links_with(vela: &Vela, id: &str, cfg: &IssueConfig) -> AppResult<Vec<Link>> {
+    Ok(links::list_links(&load(vela, id)?, cfg)?)
+}
+
+/// Add a link by hand (`source` "paste" for pasted URLs, anything else is manual).
+pub fn add_link(
+    vela: &Vela,
+    id: &str,
+    url: &str,
+    title: Option<&str>,
+    source: Option<&str>,
+) -> AppResult<Link> {
+    let mut space = load(vela, id)?;
+    let source = if source == Some("paste") {
+        LinkSource::Paste
+    } else {
+        LinkSource::Manual
+    };
+    let link = links::add_link_from(&mut space, url, title, source)?;
+    store::save(vela, &space)?;
+    Ok(link)
+}
+
+/// Remove a stored link. Detected and repo links come back unless their source changes.
+pub fn remove_link(vela: &Vela, id: &str, link_id: &str) -> AppResult<()> {
+    let mut space = load(vela, id)?;
+    links::remove_link(&mut space, link_id)?;
+    store::save(vela, &space)?;
+    Ok(())
+}
+
+/// Only http and https URLs may be opened.
+pub fn check_openable(url: &str) -> AppResult<&str> {
+    let url = url.trim();
+    if links::is_http_url(url) {
+        Ok(url)
+    } else {
+        Err(AppError::invalid(format!(
+            "only http and https links can be opened: {url}"
+        )))
+    }
 }
 
 /// A neutral starting point for the message. TODO(M4): drafted from the staged diff.
