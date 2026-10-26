@@ -60,6 +60,8 @@ export interface GateCheck {
 export interface CommitResult {
   repos: string[];
   branch: string;
+  /** False when the commits stay local (the real backend does not push yet). */
+  pushed?: boolean;
 }
 
 export interface BackendEvent {
@@ -700,88 +702,128 @@ export class MockBackend implements Backend {
 }
 
 // ---------------------------------------------------------------------------
-// Tauri backend (typed stubs, not wired yet: the commands do not exist in app/ yet)
+// Tauri backend: thin calls to the commands of app/src/tauri_cmds.rs
 // ---------------------------------------------------------------------------
 
+/** Error from the Rust side: `{ kind, message }` on the wire, an Error here. */
+export class BackendError extends Error {
+  constructor(
+    readonly kind: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "BackendError";
+  }
+}
+
+export function toBackendError(e: unknown): Error {
+  if (e instanceof Error) return e;
+  if (e && typeof e === "object" && "message" in e) {
+    const { kind, message } = e as { kind?: unknown; message: unknown };
+    return new BackendError(typeof kind === "string" ? kind : "unknown", String(message));
+  }
+  return new BackendError("unknown", String(e));
+}
+
+async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return await invoke<T>(cmd, args);
+  } catch (e) {
+    throw toBackendError(e);
+  }
+}
+
+/** Event the file watcher of the app emits; the payload is a BackendEvent. */
+export const CHANGED_EVENT = "vela://changed";
+
+/**
+ * Talks to the Rust core. Agents, notes, questions, stack and gate come back empty until
+ * their milestones (the Rust commands are marked TODO(M2/M3/M4)); nothing is faked here.
+ */
 export class TauriBackend implements Backend {
   listRepos() {
-    return invoke<string[]>("list_repos");
+    return call<string[]>("list_repos");
   }
   listSpaces() {
-    return invoke<Space[]>("list_spaces");
+    return call<Space[]>("list_spaces");
   }
   createSpace(name: string, repos: string[]) {
-    return invoke<Space>("create_space", { name, repos });
+    return call<Space>("create_space", { name, repos });
   }
-  setWindow(spaceId: string, window: number | null) {
-    return invoke<void>("set_window", { spaceId, window });
+  /** A window number opens the space in its own window (the app picks the number); null closes it. */
+  async setWindow(spaceId: string, window: number | null) {
+    if (window === null) await call<void>("set_window", { spaceId, window: null });
+    else await call<void>("open_space_window", { spaceId });
   }
   status(spaceId: string) {
-    return invoke<FileChange[]>("status", { spaceId });
+    return call<FileChange[]>("status", { spaceId });
   }
   hunks(spaceId: string) {
-    return invoke<Hunk[]>("hunks", { spaceId });
+    return call<Hunk[]>("hunks", { spaceId });
   }
+  /** TODO(M2): the core has no reasons yet. */
   reasons(spaceId: string) {
-    return invoke<Record<string, string>>("reasons", { spaceId });
+    return call<Record<string, string>>("reasons", { spaceId });
   }
   stageHunk(spaceId: string, hunkId: string) {
-    return invoke<Hunk>("stage_hunk", { spaceId, hunkId });
+    return call<Hunk>("stage_hunk", { spaceId, hunkId });
   }
   unstageHunk(spaceId: string, hunkId: string) {
-    return invoke<Hunk>("unstage_hunk", { spaceId, hunkId });
+    return call<Hunk>("unstage_hunk", { spaceId, hunkId });
   }
   rejectHunk(spaceId: string, hunkId: string) {
-    return invoke<Hunk>("reject_hunk", { spaceId, hunkId });
+    return call<Hunk>("reject_hunk", { spaceId, hunkId });
   }
   editHunk(spaceId: string, hunkId: string) {
-    return invoke<Hunk>("edit_hunk", { spaceId, hunkId });
+    return call<Hunk>("edit_hunk", { spaceId, hunkId });
   }
   listFiles(spaceId: string) {
-    return invoke<FileRef[]>("list_files", { spaceId });
+    return call<FileRef[]>("list_files", { spaceId });
   }
-  readFile(spaceId: string, repo: string, path: string) {
-    return invoke<FileContent>("read_file", { spaceId, repo, path });
+  async readFile(spaceId: string, repo: string, path: string): Promise<FileContent> {
+    const content = await call<string>("read_file", { spaceId, repo, path });
+    return { repo, path, content, firstLine: 1, language: languageOf(path) };
   }
   writeFile(spaceId: string, repo: string, path: string, content: string) {
-    return invoke<void>("write_file", { spaceId, repo, path, content });
+    return call<void>("write_file", { spaceId, repo, path, content });
   }
   agents(spaceId: string) {
-    return invoke<Agent[]>("agents", { spaceId });
+    return call<Agent[]>("agents", { spaceId });
   }
   askAgent(spaceId: string, role: AgentRole, prompt: string) {
-    return invoke<Agent>("ask_agent", { spaceId, role, prompt });
+    return call<Agent>("ask_agent", { spaceId, role, prompt });
   }
   question(spaceId: string) {
-    return invoke<AgentQuestion | null>("question", { spaceId });
+    return call<AgentQuestion | null>("question", { spaceId });
   }
   answerAgent(spaceId: string, yes: boolean) {
-    return invoke<void>("answer_agent", { spaceId, yes });
+    return call<void>("answer_agent", { spaceId, yes });
   }
   notes(spaceId: string) {
-    return invoke<ReviewNote[]>("notes", { spaceId });
+    return call<ReviewNote[]>("notes", { spaceId });
   }
   askFix(spaceId: string, hunkId: string) {
-    return invoke<void>("ask_fix", { spaceId, hunkId });
+    return call<void>("ask_fix", { spaceId, hunkId });
   }
   stack(spaceId: string) {
-    return invoke<StackItem[]>("stack", { spaceId });
+    return call<StackItem[]>("stack", { spaceId });
   }
   draftCommit(spaceId: string) {
-    return invoke<string>("draft_commit", { spaceId });
+    return call<string>("draft_commit", { spaceId });
   }
   async runGate(spaceId: string, onCheck?: (index: number, check: GateCheck) => void) {
-    const checks = await invoke<GateCheck[]>("run_gate", { spaceId });
+    const checks = await call<GateCheck[]>("run_gate", { spaceId });
     checks.forEach((c, i) => onCheck?.(i, c));
     return checks;
   }
-  commit(spaceId: string, message: string, overrideReason?: string) {
-    return invoke<CommitResult>("commit", { spaceId, message, overrideReason: overrideReason ?? null });
+  async commit(spaceId: string, message: string, overrideReason?: string): Promise<CommitResult> {
+    const r = await call<CommitResult>("commit", { spaceId, message, overrideReason: overrideReason ?? null });
+    return { ...r, pushed: false };
   }
   onChange(listener: (e: BackendEvent) => void): Unsubscribe {
     let off: (() => void) | null = null;
     let cancelled = false;
-    void listen<BackendEvent>("vela://change", (ev) => listener(ev.payload)).then((u) => {
+    void listen<BackendEvent>(CHANGED_EVENT, (ev) => listener(ev.payload)).then((u) => {
       if (cancelled) u();
       else off = u;
     });
@@ -796,4 +838,10 @@ export class TauriBackend implements Backend {
 export function createBackend(): Backend {
   if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) return new TauriBackend();
   return new MockBackend();
+}
+
+/** The space a window is pinned to, from a `#space-<id>` hash. */
+export function pinnedSpace(hash: string): string | null {
+  const m = /^#space-(.+)$/.exec(hash);
+  return m ? decodeURIComponent(m[1]) : null;
 }

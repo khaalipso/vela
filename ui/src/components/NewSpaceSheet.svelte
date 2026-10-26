@@ -38,7 +38,9 @@
         <span class="lbl">Repos for this task</span>
         <div class="repos">
           {#each app.repos as r (r)}
-            <button type="button" class="rtog" aria-pressed={app.newSp.repos.includes(r)} onclick={() => app.toggleRepo(r)}>{r}</button>
+            <button type="button" class="rtog" aria-pressed={app.newSp.repos.includes(r)} title={r} onclick={() => app.toggleRepo(r)}>{r.split("/").pop()}</button>
+          {:else}
+            <span class="none">No git repo found. Set VELA_REPO_ROOTS to the folders that hold your clones.</span>
           {/each}
         </div>
       </div>
@@ -85,6 +87,10 @@
     background: var(--space);
     color: var(--on-accent);
     font-weight: 600;
+  }
+  .none {
+    font-size: 12px;
+    color: var(--muted);
   }
   .actions {
     display: flex;

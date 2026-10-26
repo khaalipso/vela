@@ -6,7 +6,8 @@
   const g = $derived(app.gate);
   const files = $derived(app.staged);
   const repos = $derived(app.stagedRepos);
-  const finished = $derived(!!g && g.checks.length >= GATE_NAMES.length);
+  const noChecks = $derived(!!g && g.done && g.checks.length === 0);
+  const finished = $derived(!!g && (g.done || g.checks.length >= GATE_NAMES.length));
   const fails = $derived(!!g && finished && !g.checks.every((c) => c.pass));
 </script>
 
@@ -21,7 +22,10 @@
           <span class="cost right">{files.length} files · {repos.join(", ")}</span>
         </div>
         <ul class="checks">
-          {#each GATE_NAMES as name, i (name)}
+          {#if noChecks}
+            <li><span class="dot" style:--c="var(--faint)"></span><span>No gate checks yet</span><em style:--c="var(--faint)">skipped</em></li>
+          {/if}
+          {#each noChecks ? [] : GATE_NAMES as name, i (name)}
             {@const c = g.checks[i]}
             {@const col = !c ? "var(--faint)" : c.pass ? "var(--add)" : "var(--del)"}
             <li>

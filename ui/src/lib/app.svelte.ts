@@ -47,6 +47,8 @@ export interface Proposal {
 
 export interface GateState {
   checks: GateCheck[];
+  /** The backend finished running the gate (it may have run no checks at all). */
+  done: boolean;
   message: string;
   reason: string;
 }
@@ -68,7 +70,9 @@ export class AppState {
   role = $state<AgentRole>("developer");
   composerText = $state("");
   pal = $state({ q: "", i: 0 });
-  newSp = $state({ name: "", repos: ["api"], missingName: false });
+  newSp = $state<{ name: string; repos: string[]; missingName: boolean }>({ name: "", repos: [], missingName: false });
+  /** Id of the space this window is pinned to (`#space-<id>`), null in the main window. */
+  pinned = $state<string | null>(null);
   gate = $state<GateState | null>(null);
   toastState = $state<{ id: number; text: string } | null>(null);
   /** Hunks accepted with E, to label them "edited by you". */
@@ -85,12 +89,14 @@ export class AppState {
 
   // -- boot -----------------------------------------------------------------
 
-  async init(backend: Backend) {
+  async init(backend: Backend, pinned: string | null = null) {
     this.backend = backend;
+    this.pinned = pinned;
     this.off?.();
     this.off = backend.onChange((e) => void this.onEvent(e));
     this.repos = await backend.listRepos();
-    this.spaces = await backend.listSpaces();
+    this.newSp.repos = this.defaultRepos();
+    this.spaces = this.forThisWindow(await backend.listSpaces());
     await Promise.all(this.spaces.map((s) => this.load(s.id)));
     this.ready = true;
   }
@@ -99,15 +105,27 @@ export class AppState {
     this.off?.();
   }
 
+  /** A pinned window shows its one space only. */
+  private forThisWindow(list: Space[]): Space[] {
+    const pin = this.pinned;
+    return pin ? list.filter((s) => s.id === pin) : list;
+  }
+
+  /** The repo preselected in the new space sheet: "api" when there is one, else none. */
+  private defaultRepos(): string[] {
+    return this.repos.includes("api") ? ["api"] : [];
+  }
+
   /** Refresh the list of spaces, loading the data of new ones before they are shown. */
   private async syncSpaces() {
-    const list = await this.backend.listSpaces();
+    const list = this.forThisWindow(await this.backend.listSpaces());
     await Promise.all(list.filter((s) => !this.data[s.id]).map((s) => this.load(s.id)));
     this.spaces = list;
   }
 
   private async onEvent(e: BackendEvent) {
     await this.syncSpaces();
+    if (!this.data[e.spaceId]) return;
     await this.load(e.spaceId, e.kind === "file");
     if (e.kind !== "file") this.contentRev[e.spaceId] = (this.contentRev[e.spaceId] ?? 0) + 1;
     if (e.toast) this.toast(e.toast);
@@ -158,7 +176,7 @@ export class AppState {
     return this.cui.view;
   }
   get elsewhere(): boolean {
-    return (this.space.window ?? null) !== null;
+    return !this.pinned && (this.space.window ?? null) !== null;
   }
 
   proposalsOf(i: number): Proposal[] {
@@ -267,7 +285,7 @@ export class AppState {
 
   get gateOk(): boolean {
     const g = this.gate;
-    if (!g || g.checks.length < GATE_TOTAL) return false;
+    if (!g || !(g.done || g.checks.length >= GATE_TOTAL)) return false;
     return g.checks.every((c) => c.pass) || g.reason.trim().length > 3;
   }
 
@@ -415,9 +433,15 @@ export class AppState {
     const s = this.space;
     const toMain = (s.window ?? null) !== null;
     this.overlay = null;
-    await this.backend.setWindow(s.id, toMain ? null : 2);
-    this.toast(toMain ? `${s.name} is back in this window` : `${s.name} moved to window 2`);
+    try {
+      await this.backend.setWindow(s.id, toMain ? null : 2);
+    } catch (e) {
+      this.fail(e);
+      return;
+    }
     await this.refresh(s.id);
+    const n = this.spaces.find((x) => x.id === s.id)?.window;
+    this.toast(toMain ? `${s.name} is back in this window` : `${s.name} moved to window ${n ?? 2}`);
   }
 
   openComposer() {
@@ -454,7 +478,7 @@ export class AppState {
     const sid = this.space.id;
     const token = ++this.gateSeq;
     const message = await this.backend.draftCommit(sid);
-    this.gate = { checks: [], message, reason: "" };
+    this.gate = { checks: [], done: false, message, reason: "" };
     this.overlay = "commit";
     try {
       await this.backend.runGate(sid, (i, c) => {
@@ -463,6 +487,7 @@ export class AppState {
         checks[i] = c;
         this.gate.checks = checks;
       });
+      if (token === this.gateSeq && this.gate) this.gate.done = true;
     } catch (e) {
       this.fail(e);
     }
@@ -486,7 +511,7 @@ export class AppState {
       this.gate = null;
       this.gateSeq++;
       this.cui.hi = null;
-      this.toast(`Pushed ${r.repos.join(" and ")} on ${r.branch}`);
+      this.toast(`${r.pushed === false ? "Committed" : "Pushed"} ${r.repos.join(" and ")} on ${r.branch}`);
       await this.refresh(s.id);
     } catch (e) {
       this.fail(e);
@@ -507,10 +532,10 @@ export class AppState {
       const s = await this.backend.createSpace(name, [...this.newSp.repos]);
       await this.syncSpaces();
       await this.load(s.id);
-      this.ui[s.id].view = "agents";
-      this.active = this.spaces.findIndex((x) => x.id === s.id);
+      this.ui[s.id].view = this.data[s.id].agents.length ? "agents" : "code";
+      this.active = Math.max(0, this.spaces.findIndex((x) => x.id === s.id));
       this.overlay = null;
-      this.newSp = { name: "", repos: ["api"], missingName: false };
+      this.newSp = { name: "", repos: this.defaultRepos(), missingName: false };
       this.toast(`Created ${plural(s.repos.length, "worktree", "worktrees")} on ${s.branch}`);
     } catch (e) {
       this.fail(e);

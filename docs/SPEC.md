@@ -65,7 +65,7 @@ Single letter keys only act when focus is not in a text field. `Esc` leaves the 
 
 - `crates/vela-core`: Rust library. Git through the `git` CLI (worktrees, hooks and user config behave exactly as in the terminal). Space store, status, diff parsing, hunk staging, proposals, stack detection, AI config layering.
 - `crates/vela-cli`: `vela` binary over the core. Every feature is testable headless through it.
-- `app/` (later): Tauri 2 shell exposing the core as commands.
+- `app/`: Tauri 2 shell exposing the core as commands (`commands.rs` plain functions, `tauri_cmds.rs` wrappers, `watch.rs` file watcher emitting `vela://changed`). Run with `pnpm -C ui tauri dev`.
 - `ui/`: Svelte 5 + TypeScript + Vite, CodeMirror 6 for editing, xterm.js for agent terminals. Runs against a mock backend in the browser and against Tauri in the app. `ui/reference/prototype.html` is the interaction reference.
 
 Why not a VS Code fork: its workbench is built around one workspace folder, which is exactly what Vela replaces; a fork means monthly rebases of a huge codebase and no access to the Microsoft marketplace anyway. Why not from scratch: an editor core, LSP client and terminal are years of work. CodeMirror 6 and xterm.js give us those, and all the effort goes into the shell.
