@@ -188,6 +188,43 @@ pub fn archive(vela: &Vela, id: &str) -> Result<Space> {
     Ok(space)
 }
 
+/// Bring an archived space back.
+pub fn unarchive(vela: &Vela, id: &str) -> Result<Space> {
+    let mut space = store::load(vela, id)?;
+    space.archived = false;
+    store::save(vela, &space)?;
+    Ok(space)
+}
+
+/// Change the display name. The id, the branch and the worktree paths stay as they are.
+pub fn rename(vela: &Vela, id: &str, name: &str) -> Result<Space> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().any(char::is_control) {
+        return Err(Error::InvalidName(name.to_string()));
+    }
+    let mut space = store::load(vela, id)?;
+    space.name = name.to_string();
+    store::save(vela, &space)?;
+    Ok(space)
+}
+
+/// `#RRGGBB`, upper or lower case.
+pub fn is_hex_color(color: &str) -> bool {
+    color.len() == 7 && color.starts_with('#') && color[1..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Change the accent color of a space (`#RRGGBB`).
+pub fn set_color(vela: &Vela, id: &str, color: &str) -> Result<Space> {
+    let color = color.trim();
+    if !is_hex_color(color) {
+        return Err(Error::Invalid(format!("not a #RRGGBB color: {color}")));
+    }
+    let mut space = store::load(vela, id)?;
+    space.color = color.to_ascii_uppercase();
+    store::save(vela, &space)?;
+    Ok(space)
+}
+
 /// Remove worktrees (forced), delete the branch where fully merged, delete the toml.
 pub fn remove(vela: &Vela, id: &str) -> Result<()> {
     let space = store::load(vela, id)?;

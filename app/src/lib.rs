@@ -8,10 +8,13 @@ use vela_core::Vela;
 pub mod checkrun;
 pub mod commands;
 pub mod error;
+pub mod fileops;
 mod tauri_cmds;
+mod tauri_menu;
 pub mod watch;
 
 use tauri_cmds as c;
+use tauri_menu as m;
 
 pub fn run() {
     let vela = match Vela::from_env() {
@@ -100,6 +103,20 @@ pub fn run() {
             c::run_checks,
             c::check_log,
             c::set_check_enabled,
+            m::create_file,
+            m::create_dir,
+            m::rename_path,
+            m::delete_path,
+            m::discard_file,
+            m::reveal_path,
+            m::absolute_path,
+            m::open_terminal,
+            m::rename_space,
+            m::set_space_color,
+            m::archive_space,
+            m::unarchive_space,
+            m::list_archived,
+            m::remove_space,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Vela");
