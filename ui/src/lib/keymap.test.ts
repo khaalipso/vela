@@ -5,7 +5,7 @@ const ctx = (o: Partial<KeyContext> = {}): KeyContext => ({
   typing: false,
   overlay: null,
   stackOpen: false,
-  view: "review",
+  view: "code",
   hasQuestion: false,
   ...o,
 });
@@ -85,7 +85,7 @@ describe("proposals", () => {
     expect(resolveKey(key("y"), ctx({ view: "agents", hasQuestion: true }))).toEqual({ type: "answer", yes: true });
     expect(resolveKey(key("n"), ctx({ view: "agents", hasQuestion: true }))).toEqual({ type: "answer", yes: false });
     // a question elsewhere than the agents view does not capture Y and N
-    expect(resolveKey(key("y"), ctx({ view: "review", hasQuestion: true }))).toEqual({ type: "accept" });
+    expect(resolveKey(key("y"), ctx({ view: "code", hasQuestion: true }))).toEqual({ type: "accept" });
     expect(resolveKey(key("n"), ctx({ view: "agents", hasQuestion: false }))).toEqual({ type: "reject" });
   });
 });
@@ -222,5 +222,48 @@ describe("isTyping", () => {
     expect(isTyping({ tagName: "BODY" })).toBe(false);
     expect(isTyping(null)).toBe(false);
     expect(isTyping(undefined)).toBe(false);
+  });
+});
+
+describe("review view", () => {
+  const r = (k: string, o: Partial<KeyLike> = {}) => resolveKey(key(k, o), ctx({ view: "review" }));
+
+  it("J K move between files, Shift J K between checks", () => {
+    expect(r("j")).toEqual({ type: "rv-file", delta: 1 });
+    expect(r("ArrowUp")).toEqual({ type: "rv-file", delta: -1 });
+    expect(r("J", { shiftKey: true })).toEqual({ type: "rv-check", delta: 1 });
+    expect(r("K", { shiftKey: true })).toEqual({ type: "rv-check", delta: -1 });
+  });
+
+  it("Space stages the file, Shift A and Shift U do all", () => {
+    expect(r(" ")).toEqual({ type: "rv-toggle-file" });
+    expect(r("A", { shiftKey: true })).toEqual({ type: "rv-stage-all" });
+    expect(r("U", { shiftKey: true })).toEqual({ type: "rv-unstage-all" });
+  });
+
+  it("Enter focuses the diff, Tab walks the hunks", () => {
+    expect(r("Enter")).toEqual({ type: "rv-focus-diff" });
+    expect(r("Enter", { shiftKey: true })).toEqual({ type: "next-waiting" });
+    expect(r("Tab")).toEqual({ type: "rv-hunk", delta: 1 });
+    expect(r("Tab", { shiftKey: true })).toEqual({ type: "rv-hunk", delta: -1 });
+  });
+
+  it("Y stages a hunk, U unstages it, N rejects a proposal", () => {
+    expect(r("y")).toEqual({ type: "rv-hunk-stage" });
+    expect(r("u")).toEqual({ type: "rv-hunk-unstage" });
+    expect(r("n")).toEqual({ type: "reject" });
+  });
+
+  it("R runs the checks, Shift R the focused one, O opens the log, C commits", () => {
+    expect(r("r")).toEqual({ type: "rv-run-all" });
+    expect(r("R", { shiftKey: true })).toEqual({ type: "rv-run-focused" });
+    expect(r("o")).toEqual({ type: "rv-toggle-log" });
+    expect(r("c")).toEqual({ type: "open-commit" });
+  });
+
+  it("does nothing while typing, and the other views keep their keys", () => {
+    expect(resolveKey(key(" "), ctx({ view: "review", typing: true }))).toBeNull();
+    expect(resolveKey(key(" "), ctx({ view: "code" }))).toBeNull();
+    expect(resolveKey(key("Tab"), ctx({ view: "agents" }))).toBeNull();
   });
 });

@@ -2,14 +2,12 @@
   import { tick } from "svelte";
   import { app } from "../lib/app.svelte";
   import { composeHeader } from "../lib/commitplan";
-  import { GATE_NAMES, plural, uniq } from "../lib/format";
+  import { plural, uniq } from "../lib/format";
   import Kbd from "./Kbd.svelte";
 
   const g = $derived(app.gate);
   const c = $derived(app.cc);
-  const noChecks = $derived(!!g && g.done && g.checks.length === 0);
-  const finished = $derived(!!g && (g.done || g.checks.length >= GATE_NAMES.length));
-  const fails = $derived(!!g && finished && !g.checks.every((x) => x.pass));
+  const fails = $derived(!!g && g.done && app.gateRows.some((x) => !x.pass && x.detail !== "running" && x.detail !== "not run"));
   const repos = $derived(c ? uniq(c.groups.map((x) => x.repo)) : []);
 
   /** What a hunk id stands for: a path and its size, or a stand in when the hunk is not known. */
@@ -68,20 +66,19 @@
           <span class="cost right">{plural(c.groups.length, "commit", "commits")} · {repos.join(", ")}</span>
         </div>
         <ul class="checks">
-          {#if noChecks}
-            <li><span class="dot" style:--c="var(--faint)"></span><span>No gate checks yet</span><em style:--c="var(--faint)">skipped</em></li>
+          {#if !app.gateRows.length}
+            <li><span class="dot" style:--c="var(--faint)"></span><span>No checks configured</span><em style:--c="var(--faint)">skipped</em></li>
           {/if}
-          {#each noChecks ? [] : GATE_NAMES as name, i (name)}
-            {@const k = g.checks[i]}
-            {@const col = !k ? "var(--faint)" : k.pass ? "var(--add)" : "var(--del)"}
+          {#each app.gateRows as k, i (i)}
+            {@const col = k.pass ? "var(--add)" : k.detail === "running" || k.detail === "not run" ? "var(--faint)" : "var(--del)"}
             <li>
-              <span class="dot" class:pulse={!k} style:--c={col}></span>
-              <span>{name}</span>
-              <em style:--c={col}>{k ? k.detail : "checking"}</em>
+              <span class="dot" class:pulse={k.detail === "running"} style:--c={col}></span>
+              <span>{k.name}</span>
+              <em style:--c={col}>{k.detail}</em>
             </li>
           {/each}
         </ul>
-        <div class="cost">Reads the staged diff only, in parallel. Blocks already reviewed come from cache.</div>
+        <div class="cost">Results of the checks in the Review view for exactly this staged set. Unchanged files come from cache.</div>
         {#if app.pending.length}
           <div class="blocked">{app.pending.length} proposals are still unreviewed and will not be committed.</div>
         {/if}

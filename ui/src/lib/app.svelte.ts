@@ -5,25 +5,45 @@ import type {
   AgentQuestion,
   Backend,
   BackendEvent,
+  CheckEvent,
   FileRef,
   GateCheck,
   ReviewNote,
   Unsubscribe,
 } from "./backend";
 import { composeMessage, cycleType, mergeAll, moveHunk, splitHunk } from "./commitplan";
-import { GATE_NAMES, fileKey, plural, roleLabel, ROLES, toolLabel, uniq } from "./format";
+import { fileKey, plural, roleLabel, ROLES, toolLabel, uniq } from "./format";
 import type { Action, Overlay, View } from "./keymap";
 import { groupLinks, isHttpUrl, makeLink, removable, topBarChips, type Chips } from "./links";
 import { buildPaletteItems, filterPalette, type PaletteItem } from "./palette";
+import { applyCheckEvent, checkKey, flatChecks, gateFromChecks, gateSettled, type Logs } from "./checks";
+import {
+  buildSections,
+  clampHunk,
+  fileHunks,
+  initialRv,
+  moveHunk as moveHunkCursor,
+  moveSelection,
+  reconcile,
+  rowId,
+  toggleSection,
+  visibleRows,
+  type FileRow,
+  type RvState,
+  type Section,
+  type Sections,
+} from "./review";
 import type {
   Agent,
   AgentRole,
+  CheckEntry,
   CommitGroup,
   CommitRules,
   FileChange,
   Hunk,
   Link,
   Problem,
+  RepoChecks,
   Space,
   StackItem,
 } from "./types";
@@ -39,6 +59,7 @@ export interface SpaceData {
   notes: ReviewNote[];
   files: FileRef[];
   links: Link[];
+  checks: RepoChecks[];
 }
 
 export interface SpaceUi {
@@ -81,8 +102,6 @@ export interface GateState {
   composer: ComposerState;
 }
 
-const GATE_TOTAL = GATE_NAMES.length;
-
 export class AppState {
   backend!: Backend;
   ready = $state(false);
@@ -112,7 +131,15 @@ export class AppState {
   /** Ask the code view to put the cursor on a line (absolute number) of a file. */
   focusRequest = $state<{ file: string; line: number; seq: number } | null>(null);
 
+  /** Review view state per space: selection, collapsed sections, focus, hunk cursor. */
+  rv = $state<Record<string, RvState>>({});
+  /** Live output of the checks per space. */
+  checkLogs = $state.raw<Record<string, Logs>>({});
+  /** Width in px of the file column; 0 means the default (about 34%). */
+  rvWidth = $state(0);
+
   private off: Unsubscribe | null = null;
+  private offCheck: Unsubscribe | null = null;
   private toastSeq = 0;
   private gateSeq = 0;
   private focusSeq = 0;
@@ -125,6 +152,8 @@ export class AppState {
     this.pinned = pinned;
     this.off?.();
     this.off = backend.onChange((e) => void this.onEvent(e));
+    this.offCheck?.();
+    this.offCheck = backend.onCheck((e) => this.onCheckEvent(e));
     this.repos = await backend.listRepos();
     this.newSp.repos = this.defaultRepos();
     this.spaces = this.forThisWindow(await backend.listSpaces());
@@ -134,6 +163,7 @@ export class AppState {
 
   destroy() {
     this.off?.();
+    this.offCheck?.();
   }
 
   /** A pinned window shows its one space only. */
@@ -165,7 +195,7 @@ export class AppState {
   /** Reload everything the backend knows about a space. */
   async load(id: string, light = false) {
     const b = this.backend;
-    const [hunks, reasons, agents, stack, status, question, notes, files, links] = await Promise.all([
+    const [hunks, reasons, agents, stack, status, question, notes, files, links, checks] = await Promise.all([
       b.hunks(id),
       b.reasons(id),
       b.agents(id),
@@ -175,9 +205,287 @@ export class AppState {
       b.notes(id),
       b.listFiles(id),
       b.links(id).catch((): Link[] => []),
+      b.checks(id).catch((): RepoChecks[] => []),
     ]);
-    this.data = { ...this.data, [id]: { hunks, reasons, agents, stack, status, question, notes, files, links } };
+    const before = this.rv[id] ? this.rowsOf(id) : [];
+    const prevIndex = before.findIndex((r) => r.id === this.rv[id]?.sel);
+    this.data = { ...this.data, [id]: { hunks, reasons, agents, stack, status, question, notes, files, links, checks } };
     if (!light || !this.ui[id]) this.ensureUi(id);
+    this.syncRv(id, prevIndex);
+  }
+
+  // -- review view ----------------------------------------------------------
+
+  sectionsOf(id: string): Sections {
+    const d = this.data[id];
+    return buildSections(d?.status ?? [], d?.hunks ?? []);
+  }
+  private rowsOf(id: string): FileRow[] {
+    return visibleRows(this.sectionsOf(id), (this.rv[id] ?? initialRv()).collapsed);
+  }
+  /** Re-validate the selection after the data changed and point `hi` at the hunk under the cursor. */
+  private syncRv(id: string, prevIndex = 0) {
+    const st = this.rv[id] ?? initialRv();
+    const rows = this.rowsOf(id);
+    let next = reconcile(st, rows, prevIndex);
+    if (st.sel === null) {
+      // First look: open on the proposal the space points at, else on the first file.
+      const hi = this.data[id].hunks.find((h) => h.id === this.ui[id]?.hi);
+      const want = hi && hi.state === "pending" && hi.origin.type === "agent" ? rowId("proposed", hi.repo, hi.path) : null;
+      if (want && rows.some((r) => r.id === want)) next = { ...next, sel: want };
+    }
+    const row = rows.find((r) => r.id === next.sel);
+    const count = row ? fileHunks(this.data[id].hunks, row.repo, row.path).length : 0;
+    next = clampHunk(next, count);
+    this.rv[id] = next;
+    this.syncHi(id);
+  }
+  private syncHi(id: string) {
+    const u = this.ui[id];
+    if (!u) return;
+    const h = this.currentHunkOf(id);
+    if (h) u.hi = h.id;
+  }
+  private currentHunkOf(id: string): Hunk | null {
+    const st = this.rv[id];
+    const row = st && this.rowsOf(id).find((r) => r.id === st.sel);
+    if (!row) return null;
+    return fileHunks(this.data[id].hunks, row.repo, row.path)[st.hunk] ?? null;
+  }
+
+  get sections(): Sections {
+    return this.sectionsOf(this.space.id);
+  }
+  get rvs(): RvState {
+    return this.rv[this.space.id] ?? initialRv();
+  }
+  get rows(): FileRow[] {
+    return visibleRows(this.sections, this.rvs.collapsed);
+  }
+  get selectedRow(): FileRow | null {
+    return this.rows.find((r) => r.id === this.rvs.sel) ?? null;
+  }
+  /** Every hunk of the selected file with its state. */
+  get selectedHunks(): Hunk[] {
+    const r = this.selectedRow;
+    return r ? fileHunks(this.sd.hunks, r.repo, r.path) : [];
+  }
+  get currentHunk(): Hunk | null {
+    return this.selectedHunks[this.rvs.hunk] ?? null;
+  }
+  get checkRepos(): RepoChecks[] {
+    return this.sd.checks;
+  }
+  get focusedCheck(): CheckEntry | null {
+    const all = flatChecks(this.sd.checks);
+    return all.find((c) => checkKey(c.repo, c.id) === this.rvs.check) ?? null;
+  }
+  logOf(repo: string, id: string): string[] {
+    return this.checkLogs[this.space.id]?.[checkKey(repo, id)] ?? [];
+  }
+  /** The gate rows: real check results first, then whatever the backend gate says. */
+  get gateRows() {
+    return [...gateFromChecks(this.sd.checks), ...(this.gate?.checks ?? [])];
+  }
+
+  private setRv(patch: Partial<RvState>) {
+    const id = this.space.id;
+    this.rv[id] = { ...this.rvs, ...patch };
+    this.syncHi(id);
+  }
+
+  rvSelect(rowId: string) {
+    this.setRv({ sel: rowId, hunk: 0, focus: "files" });
+  }
+  rvToggleSection(sec: Section) {
+    const id = this.space.id;
+    const idx = this.rows.findIndex((r) => r.id === this.rvs.sel);
+    this.rv[id] = toggleSection(this.rvs, sec);
+    this.syncRv(id, idx);
+  }
+  rvFile(delta: 1 | -1) {
+    this.rv[this.space.id] = moveSelection(this.rvs, this.rows, delta);
+    this.setRv({ focus: "files" });
+  }
+  rvHunkMove(delta: 1 | -1) {
+    this.rv[this.space.id] = moveHunkCursor(this.rvs, this.selectedHunks.length, delta);
+    this.setRv({ focus: "diff" });
+  }
+  rvHunkSet(i: number) {
+    this.setRv({ hunk: i, focus: "diff" });
+  }
+  rvFocusDiff() {
+    this.setRv({ focus: "diff" });
+  }
+  /** Put the cursor on a hunk, selecting the row it lives in. */
+  rvLocate(hunkId: string) {
+    const h = this.sd.hunks.find((x) => x.id === hunkId);
+    if (!h) return;
+    const sec: Section = h.state === "staged" ? "staged" : h.origin.type === "agent" ? "proposed" : "unstaged";
+    const row = this.rows.find((r) => r.section === sec && r.repo === h.repo && r.path === h.path);
+    if (!row) return;
+    const i = fileHunks(this.sd.hunks, h.repo, h.path).findIndex((x) => x.id === hunkId);
+    this.setRv({ sel: row.id, hunk: Math.max(0, i) });
+  }
+
+  /** Space: stage or unstage the selected file (a proposed file: accept its pending hunks). */
+  async rvToggleFile() {
+    const r = this.selectedRow;
+    if (!r) return;
+    const sid = this.space.id;
+    try {
+      if (r.section === "staged") await this.backend.unstageFile(sid, r.repo, r.path);
+      else if (r.section === "unstaged") await this.backend.stageFile(sid, r.repo, r.path);
+      else {
+        for (const h of fileHunks(this.sd.hunks, r.repo, r.path)) {
+          if (h.state === "pending" && h.origin.type === "agent") await this.backend.stageHunk(sid, h.id);
+        }
+      }
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh(sid);
+  }
+  async rvStageAll() {
+    const sid = this.space.id;
+    const rows = this.sections.unstaged.flatMap((g) => g.files);
+    if (!rows.length) return this.toast("Nothing to stage. Proposals need Y");
+    try {
+      for (const r of rows) await this.backend.stageFile(sid, r.repo, r.path);
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh(sid);
+  }
+  async rvUnstageAll() {
+    const sid = this.space.id;
+    const rows = this.sections.staged.flatMap((g) => g.files);
+    if (!rows.length) return this.toast("Nothing is staged");
+    try {
+      for (const r of rows) await this.backend.unstageFile(sid, r.repo, r.path);
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh(sid);
+  }
+  /** Y on the hunk under the cursor: stage it (accept it when an agent proposed it). */
+  async rvHunkStage() {
+    const h = this.currentHunk;
+    if (!h) return;
+    if (h.state === "staged") return this.toast("Already staged");
+    if (h.origin.type === "agent") {
+      this.cui.hi = h.id;
+      return this.decide("accept");
+    }
+    const sid = this.space.id;
+    try {
+      await this.backend.stageHunk(sid, h.id);
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh(sid);
+  }
+  async rvHunkUnstage() {
+    const h = this.currentHunk;
+    if (!h) return;
+    if (h.state !== "staged") return this.toast("This hunk is not staged");
+    const sid = this.space.id;
+    delete this.edited[`${sid}:${h.id}`];
+    try {
+      await this.backend.unstageHunk(sid, h.id);
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh(sid);
+  }
+  /** N: reject an agent proposal. Your own edits are never discarded from here. */
+  rvHunkReject() {
+    const h = this.currentHunk;
+    if (!h) return;
+    if (h.origin.type !== "agent") return this.toast("Your own changes are never discarded here");
+    if (h.state !== "pending") return this.toast("Only pending proposals can be rejected");
+    this.cui.hi = h.id;
+    return this.decide("reject");
+  }
+
+  // -- checks ---------------------------------------------------------------
+
+  onCheckEvent(e: CheckEvent) {
+    const d = this.data[e.spaceId];
+    if (!d) return;
+    const logs = this.checkLogs[e.spaceId] ?? {};
+    const r = applyCheckEvent(d.checks, logs, e);
+    if (r.repos !== d.checks) this.data = { ...this.data, [e.spaceId]: { ...d, checks: r.repos } };
+    if (r.logs !== logs) this.checkLogs = { ...this.checkLogs, [e.spaceId]: r.logs };
+  }
+  async runChecks(ids?: string[], force = false) {
+    try {
+      await this.backend.runChecks(this.space.id, ids, force);
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+  rvRunFocused() {
+    const c = this.focusedCheck;
+    if (!c) return this.toast("Click a check or press Shift J to pick one");
+    if (c.missing) return this.toast(`${c.command.split(" ")[0]} is not installed`);
+    void this.runChecks([c.id], true);
+  }
+  rvCheckMove(delta: 1 | -1) {
+    const all = flatChecks(this.sd.checks);
+    if (!all.length) return;
+    const cur = all.findIndex((c) => checkKey(c.repo, c.id) === this.rvs.check);
+    const next = all[Math.max(0, Math.min(all.length - 1, cur < 0 ? 0 : cur + delta))];
+    this.setRv({ check: checkKey(next.repo, next.id), focus: "checks" });
+  }
+  focusCheck(c: CheckEntry) {
+    this.setRv({ check: checkKey(c.repo, c.id), focus: "checks" });
+  }
+  /** O or a click: open or close the log of the focused check. */
+  async rvToggleLog() {
+    const c = this.focusedCheck;
+    if (!c) return;
+    const k = checkKey(c.repo, c.id);
+    if (this.rvs.open === k) return this.setRv({ open: null });
+    this.setRv({ open: k });
+    const sid = this.space.id;
+    if (!(this.checkLogs[sid]?.[k]?.length ?? 0)) {
+      try {
+        const text = await this.backend.checkLog(sid, c.repo, c.id);
+        if (text && !(this.checkLogs[sid]?.[k]?.length ?? 0)) {
+          const lines = text.split("\n").filter((_, i, a) => i < a.length - 1 || a[i] !== "");
+          this.checkLogs = { ...this.checkLogs, [sid]: { ...(this.checkLogs[sid] ?? {}), [k]: lines } };
+        }
+      } catch (e) {
+        this.fail(e);
+      }
+    }
+  }
+  async setCheckEnabled(c: CheckEntry, enabled: boolean) {
+    try {
+      await this.backend.setCheckEnabled(this.space.id, c.repo, c.id, enabled);
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh();
+    if (enabled && c.when === "staged" && this.staged.length) void this.runChecks([c.id]);
+  }
+  async setAuto(repo: string, auto: boolean) {
+    try {
+      await this.backend.setChecksAuto(this.space.id, repo, auto);
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh();
+  }
+  /** `checks.auto` as shown in the panel header: on when every repo with checks has it on. */
+  get autoOn(): boolean {
+    const rs = this.sd.checks.filter((r) => r.checks.length);
+    return rs.length > 0 && rs.every((r) => r.auto);
+  }
+  async toggleAutoAll() {
+    const on = !this.autoOn;
+    for (const r of this.sd.checks.filter((x) => x.checks.length)) await this.setAuto(r.repo, on);
   }
 
   private ensureUi(id: string) {
@@ -255,6 +563,7 @@ export class AppState {
       const inFile = this.pending.filter((p) => fileKey(p.hunk.repo, p.hunk.path) === this.cui.file);
       return inFile.find((p) => p.hunk.id === this.cui.hi) ?? inFile[0] ?? null;
     }
+    if (this.view === "review") return all.find((p) => p.hunk.id === this.cui.hi) ?? null;
     return all.find((p) => p.hunk.id === this.cui.hi) ?? all.find((p) => p.hunk.state === "pending") ?? all[0] ?? null;
   }
 
@@ -344,8 +653,8 @@ export class AppState {
 
   get gateOk(): boolean {
     const g = this.gate;
-    if (!g || !(g.done || g.checks.length >= GATE_TOTAL)) return false;
-    return g.checks.every((c) => c.pass) || g.reason.trim().length > 3;
+    if (!g || !g.done || !gateSettled(this.sd.checks)) return false;
+    return this.gateRows.every((c) => c.pass) || g.reason.trim().length > 3;
   }
 
   // -- helpers --------------------------------------------------------------
@@ -449,6 +758,7 @@ export class AppState {
     await this.refresh(sid);
     const u = this.ui[sid];
     u.hi = this.nextPendingId(f.hunk.id);
+    if (this.view === "review") this.rvLocate(u.hi);
     if (!this.pending.length) this.toast(this.readyToCommit ? "All reviewed. Press C to commit" : "All reviewed");
   }
 
@@ -463,6 +773,7 @@ export class AppState {
       this.fail(e);
     }
     await this.refresh(sid);
+    if (this.view === "review") this.rvLocate(f.hunk.id);
   }
 
   async askFix(hunkId?: string) {
@@ -557,6 +868,7 @@ export class AppState {
     };
     this.overlay = "commit";
     void this.revalidate();
+    void this.runChecks();
     try {
       await this.backend.runGate(sid, (i, c) => {
         if (token !== this.gateSeq || !this.gate || this.overlay !== "commit") return;
@@ -779,7 +1091,7 @@ export class AppState {
       return;
     }
     const s = this.space;
-    const failing = !g.checks.every((x) => x.pass);
+    const failing = !this.gateRows.every((x) => x.pass);
     try {
       const r = await this.backend.commitGroups(
         s.id,
@@ -855,7 +1167,10 @@ export class AppState {
       case "review": {
         this.setView("review");
         const p = this.pending[0];
-        if (p) this.cui.hi = p.hunk.id;
+        if (p) {
+          this.cui.hi = p.hunk.id;
+          this.rvLocate(p.hunk.id);
+        }
         return;
       }
       case "commit":
@@ -920,7 +1235,7 @@ export class AppState {
       case "accept":
         return this.decide("accept");
       case "reject":
-        return this.decide("reject");
+        return this.view === "review" ? this.rvHunkReject() : this.decide("reject");
       case "edit":
         return this.decide("edit");
       case "undo":
@@ -982,6 +1297,30 @@ export class AppState {
         return;
       case "open-file":
         return this.openFile(a.space, a.file);
+      case "rv-file":
+        return this.rvFile(a.delta);
+      case "rv-check":
+        return this.rvCheckMove(a.delta);
+      case "rv-toggle-file":
+        return this.rvToggleFile();
+      case "rv-stage-all":
+        return this.rvStageAll();
+      case "rv-unstage-all":
+        return this.rvUnstageAll();
+      case "rv-focus-diff":
+        return this.rvFocusDiff();
+      case "rv-hunk":
+        return this.rvHunkMove(a.delta);
+      case "rv-hunk-stage":
+        return this.rvHunkStage();
+      case "rv-hunk-unstage":
+        return this.rvHunkUnstage();
+      case "rv-run-all":
+        return this.runChecks();
+      case "rv-run-focused":
+        return this.rvRunFocused();
+      case "rv-toggle-log":
+        return this.rvToggleLog();
     }
   }
 

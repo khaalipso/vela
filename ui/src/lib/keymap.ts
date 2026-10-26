@@ -51,7 +51,20 @@ export type Action =
   | { type: "open-newspace" }
   | { type: "open-palette" }
   | { type: "open-help" }
-  | { type: "open-file"; space: number; file: string };
+  | { type: "open-file"; space: number; file: string }
+  // review view
+  | { type: "rv-file"; delta: 1 | -1 } // J / K: next, previous file
+  | { type: "rv-check"; delta: 1 | -1 } // Shift J / Shift K: next, previous check
+  | { type: "rv-toggle-file" } // Space: stage or unstage the selected file
+  | { type: "rv-stage-all" } // Shift A
+  | { type: "rv-unstage-all" } // Shift U
+  | { type: "rv-focus-diff" } // Enter
+  | { type: "rv-hunk"; delta: 1 | -1 } // Tab / Shift Tab
+  | { type: "rv-hunk-stage" } // Y
+  | { type: "rv-hunk-unstage" } // U
+  | { type: "rv-run-all" } // R
+  | { type: "rv-run-focused" } // Shift R
+  | { type: "rv-toggle-log" }; // O
 
 /** The part of a KeyboardEvent the resolver reads. */
 export interface KeyLike {
@@ -180,6 +193,11 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
   }
   if (ctrl || alt) return null;
 
+  if (c.view === "review") {
+    const r = resolveReviewKey(k, shift);
+    if (r) return r;
+  }
+
   switch (k) {
     case "Enter":
       return shift ? { type: "next-waiting" } : { type: "up-next" };
@@ -235,6 +253,44 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
       return { type: "open-composer" };
     case "?":
       return { type: "open-help" };
+    default:
+      return null;
+  }
+}
+
+/** Keys of the Review view; they take precedence over the global ones. */
+export function resolveReviewKey(k: string, shift: boolean): Action | null {
+  switch (k) {
+    case "j":
+    case "J":
+    case "ArrowDown":
+      return shift ? { type: "rv-check", delta: 1 } : { type: "rv-file", delta: 1 };
+    case "k":
+    case "K":
+    case "ArrowUp":
+      return shift ? { type: "rv-check", delta: -1 } : { type: "rv-file", delta: -1 };
+    case " ":
+      return { type: "rv-toggle-file" };
+    case "A":
+      return { type: "rv-stage-all" };
+    case "U":
+      return { type: "rv-unstage-all" };
+    case "Enter":
+      return shift ? null : { type: "rv-focus-diff" };
+    case "Tab":
+      return { type: "rv-hunk", delta: shift ? -1 : 1 };
+    case "y":
+    case "Y":
+      return { type: "rv-hunk-stage" };
+    case "u":
+      return { type: "rv-hunk-unstage" };
+    case "r":
+      return { type: "rv-run-all" };
+    case "R":
+      return { type: "rv-run-focused" };
+    case "o":
+    case "O":
+      return { type: "rv-toggle-log" };
     default:
       return null;
   }
