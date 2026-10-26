@@ -349,6 +349,49 @@ pub fn open_url(app: AppHandle, url: String) -> AppResult<()> {
         .map_err(|e| AppError::new("open", e.to_string()))
 }
 
+#[tauri::command]
+pub async fn stage_file(
+    vela: State<'_, Vela>,
+    space_id: String,
+    repo: String,
+    path: String,
+) -> AppResult<()> {
+    blocking(&vela, move |v| {
+        commands::stage_file(v, &space_id, &repo, &path)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn unstage_file(
+    vela: State<'_, Vela>,
+    space_id: String,
+    repo: String,
+    path: String,
+) -> AppResult<()> {
+    blocking(&vela, move |v| {
+        commands::unstage_file(v, &space_id, &repo, &path)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn set_checks_auto(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    repo: String,
+    auto: bool,
+) -> AppResult<()> {
+    let sid = space_id.clone();
+    blocking(&vela, move |v| {
+        commands::set_checks_auto(v, &sid, &repo, auto)
+    })
+    .await?;
+    notify_state(&app, &space_id);
+    Ok(())
+}
+
 // -- checks -----------------------------------------------------------------
 
 #[tauri::command]

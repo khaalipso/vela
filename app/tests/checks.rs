@@ -401,3 +401,23 @@ fn commit_groups_carry_the_trailer_too() {
     assert_eq!(r.commits.len(), 1);
     assert!(sh(&wt(&s), &["log", "-1", "--format=%B"]).contains("Vela-Checks: gate passed on "));
 }
+
+#[test]
+fn stage_unstage_file_and_auto_toggle() {
+    let e = env(CONFIG);
+    let s = space(&e);
+    write(&wt(&s), "a.txt", "two\n");
+    commands::stage_file(&e.vela, "fix-it", "api", "a.txt").unwrap();
+    assert!(sh(&wt(&s), &["diff", "--cached", "--name-only"]).contains("a.txt"));
+    commands::unstage_file(&e.vela, "fix-it", "api", "a.txt").unwrap();
+    assert!(sh(&wt(&s), &["diff", "--cached", "--name-only"]).is_empty());
+    commands::set_checks_auto(&e.vela, "fix-it", "api", false).unwrap();
+    let rc = commands::checks(&e.vela, &e.runner, "fix-it").unwrap();
+    assert!(!rc[0].auto);
+    assert_eq!(
+        commands::set_checks_auto(&e.vela, "fix-it", "zz", true)
+            .unwrap_err()
+            .kind,
+        "repo_not_found"
+    );
+}

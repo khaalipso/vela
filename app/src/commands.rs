@@ -181,6 +181,16 @@ pub fn reject_hunk(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> {
     Ok(h)
 }
 
+/// Stage every change of one file (what Space does in the Review view).
+pub fn stage_file(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<()> {
+    Ok(stage::stage_file(&load(vela, id)?, repo, path)?)
+}
+
+/// Unstage every staged change of one file.
+pub fn unstage_file(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<()> {
+    Ok(stage::unstage_file(&load(vela, id)?, repo, path)?)
+}
+
 // ---------------------------------------------------------------------------
 // Files
 // ---------------------------------------------------------------------------
@@ -404,6 +414,16 @@ pub fn set_check_enabled(
         return Err(AppError::invalid(format!("bad check id: {check:?}")));
     }
     config::set_check_enabled(vela, repo, check, enabled)?;
+    Ok(())
+}
+
+/// Turn `checks.auto` on or off for this repo (repo local layer).
+pub fn set_checks_auto(vela: &Vela, id: &str, repo: &str, auto: bool) -> AppResult<()> {
+    let space = load(vela, id)?;
+    if !space.repos.iter().any(|r| r.name == repo) {
+        return Err(vela_core::Error::RepoNotFound(repo.to_string()).into());
+    }
+    config::set_local_value(vela, repo, &["checks", "auto"], toml::Value::Boolean(auto))?;
     Ok(())
 }
 
