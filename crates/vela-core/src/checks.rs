@@ -430,8 +430,26 @@ pub fn clear_cache() {
 
 /// `git write-tree` of the index: the identity of the staged set. None when the index
 /// cannot be written (unmerged paths).
+///
+/// Runs on a copy of the index file: `write-tree` would otherwise rewrite the real one
+/// (cache-tree), fight other processes for its lock and wake the file watcher.
 pub fn index_tree(dir: &Path) -> Option<String> {
-    git(dir, &["write-tree"]).ok().map(|s| s.trim().to_string())
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let real = git(dir, &["rev-parse", "--git-path", "index"]).ok()?;
+    let real = dir.join(real.trim());
+    let tmp = std::env::temp_dir().join(format!(
+        "vela-index-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    // No index yet is an empty one: the copy simply does not exist.
+    if real.exists() {
+        fs::copy(&real, &tmp).ok()?;
+    }
+    let out = crate::git::git_with(dir, &["write-tree"], &[("GIT_INDEX_FILE", &tmp)], None);
+    let _ = fs::remove_file(&tmp);
+    out.ok().map(|s| s.trim().to_string())
 }
 
 fn head_sha(dir: &Path) -> Option<String> {
@@ -804,7 +822,7 @@ pub fn hook_trailer(dir: &Path, checks: &[Check], cfg: &ChecksConfig) -> Option<
 
 /// What `commit` and `commit_groups` ask before each commit: given the repo name and its
 /// worktree, a trailer when the hooks can be skipped.
-pub fn commit_skip(vela: &Vela, space: &Space) -> impl Fn(&str, &Path) -> Option<String> {
+pub fn commit_skip(vela: &Vela, space: &Space) -> impl Fn(&str, &Path) -> Option<String> + use<> {
     let vela = vela.clone();
     let repos = space.repos.clone();
     move |name: &str, dir: &Path| {

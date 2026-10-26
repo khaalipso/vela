@@ -7,15 +7,18 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use vela_core::Vela;
+use vela_core::checks;
 use vela_core::commitplan::{self, GroupCommit};
+use vela_core::config;
 use vela_core::git::git;
 use vela_core::links::{self, IssueConfig};
 use vela_core::model::{
     CommitGroup, CommitPlan, CommitRules, FileChange, Hunk, HunkState, Link, LinkSource, Problem,
-    Space, UpNext,
+    RepoChecks, Space, UpNext,
 };
 use vela_core::{commit as core_commit, diff, paths, space, stage, status, store, upnext};
 
+use crate::checkrun::{CheckRunner, EmitCheck};
 use crate::error::{AppError, AppResult};
 
 // ---------------------------------------------------------------------------
@@ -292,7 +295,8 @@ pub fn commit(
     if message.trim().is_empty() {
         return Err(AppError::invalid("empty commit message"));
     }
-    let done = core_commit::commit(&space, message)?;
+    let skip = checks::commit_skip(vela, &space);
+    let done = core_commit::commit_with(&space, message, Some(&skip))?;
     Ok(CommitResult {
         repos: done.into_iter().map(|(repo, _)| repo).collect(),
         branch: space.branch,
@@ -328,7 +332,8 @@ pub fn commit_groups(
             g.footers.push(format!("Vela-Override: {reason}"));
         }
     }
-    let commits = commitplan::commit_groups(&space, conventional, &groups)?;
+    let skip = checks::commit_skip(vela, &space);
+    let commits = commitplan::commit_groups_with(&space, conventional, &groups, Some(&skip))?;
     let mut repos: Vec<String> = Vec::new();
     for c in &commits {
         if !repos.contains(&c.repo) {
@@ -340,6 +345,66 @@ pub fn commit_groups(
         branch: space.branch,
         commits,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Checks
+// ---------------------------------------------------------------------------
+
+/// Every repo of the space with its checks: detected, custom, enabled or not, and the
+/// status of the last run for the current staged set.
+pub fn checks(vela: &Vela, runner: &CheckRunner, id: &str) -> AppResult<Vec<RepoChecks>> {
+    Ok(runner.list(vela, &load(vela, id)?))
+}
+
+/// Start checks in the background (`ids` picks some, even disabled ones; none runs every
+/// enabled check). Progress comes as `vela://check` events. `force` ignores the cache.
+/// Returns the `(repo, id)` pairs started.
+pub fn run_checks(
+    vela: &Vela,
+    runner: &std::sync::Arc<CheckRunner>,
+    id: &str,
+    ids: Option<&[String]>,
+    force: bool,
+    emit: &EmitCheck,
+) -> AppResult<Vec<(String, String)>> {
+    let space = load(vela, id)?;
+    Ok(runner.run(vela, &space, ids, force, emit))
+}
+
+/// Output of the run in flight, or of the last run for the current staged set.
+pub fn check_log(
+    vela: &Vela,
+    runner: &CheckRunner,
+    id: &str,
+    repo: &str,
+    check: &str,
+) -> AppResult<String> {
+    let space = load(vela, id)?;
+    if !space.repos.iter().any(|r| r.name == repo) {
+        return Err(vela_core::Error::RepoNotFound(repo.to_string()).into());
+    }
+    Ok(runner.log(vela, &space, repo, check))
+}
+
+/// Turn a check on or off for this repo. Written to the repo local layer
+/// (`VELA_HOME/repos/<repo>.toml`), never to the committed config.
+pub fn set_check_enabled(
+    vela: &Vela,
+    id: &str,
+    repo: &str,
+    check: &str,
+    enabled: bool,
+) -> AppResult<()> {
+    let space = load(vela, id)?;
+    if !space.repos.iter().any(|r| r.name == repo) {
+        return Err(vela_core::Error::RepoNotFound(repo.to_string()).into());
+    }
+    if check.is_empty() || check.contains(['.', '"', '\n']) {
+        return Err(AppError::invalid(format!("bad check id: {check:?}")));
+    }
+    config::set_check_enabled(vela, repo, check, enabled)?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
