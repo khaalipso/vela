@@ -14,3 +14,4 @@ toml = "0.8"
 thiserror = "2"
 anyhow = "1"
 tempfile = "3"
+clap = { version = "4", features = ["derive"] }
