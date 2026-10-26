@@ -551,3 +551,33 @@ fn space_files_and_file_staging() {
     commands::unstage_file(&e.vela, &s.id, "api", "src/new.txt").unwrap();
     assert!(commands::stage_file(&e.vela, &s.id, "api", "../x").is_err());
 }
+
+#[test]
+fn creates_a_repo_and_a_space_on_it() {
+    let e = env();
+    let parent = e.root.join("code");
+    fs::create_dir_all(&parent).unwrap();
+    // The test process may have no git identity: give one through the environment.
+    // SAFETY: tests in this binary that read these vars do not run concurrently with a write.
+    unsafe {
+        std::env::set_var("GIT_AUTHOR_NAME", "T");
+        std::env::set_var("GIT_AUTHOR_EMAIL", "t@t");
+        std::env::set_var("GIT_COMMITTER_NAME", "T");
+        std::env::set_var("GIT_COMMITTER_EMAIL", "t@t");
+    }
+    let path = commands::create_repo(&e.vela, parent.to_str().unwrap(), "fresh").unwrap();
+    assert!(Path::new(&path).join(".git").is_dir());
+    assert!(Path::new(&path).join("README.md").is_file());
+    assert_eq!(commands::list_repos(&e.vela).unwrap()[0], path);
+    // A worktree can branch from it right away.
+    let s = commands::create_space(&e.vela, "Fresh start", std::slice::from_ref(&path)).unwrap();
+    assert_eq!(s.repos.len(), 1);
+    // Bad names and existing folders are refused.
+    for bad in ["", ".hidden", "a/b"] {
+        assert!(
+            commands::create_repo(&e.vela, parent.to_str().unwrap(), bad).is_err(),
+            "{bad}"
+        );
+    }
+    assert!(commands::create_repo(&e.vela, parent.to_str().unwrap(), "fresh").is_err());
+}

@@ -26,6 +26,7 @@ const backend = new MockBackend({ speed: 0 });
 beforeAll(async () => {
   Element.prototype.scrollIntoView = () => {};
   await app.init(backend);
+  app.filesOpen = false;
   component = mount(App, { target: document.body });
   await settle();
 });

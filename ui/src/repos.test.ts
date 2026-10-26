@@ -21,3 +21,42 @@ describe("repo picker", () => {
     expect(app.newSp.repos).toContain("~/code/shop");
   });
 });
+
+describe("new repo", () => {
+  it("creates a repo, selects it and names the space after it", async () => {
+    await app.init(new MockBackend());
+    app.newSp = { name: "", repos: [], missingName: false };
+    await app.openNewRepo();
+    expect(app.overlay).toBe("newspace");
+    expect(app.newRepo.parent).toBe("~/Work");
+    app.newRepo.name = "billing-svc";
+    await app.createRepo();
+    expect(app.repos[0]).toBe("~/Work/billing-svc");
+    expect(app.newSp.repos).toEqual(["~/Work/billing-svc"]);
+    expect(app.newSp.name).toBe("billing-svc");
+    expect(app.newRepo.open).toBe(false);
+  });
+
+  it("refuses an empty name", async () => {
+    await app.openNewRepo();
+    app.newRepo.name = " ";
+    await app.createRepo();
+    expect(app.newRepo.open).toBe(true);
+  });
+});
+
+describe("repos of a space", () => {
+  it("adds a repo to the current space, then removes it", async () => {
+    await app.init(new MockBackend());
+    const before = app.space.repos.length;
+    app.openAddRepo();
+    expect(app.sheetMode).toBe("add");
+    app.newSp.repos = ["~/code/payments"];
+    await app.addRepos();
+    expect(app.space.repos.map((r) => r.name)).toContain("payments");
+    expect(app.space.repos.length).toBe(before + 1);
+    expect(app.overlay).toBeNull();
+    await app.removeRepo("payments");
+    expect(app.space.repos.length).toBe(before);
+  });
+});

@@ -34,6 +34,7 @@ let component: ReturnType<typeof mount>;
 beforeAll(async () => {
   Element.prototype.scrollIntoView = () => {};
   await app.init(backend);
+  app.filesOpen = false;
   component = mount(App, { target: document.body });
   await settle();
 });

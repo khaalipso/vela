@@ -75,6 +75,16 @@ pub async fn list_repos(vela: State<'_, Vela>) -> AppResult<Vec<String>> {
 }
 
 #[tauri::command]
+pub async fn create_repo(vela: State<'_, Vela>, parent: String, name: String) -> AppResult<String> {
+    blocking(&vela, move |v| commands::create_repo(v, &parent, &name)).await
+}
+
+#[tauri::command]
+pub fn default_repo_parent() -> String {
+    commands::default_repo_parent()
+}
+
+#[tauri::command]
 pub async fn declare_repo(vela: State<'_, Vela>, path: String) -> AppResult<Vec<String>> {
     blocking(&vela, move |v| commands::declare_repo(v, &path)).await
 }
@@ -99,6 +109,38 @@ pub async fn create_space(
         emitter(&app),
     );
     let _ = tauri::async_runtime::spawn_blocking(move || w.sync(&v, &e)).await;
+    Ok(space)
+}
+
+#[tauri::command]
+pub async fn add_repo_to_space(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    watchers: State<'_, Arc<Watchers>>,
+    space_id: String,
+    path: String,
+) -> AppResult<Space> {
+    let space = blocking(&vela, move |v| {
+        commands::add_repo_to_space(v, &space_id, &path)
+    })
+    .await?;
+    watchers.restart(&space, &emitter(&app));
+    Ok(space)
+}
+
+#[tauri::command]
+pub async fn remove_repo_from_space(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    watchers: State<'_, Arc<Watchers>>,
+    space_id: String,
+    repo: String,
+) -> AppResult<Space> {
+    let space = blocking(&vela, move |v| {
+        commands::remove_repo_from_space(v, &space_id, &repo)
+    })
+    .await?;
+    watchers.restart(&space, &emitter(&app));
     Ok(space)
 }
 

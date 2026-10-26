@@ -68,7 +68,11 @@
         : "A space is one task: the repos it touches, one worktree each, and the agents working on it."}
     </p>
     {#if !app.pinned}
-      <button class="btn p" onclick={() => app.dispatch({ type: "open-newspace" })}>Create your first space</button>
+      <div class="emptyacts">
+        <button class="btn p" onclick={() => app.dispatch({ type: "open-newspace" })}>Open repos in a space</button>
+        <button class="btn" onclick={() => app.dispatch({ type: "open-newrepo" })}>Create a new repo</button>
+      </div>
+      <p class="small">Your repos under ~/Work are listed. Paste any other folder path in the repo filter.</p>
     {/if}
   </main>
   {#if app.overlay === "newspace"}<NewSpaceSheet />{/if}
@@ -123,6 +127,16 @@
     color: var(--muted);
     text-align: center;
     padding: 24px;
+  }
+  .emptyacts {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .empty .small {
+    font-size: 12px;
+    color: var(--faint);
   }
   .empty h1 {
     margin: 0;

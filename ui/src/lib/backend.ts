@@ -109,8 +109,16 @@ export interface Backend {
   listRepos(): Promise<string[]>;
   /** Declare a repo by folder path (~ allowed). Returns the updated repo list. */
   declareRepo(path: string): Promise<string[]>;
+  /** Create `<parent>/<name>` as a new git repo with a first commit, and declare it. Returns its path. */
+  createRepo(parent: string, name: string): Promise<string>;
+  /** Folder where new repos go by default (the first repo root, ~/Work by default). */
+  defaultRepoParent(): Promise<string>;
   listSpaces(): Promise<Space[]>;
   createSpace(name: string, repos: string[]): Promise<Space>;
+  /** Add a repo (path) to a space: one more worktree on the space branch. */
+  addRepoToSpace(spaceId: string, path: string): Promise<Space>;
+  /** Remove a repo from a space; refused when its worktree has uncommitted changes. */
+  removeRepoFromSpace(spaceId: string, repo: string): Promise<Space>;
   /** Move a space to another window, or back to the main one with null. */
   setWindow(spaceId: string, window: number | null): Promise<void>;
 
@@ -480,6 +488,19 @@ export class MockBackend implements Backend {
 
   private declared: string[] = [];
 
+  async createRepo(parent: string, name: string): Promise<string> {
+    const n = name.trim();
+    if (!n || n.startsWith(".") || n.includes("/")) throw new Error(`invalid repo name: "${n}"`);
+    const path = `${parent.replace(/\/+$/, "")}/${n}`;
+    if (this.declared.includes(path) || REPOS.includes(n)) throw new Error(`${path} already exists`);
+    this.declared = [path, ...this.declared];
+    return path;
+  }
+
+  async defaultRepoParent(): Promise<string> {
+    return "~/Work";
+  }
+
   async declareRepo(path: string): Promise<string[]> {
     const p = path.trim();
     if (!p.startsWith("/") && !p.startsWith("~")) throw new Error(`folder not found: ${p}`);
@@ -489,6 +510,24 @@ export class MockBackend implements Backend {
 
   async listSpaces(): Promise<Space[]> {
     return structuredClone([...this.spaces.values()].map((s) => s.space));
+  }
+
+  async addRepoToSpace(spaceId: string, path: string): Promise<Space> {
+    const s = this.sp(spaceId);
+    const name = path.split("/").pop() || path;
+    if (s.space.repos.some((r) => r.source === path || r.name === name)) throw new Error(`${name} is already in this space`);
+    s.space.repos = [...s.space.repos, { name, source: path, worktree: `wt/${s.space.id}`, base: "main" }];
+    this.emit(spaceId);
+    return { ...s.space };
+  }
+
+  async removeRepoFromSpace(spaceId: string, repo: string): Promise<Space> {
+    const s = this.sp(spaceId);
+    if (s.space.repos.length === 1) throw new Error("a space needs at least one repo; remove the space instead");
+    if (!s.space.repos.some((r) => r.name === repo)) throw new Error(`repo not found: ${repo}`);
+    s.space.repos = s.space.repos.filter((r) => r.name !== repo);
+    this.emit(spaceId);
+    return { ...s.space };
   }
 
   async createSpace(name: string, repos: string[]): Promise<Space> {
@@ -1262,6 +1301,18 @@ export class TauriBackend implements Backend {
   }
   declareRepo(path: string) {
     return call<string[]>("declare_repo", { path });
+  }
+  addRepoToSpace(spaceId: string, path: string) {
+    return call<Space>("add_repo_to_space", { spaceId, path });
+  }
+  removeRepoFromSpace(spaceId: string, repo: string) {
+    return call<Space>("remove_repo_from_space", { spaceId, repo });
+  }
+  createRepo(parent: string, name: string) {
+    return call<string>("create_repo", { parent, name });
+  }
+  defaultRepoParent() {
+    return call<string>("default_repo_parent");
   }
   listSpaces() {
     return call<Space[]>("list_spaces");

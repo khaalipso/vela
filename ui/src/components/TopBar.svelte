@@ -24,10 +24,20 @@
       {/if}
     </div>
   {/if}
+  <button class="filesbtn" aria-pressed={app.filesOpen} title="Show or hide the files (B)" onclick={() => app.dispatch({ type: "toggle-files" })}>
+    <svg width="14" height="14" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="20" stroke-linejoin="round" aria-hidden="true"><path d="M32 72a16 16 0 0 1 16-16h48l24 24h88a16 16 0 0 1 16 16v96a16 16 0 0 1-16 16H48a16 16 0 0 1-16-16z"></path></svg>
+    Files <kbd>B</kbd>
+  </button>
   <div class="chips">
     {#each app.space.repos as r (r.name)}
-      <span class="chip"><b>{r.name}</b><span class="mono">{r.worktree}</span></span>
+      <span class="chip">
+        <button class="chipb" title={r.worktree} onclick={() => { if (!app.filesOpen) app.dispatch({ type: "toggle-files" }); }}><b>{r.name}</b><span class="mono">{app.space.branch}</span></button>
+        {#if app.space.repos.length > 1}
+          <button class="rm" aria-label={`Remove ${r.name} from this space`} title="Remove from this space (its worktree must be clean)" onclick={() => app.dispatch({ type: "remove-repo", repo: r.name })}>×</button>
+        {/if}
+      </span>
     {/each}
+    <button class="addrepo" title="Add a repo to this space" onclick={() => app.dispatch({ type: "open-addrepo" })}>+ repo</button>
   </div>
   <ViewSwitch />
 </div>
@@ -54,6 +64,62 @@
     width: 10px;
     height: 10px;
     background: var(--space);
+  }
+  .chipb {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: inherit;
+  }
+  .rm {
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    color: var(--faint);
+    display: none;
+    place-items: center;
+  }
+  .chip:hover .rm,
+  .rm:focus-visible {
+    display: grid;
+  }
+  .rm:hover {
+    background: var(--hover);
+    color: var(--fg);
+  }
+  .addrepo {
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .addrepo:hover {
+    background: var(--panel);
+    color: var(--fg);
+  }
+  .filesbtn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .filesbtn[aria-pressed="true"] {
+    background: var(--hover);
+    color: var(--fg);
+  }
+  .filesbtn kbd {
+    font-family: var(--code);
+    font-size: 11px;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: var(--hover);
   }
   .chips {
     display: flex;

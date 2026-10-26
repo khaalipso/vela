@@ -35,6 +35,8 @@ export function buildPaletteItems(src: PaletteSource): PaletteItem[] {
     ["Commit and push", "C", { type: "open-commit" }],
     ["Links of this space", "L", { type: "open-links" }],
     ["New space", "", { type: "open-newspace" }],
+    ["New repo", "", { type: "open-newrepo" }],
+    ["Add a repo to this space", "", { type: "open-addrepo" }],
     ["Open this space in its own window", "W", { type: "toggle-window" }],
     ["Toggle files", "B", { type: "toggle-files" }],
     ["Go to file", "Ctrl P", { type: "quick-open" }],

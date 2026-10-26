@@ -127,9 +127,40 @@
     </div>
   {/each}
 </div>
-<div class="code" bind:this={host}></div>
+{#if !current}
+  <div class="nofile">
+    <b>No file open</b>
+    <span>Pick a file in the tree on the left, or press <kbd>Ctrl P</kbd> to find one.</span>
+    {#if !app.filesOpen}<button class="btn" onclick={() => app.dispatch({ type: "toggle-files" })}>Show files <kbd>B</kbd></button>{/if}
+  </div>
+{/if}
+<div class="code" class:hidden={!current} bind:this={host}></div>
 
 <style>
+  .nofile {
+    padding: 64px 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    text-align: center;
+    color: var(--muted);
+  }
+  .nofile b {
+    color: var(--fg);
+    font-size: 16px;
+  }
+  .nofile kbd {
+    font-family: var(--code);
+    font-size: 11px;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: var(--hover);
+    color: var(--fg);
+  }
+  .hidden {
+    display: none;
+  }
   .tabs {
     display: flex;
     gap: 4px;

@@ -57,6 +57,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             c::list_repos,
             c::declare_repo,
+            c::create_repo,
+            c::add_repo_to_space,
+            c::remove_repo_from_space,
+            c::default_repo_parent,
             c::list_spaces,
             c::create_space,
             c::set_window,

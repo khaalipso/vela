@@ -157,6 +157,7 @@ beforeAll(async () => {
   Range.prototype.getClientRects = () => ({ length: 0, item: () => null, [Symbol.iterator]: [][Symbol.iterator] }) as unknown as DOMRectList;
   Element.prototype.scrollIntoView = () => {};
   await app.init(new TauriBackend());
+  app.filesOpen = false;
   component = mount(App, { target: document.body });
   await settle();
 });
@@ -411,6 +412,7 @@ describe("shell on the Tauri backend", () => {
     expect($(".elsewhere h3")?.textContent).toContain("open in window 2");
 
     await app.init(new TauriBackend(), "fix-it");
+  app.filesOpen = false;
     await settle();
     expect(app.spaces.map((s) => s.id)).toEqual(["fix-it"]);
     expect(app.elsewhere).toBe(false);
@@ -419,6 +421,7 @@ describe("shell on the Tauri backend", () => {
 
     // Pinned to a space that does not exist: the empty state, no crash.
     await app.init(new TauriBackend(), "ghost");
+  app.filesOpen = false;
     await settle();
     expect($(".empty h1")?.textContent).toBe("This space is gone");
   });

@@ -63,6 +63,17 @@ pub fn create_space(vela: &Vela, name: &str, repos: &[String]) -> AppResult<Spac
     Ok(space::create(vela, name, repos, None)?)
 }
 
+/// Add a repo (by path) to an existing space: one more worktree on the space branch.
+pub fn add_repo_to_space(vela: &Vela, id: &str, path: &str) -> AppResult<Space> {
+    let dir = expand_home(path.trim());
+    Ok(space::add_repo(vela, id, &dir)?)
+}
+
+/// Remove a repo from a space (its worktree must be clean).
+pub fn remove_repo_from_space(vela: &Vela, id: &str, repo: &str) -> AppResult<Space> {
+    Ok(space::remove_repo(vela, id, repo)?)
+}
+
 /// Store the window of a space; None puts it back in the main window.
 pub fn set_window(vela: &Vela, id: &str, window: Option<u32>) -> AppResult<Space> {
     let mut s = load(vela, id)?;
@@ -596,18 +607,74 @@ pub fn list_repos(vela: &Vela) -> AppResult<Vec<String>> {
     Ok(out)
 }
 
+/// Where new repos go by default: the first repo root (`~/Work` unless `VELA_REPO_ROOTS` says otherwise).
+pub fn default_repo_parent() -> String {
+    repo_roots_from_env()
+        .into_iter()
+        .next()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// Creates a new git repo `<parent>/<name>` on branch `main` with a README and a first
+/// commit (a worktree needs a commit to branch from), then declares it.
+/// Returns the repo path.
+pub fn create_repo(vela: &Vela, parent: &str, name: &str) -> AppResult<String> {
+    let name = name.trim();
+    if name.is_empty()
+        || name.starts_with('.')
+        || name.contains('/')
+        || name.contains('\\')
+        || name.chars().any(char::is_control)
+    {
+        return Err(AppError::invalid(format!("invalid repo name: {name:?}")));
+    }
+    let parent = expand_home(parent.trim());
+    if parent.as_os_str().is_empty() {
+        return Err(AppError::invalid("pick a folder for the new repo"));
+    }
+    let dir = parent.join(name);
+    if dir.exists() {
+        return Err(AppError::invalid(format!(
+            "{} already exists",
+            dir.display()
+        )));
+    }
+    fs::create_dir_all(&dir).map_err(|e| AppError::new("io", e.to_string()))?;
+    let run = || -> AppResult<()> {
+        git(&dir, &["init", "-q", "-b", "main"])?;
+        fs::write(dir.join("README.md"), format!("# {name}\n"))
+            .map_err(|e| AppError::new("io", e.to_string()))?;
+        git(&dir, &["add", "README.md"])?;
+        git(&dir, &["commit", "-q", "-m", "chore: initial commit"])?;
+        Ok(())
+    };
+    if let Err(e) = run() {
+        let _ = fs::remove_dir_all(&dir);
+        return Err(e);
+    }
+    let path = fs::canonicalize(&dir)
+        .unwrap_or(dir)
+        .to_string_lossy()
+        .into_owned();
+    declare_repo(vela, &path)?;
+    Ok(path)
+}
+
+fn expand_home(raw: &str) -> PathBuf {
+    match raw.strip_prefix('~') {
+        Some(rest) => std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default()
+            .join(rest.trim_start_matches('/')),
+        None => PathBuf::from(raw),
+    }
+}
+
 /// Declares a repo by path (`~` expanded). It must be a git clone, not a Vela worktree.
 pub fn declare_repo(vela: &Vela, path: &str) -> AppResult<Vec<String>> {
     let raw = path.trim();
-    let expanded = match raw.strip_prefix("~") {
-        Some(rest) => {
-            let home = std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_default();
-            home.join(rest.trim_start_matches('/'))
-        }
-        None => PathBuf::from(raw),
-    };
+    let expanded = expand_home(raw);
     let dir = fs::canonicalize(&expanded)
         .map_err(|_| AppError::invalid(format!("folder not found: {raw}")))?;
     if !dir.join(".git").exists() {

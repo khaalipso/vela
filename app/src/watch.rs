@@ -126,6 +126,19 @@ impl Watchers {
     }
 }
 
+impl Watchers {
+    /// Watch the space again from scratch, after its repos changed.
+    pub fn restart(&self, space: &Space, emit: &Emit) {
+        let Ok(mut live) = self.live.lock() else {
+            return;
+        };
+        live.remove(&space.id);
+        if let Some(h) = start(space, emit.clone()) {
+            live.insert(space.id.clone(), h);
+        }
+    }
+}
+
 fn start(space: &Space, emit: Emit) -> Option<Handle> {
     let roots = roots_of(space);
     if roots.is_empty() {

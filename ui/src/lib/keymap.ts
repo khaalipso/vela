@@ -51,6 +51,9 @@ export type Action =
   | { type: "toggle-window" }
   | { type: "open-composer" }
   | { type: "open-newspace" }
+  | { type: "open-newrepo" }
+  | { type: "open-addrepo" }
+  | { type: "remove-repo"; repo: string }
   | { type: "open-palette" }
   | { type: "open-help" }
   | { type: "open-file"; space: number; file: string }

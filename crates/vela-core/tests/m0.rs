@@ -584,3 +584,35 @@ fn rfc3339_formats_known_instants() {
     assert!(long.len() <= 40 && !long.ends_with('-'));
     assert_eq!(space::slugify("  A  b--C "), "a-b-c");
 }
+
+#[test]
+fn add_and_remove_a_repo_in_a_space() {
+    let e = env();
+    let s = one_repo_space(&e, &[("a.txt", "a\n")]);
+    let other = repo(&e.root, "other", &[("b.txt", "b\n")]);
+    let s2 = space::add_repo(&e.vela, &s.id, &other).unwrap();
+    assert_eq!(s2.repos.len(), 2);
+    let added = &s2.repos[1];
+    assert_eq!(added.name, "other");
+    assert!(Path::new(&added.worktree).join("b.txt").is_file());
+    assert_eq!(
+        sh(
+            Path::new(&added.worktree),
+            &["rev-parse", "--abbrev-ref", "HEAD"]
+        )
+        .trim(),
+        s.branch
+    );
+    assert_eq!(store::load(&e.vela, &s.id).unwrap().repos.len(), 2);
+    // Same repo twice is refused.
+    assert!(space::add_repo(&e.vela, &s.id, &other).is_err());
+    // A dirty worktree is not removed.
+    write(Path::new(&added.worktree), "b.txt", "changed\n");
+    assert!(space::remove_repo(&e.vela, &s.id, "other").is_err());
+    sh(Path::new(&added.worktree), &["checkout", "--", "b.txt"]);
+    let s3 = space::remove_repo(&e.vela, &s.id, "other").unwrap();
+    assert_eq!(s3.repos.len(), 1);
+    assert!(!Path::new(&added.worktree).exists());
+    // The last repo cannot be removed.
+    assert!(space::remove_repo(&e.vela, &s.id, &s3.repos[0].name).is_err());
+}

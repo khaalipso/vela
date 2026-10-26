@@ -27,6 +27,7 @@ beforeAll(async () => {
   Range.prototype.getClientRects = () => ({ length: 0, item: () => null, [Symbol.iterator]: [][Symbol.iterator] }) as unknown as DOMRectList;
   Element.prototype.scrollIntoView = () => {};
   await app.init(new MockBackend({ speed: 0 }));
+  app.filesOpen = false;
   component = mount(App, { target: document.body });
   await settle();
 });

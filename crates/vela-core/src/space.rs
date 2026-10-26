@@ -203,3 +203,76 @@ pub fn remove(vela: &Vela, id: &str) -> Result<()> {
     let _ = fs::remove_dir_all(paths::space_root(&vela.home, id));
     store::delete(vela, id)
 }
+
+/// Add a repo to an existing space: a worktree on the space branch, created from the
+/// repo's current branch (or the existing space branch if the repo already has it).
+pub fn add_repo(vela: &Vela, id: &str, repo_path: &Path) -> Result<Space> {
+    let mut space = store::load(vela, id)?;
+    let top = git(repo_path, &["rev-parse", "--show-toplevel"])
+        .map_err(|_| Error::NotARepo(repo_path.to_path_buf()))?;
+    let top = PathBuf::from(top.trim());
+    let top_s = top.to_string_lossy().into_owned();
+    if space.repos.iter().any(|r| r.source == top_s) {
+        return Err(Error::Invalid(format!(
+            "{} is already in this space",
+            dir_name(&top)
+        )));
+    }
+    let stem = dir_name(&top);
+    let mut repo_name = stem.clone();
+    let mut n = 2;
+    while space.repos.iter().any(|r| r.name == repo_name) {
+        repo_name = format!("{stem}-{n}");
+        n += 1;
+    }
+    let base_ref = current_ref(&top)?;
+    let worktree = paths::space_worktree(&vela.home, &space.id, &repo_name);
+    let wt = worktree.to_string_lossy().into_owned();
+    let has_branch = git(
+        &top,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{}", space.branch),
+        ],
+    )
+    .is_ok();
+    if has_branch {
+        git(&top, &["worktree", "add", &wt, &space.branch])?;
+    } else {
+        git(
+            &top,
+            &["worktree", "add", "-b", &space.branch, &wt, &base_ref],
+        )?;
+    }
+    space.repos.push(SpaceRepo {
+        name: repo_name,
+        source: top_s,
+        worktree: wt,
+        base: base_ref,
+    });
+    store::save(vela, &space)?;
+    Ok(space)
+}
+
+/// Remove a repo from a space. Its worktree is removed; git refuses when it has
+/// uncommitted changes, so nothing is lost. The branch is kept.
+pub fn remove_repo(vela: &Vela, id: &str, repo: &str) -> Result<Space> {
+    let mut space = store::load(vela, id)?;
+    let i = space
+        .repos
+        .iter()
+        .position(|r| r.name == repo)
+        .ok_or_else(|| Error::RepoNotFound(repo.to_string()))?;
+    if space.repos.len() == 1 {
+        return Err(Error::Invalid(
+            "a space needs at least one repo; remove the space instead".to_string(),
+        ));
+    }
+    let r = &space.repos[i];
+    git(Path::new(&r.source), &["worktree", "remove", &r.worktree])?;
+    space.repos.remove(i);
+    store::save(vela, &space)?;
+    Ok(space)
+}

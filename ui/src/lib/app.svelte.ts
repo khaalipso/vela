@@ -117,14 +117,56 @@ export class AppState {
   repos = $state.raw<string[]>([]);
   active = $state(0);
 
-  /** The file tree drawer is open. */
-  filesOpen = $state(false);
+  /** The file tree drawer is open. Open by default, remembered per window. */
+  filesOpen = $state(readFlag("vela.filesOpen", true));
   overlay = $state<Overlay>(null);
   stackOpen = $state(false);
   role = $state<AgentRole>("developer");
   composerText = $state("");
   pal = $state({ q: "", i: 0 });
   newSp = $state<{ name: string; repos: string[]; missingName: boolean }>({ name: "", repos: [], missingName: false });
+  /** The repo sheet creates a space ("new") or adds repos to the current one ("add"). */
+  sheetMode = $state<"new" | "add">("new");
+
+  openAddRepo() {
+    this.sheetMode = "add";
+    this.newSp.repos = [];
+    this.repoFilter = "";
+    this.overlay = "newspace";
+  }
+
+  /** Add the picked repos to the current space. */
+  async addRepos() {
+    const paths = [...this.newSp.repos];
+    if (!paths.length) {
+      this.toast("Pick a repo to add");
+      return;
+    }
+    const id = this.space.id;
+    try {
+      for (const p of paths) await this.backend.addRepoToSpace(id, p);
+      await this.syncSpaces();
+      await this.load(id);
+      this.overlay = null;
+      this.sheetMode = "new";
+      this.newSp.repos = this.defaultRepos();
+      this.toast(`Added ${paths.map((p) => p.split("/").pop()).join(", ")} to ${this.space.name}`);
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  async removeRepo(repo: string) {
+    const id = this.space.id;
+    try {
+      await this.backend.removeRepoFromSpace(id, repo);
+      await this.syncSpaces();
+      await this.load(id);
+      this.toast(`Removed ${repo} from ${this.space.name}`);
+    } catch (e) {
+      this.fail(e);
+    }
+  }
   /** Id of the space this window is pinned to (`#space-<id>`), null in the main window. */
   pinned = $state<string | null>(null);
   gate = $state<GateState | null>(null);
@@ -1136,7 +1178,46 @@ export class AppState {
     }
   }
 
+  /** The "new repo" form inside the new space sheet. */
+  newRepo = $state({ open: false, name: "", parent: "" });
+
+  async openNewRepo() {
+    if (this.overlay !== "newspace") this.sheetMode = "new";
+    this.overlay = "newspace";
+    this.newRepo.open = true;
+    if (!this.newRepo.parent) {
+      try {
+        this.newRepo.parent = await this.backend.defaultRepoParent();
+      } catch {
+        this.newRepo.parent = "~/Work";
+      }
+    }
+  }
+
+  /** Create the repo, add it to the list and select it for the new space. */
+  async createRepo() {
+    const name = this.newRepo.name.trim();
+    if (!name) {
+      this.toast("Give the repo a name");
+      return;
+    }
+    try {
+      const path = await this.backend.createRepo(this.newRepo.parent, name);
+      this.repos = await this.backend.listRepos();
+      if (!this.newSp.repos.includes(path)) this.newSp.repos.push(path);
+      if (!this.newSp.name.trim()) this.newSp.name = name;
+      this.newRepo = { open: false, name: "", parent: this.newRepo.parent };
+      this.toast(`Created ${path}`);
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
   async createSpace() {
+    if (!this.newSp.name.trim() && this.newSp.repos.length === 1) {
+      // One repo and no name: name the space after the repo.
+      this.newSp.name = this.newSp.repos[0].split("/").pop() ?? "";
+    }
     const name = this.newSp.name.trim();
     if (!name) {
       this.newSp.missingName = true;
@@ -1265,7 +1346,7 @@ export class AppState {
       case "blur":
         return void (document.activeElement as HTMLElement | null)?.blur();
       case "newspace-submit":
-        return this.createSpace();
+        return this.sheetMode === "add" ? this.addRepos() : this.createSpace();
       case "commit-submit":
         return this.doCommit();
       case "composer-role":
@@ -1304,6 +1385,7 @@ export class AppState {
         return this.answer(a.yes);
       case "toggle-files":
         this.filesOpen = !this.filesOpen;
+        writeFlag("vela.filesOpen", this.filesOpen);
         return;
       case "toggle-stack":
         this.stackOpen = !this.stackOpen;
@@ -1348,8 +1430,15 @@ export class AppState {
       case "open-composer":
         return this.openComposer();
       case "open-newspace":
+        this.sheetMode = "new";
         this.overlay = "newspace";
         return;
+      case "open-addrepo":
+        return this.openAddRepo();
+      case "remove-repo":
+        return this.removeRepo(a.repo);
+      case "open-newrepo":
+        return this.openNewRepo();
       case "open-help":
         this.overlay = "help";
         return;
@@ -1397,3 +1486,20 @@ export class AppState {
 }
 
 export const app = new AppState();
+
+function readFlag(key: string, fallback: boolean): boolean {
+  try {
+    const v = globalThis.localStorage?.getItem(key);
+    return v === null || v === undefined ? fallback : v === "1";
+  } catch {
+    return fallback;
+  }
+}
+
+function writeFlag(key: string, value: boolean) {
+  try {
+    globalThis.localStorage?.setItem(key, value ? "1" : "0");
+  } catch {
+    // storage unavailable: the flag just is not remembered
+  }
+}
