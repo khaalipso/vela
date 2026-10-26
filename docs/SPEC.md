@@ -68,6 +68,10 @@ Before a commit, run in parallel on the staged diff only: reviewer agent (non in
 | `W` | Open the space in its own window |
 | `?` | All shortcuts |
 
+## Right-click menus
+
+Every place has a context menu (`Menu` key or `Shift F10` on the focused item): file tree rows (file, folder, repo), editor tabs, the editor, review file rows and hunks, spaces in the rail (with an Archived section), repo chips in the top bar, links. Rows of the tree also have a `⋯` button. The same actions are listed under "Here" in the command bar for the current place, and shortcuts shown in menus are resolved through the keymap. Writes are guarded like `write_file`: inside a space worktree only, never `.git`. Delete goes to the system trash (`trash` crate); where there is none the UI asks and deletes for good. Discard restores the file from HEAD (from the index when part of it is staged); an untracked file needs an explicit confirm. Archiving a space only hides it; removing one deletes its worktrees and keeps branches with unmerged commits. Terminal: `$TERMINAL`, else `xdg-terminal-exec`, else a common terminal.
+
 Single letter keys only act when focus is not in a text field. `Esc` leaves the field.
 
 ## Architecture

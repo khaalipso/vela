@@ -1274,6 +1274,7 @@ export class MockBackend implements Backend {
   async removeSpace(spaceId: string): Promise<void> {
     this.sp(spaceId);
     this.spaces.delete(spaceId);
+    this.checkStates.delete(spaceId);
     this.emit(spaceId);
   }
 
@@ -1480,7 +1481,8 @@ export class MockBackend implements Backend {
     const seq = ++st.autoSeq;
     this.later(500, () => {
       if (seq !== st.autoSeq) return;
-      const s = this.sp(spaceId);
+      const s = this.spaces.get(spaceId);
+      if (!s) return; // the space was removed meanwhile
       if (!this.stagedFiles(s).length) return;
       for (const d of st.defs) {
         if (!(st.auto.get(d.repo) ?? true) || !this.isEnabled(st, d)) continue;

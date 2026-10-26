@@ -177,6 +177,7 @@
   function rowMenu(e: MouseEvent, r: Row) {
     if (r.node.id === EDIT_ID) return;
     files.cursor = r.node.id;
+    tree?.focus({ preventScroll: true });
     openAtEvent(e, treeMenu(r.node), r.node.name || "Files");
   }
 
