@@ -234,3 +234,31 @@ export interface GroupCommit {
   repo: string;
   sha: string;
 }
+
+// ---------------------------------------------------------------------------
+// File tree
+// ---------------------------------------------------------------------------
+
+/** One file of a worktree with its git status, for the file tree. */
+export interface TreeFile {
+  /** Path relative to the worktree root, `/` separated. */
+  path: string;
+  /** Change recorded in the index (staged). */
+  staged: ChangeKind | null;
+  /** Change in the worktree not yet staged. */
+  unstaged: ChangeKind | null;
+}
+
+/** Every file of one repo of a space. */
+export interface RepoFiles {
+  repo: string;
+  branch: string;
+  worktree: string;
+  /** Commits ahead of / behind the upstream, null without an upstream. */
+  ahead?: number | null;
+  behind?: number | null;
+  /** Sorted by path. */
+  files: TreeFile[];
+  /** The listing was cut at 200 000 entries. */
+  truncated: boolean;
+}

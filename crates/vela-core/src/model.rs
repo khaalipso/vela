@@ -336,6 +336,40 @@ pub struct CommitPlan {
     pub groups: Vec<CommitGroup>,
 }
 
+// ---------------------------------------------------------------------------
+// File tree
+// ---------------------------------------------------------------------------
+
+/// One file of a worktree with its git status, for the file tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeFile {
+    /// Path relative to the worktree root, `/` separated.
+    pub path: String,
+    /// Change recorded in the index (staged).
+    pub staged: Option<ChangeKind>,
+    /// Change in the worktree not yet staged.
+    pub unstaged: Option<ChangeKind>,
+}
+
+/// Every file of one repo of a space.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoFiles {
+    pub repo: String,
+    pub branch: String,
+    pub worktree: String,
+    /// Commits ahead of / behind the upstream, None without an upstream.
+    #[serde(default)]
+    pub ahead: Option<u32>,
+    #[serde(default)]
+    pub behind: Option<u32>,
+    /// Sorted by path.
+    pub files: Vec<TreeFile>,
+    /// The listing was cut at [`crate::files::MAX_FILES`].
+    pub truncated: bool,
+}
+
 /// A problem found by `commitplan::validate`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

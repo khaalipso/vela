@@ -1,5 +1,5 @@
 export type View = "code" | "review" | "agents";
-export type Overlay = "palette" | "newspace" | "commit" | "composer" | "links" | "help" | null;
+export type Overlay = "palette" | "quickopen" | "newspace" | "commit" | "composer" | "links" | "help" | null;
 
 /** Everything that can happen in the shell. Keys, buttons and the command bar all produce these. */
 export type Action =
@@ -41,7 +41,9 @@ export type Action =
   | { type: "undo" }
   | { type: "fix" }
   | { type: "answer"; yes: boolean }
-  | { type: "toggle-changes" }
+  | { type: "toggle-files" }
+  | { type: "quick-open" } // Ctrl P: go to file
+  | { type: "files-filter" } // / : jump into the filter field of the file tree
   | { type: "toggle-stack" }
   | { type: "open-stack" }
   | { type: "open-commit" }
@@ -71,6 +73,10 @@ export interface KeyContext {
   view: View;
   /** The current space has an open agent question. */
   hasQuestion: boolean;
+  /** The file tree drawer is open. */
+  filesOpen?: boolean;
+  /** Focus is inside the file tree drawer, which handles its own keys. */
+  inFiles?: boolean;
 }
 
 /** The part of an element `isTyping` reads. */
@@ -102,6 +108,9 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
   const shift = !!e.shiftKey;
 
   if (ctrl && (k === "k" || k === "K")) return { type: "palette-toggle" };
+  if (ctrl && !alt && (k === "p" || k === "P") && !c.overlay?.match(/^(newspace|commit|composer|links|help)$/)) {
+    return { type: "quick-open" };
+  }
 
   if (k === "Escape") {
     // Sheets with fields: the first Esc leaves the field, the next one closes the sheet.
@@ -117,6 +126,8 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
     if (k === "Enter") return { type: "palette-run" };
     return null;
   }
+  // The quick open sheet handles its own arrows and Enter.
+  if (c.overlay === "quickopen") return null;
   if (c.overlay === "newspace") return k === "Enter" && ctrl ? { type: "newspace-submit" } : null;
   if (c.overlay === "commit") {
     if (k === "Enter" && ctrl) return { type: "commit-submit" };
@@ -178,9 +189,13 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
     const m = /^[1-9]$/.test(k) ? k : /^Digit([1-9])$/.exec(e.code ?? "")?.[1];
     if (m) return { type: "space-jump", index: Number(m) - 1 };
   }
+  // The file tree drawer reads its own keys (J K H L, Space, letters that start a filter...).
+  if (c.inFiles) return null;
   if (ctrl || alt) return null;
 
   switch (k) {
+    case "/":
+      return c.filesOpen ? { type: "files-filter" } : null;
     case "Enter":
       return shift ? { type: "next-waiting" } : { type: "up-next" };
     case "1":
@@ -218,7 +233,7 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
       return { type: "undo" };
     case "b":
     case "B":
-      return { type: "toggle-changes" };
+      return { type: "toggle-files" };
     case "s":
     case "S":
       return { type: "toggle-stack" };

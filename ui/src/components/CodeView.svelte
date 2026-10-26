@@ -14,7 +14,7 @@
   let loading = false;
   let handledFocus = 0;
 
-  const files = $derived(app.sd.files);
+  const tabs = $derived(app.cui.tabs);
   const current = $derived(app.cui.file);
   const rev = $derived(app.contentRev[app.space.id] ?? 0);
 
@@ -119,11 +119,12 @@
 </script>
 
 <div class="tabs" role="tablist">
-  {#each files as f (fileKey(f.repo, f.path))}
-    {@const k = fileKey(f.repo, f.path)}
-    <button class="tab" role="tab" aria-selected={k === current} onclick={() => (app.cui.file = k)}>
-      <span class="rp">{f.repo}</span><span class="mono">{f.path}</span>
-    </button>
+  {#each tabs as t (t.key)}
+    {@const k = t.key}
+    <div class="tab" class:preview={!t.pinned} role="tab" aria-selected={k === current} tabindex="0" onclick={() => (app.cui.file = k)} ondblclick={() => app.openFile(app.active, k, true)} onkeydown={(e) => e.key === "Enter" && (app.cui.file = k)}>
+      <span class="rp">{k.slice(0, k.indexOf("/"))}</span><span class="mono">{k.slice(k.indexOf("/") + 1)}</span>
+      <button class="close" aria-label="Close tab" onclick={(e) => { e.stopPropagation(); app.closeTab(k); }}>×</button>
+    </div>
   {/each}
 </div>
 <div class="code" bind:this={host}></div>
@@ -150,6 +151,13 @@
     color: var(--faint);
     white-space: nowrap;
     transition: background-color 200ms var(--ease);
+  }
+  .tab.preview .mono {
+    font-style: italic;
+  }
+  .close {
+    color: var(--faint);
+    padding: 0 2px;
   }
   .tab:hover {
     background: var(--hover);

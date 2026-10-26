@@ -12,9 +12,9 @@ use vela_core::git::git;
 use vela_core::links::{self, IssueConfig};
 use vela_core::model::{
     CommitGroup, CommitPlan, CommitRules, FileChange, Hunk, HunkState, Link, LinkSource, Problem,
-    Space, UpNext,
+    RepoFiles, Space, UpNext,
 };
-use vela_core::{commit as core_commit, diff, paths, space, stage, status, store, upnext};
+use vela_core::{commit as core_commit, diff, files, paths, space, stage, status, store, upnext};
 
 use crate::error::{AppError, AppResult};
 
@@ -256,6 +256,25 @@ pub fn list_files(vela: &Vela, id: &str) -> AppResult<Vec<FileRef>> {
         }
     }
     Ok(out)
+}
+
+/// Every file of every repo of the space with its status, for the file tree.
+pub fn space_files(vela: &Vela, id: &str) -> AppResult<Vec<RepoFiles>> {
+    Ok(files::space_files(&load(vela, id)?)?)
+}
+
+/// Stage every change of one file.
+pub fn stage_file(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<()> {
+    let space = load(vela, id)?;
+    resolve_path(&space, repo, path)?;
+    Ok(stage::stage_file(&space, repo, path)?)
+}
+
+/// Unstage every staged change of one file.
+pub fn unstage_file(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<()> {
+    let space = load(vela, id)?;
+    resolve_path(&space, repo, path)?;
+    Ok(stage::unstage_file(&space, repo, path)?)
 }
 
 pub fn read_file(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<String> {

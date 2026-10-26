@@ -65,6 +65,8 @@ function rust(cmd: string, args?: Json): unknown {
     }
     case "list_files":
       return [{ repo: "api", path: "src/a.ts" }];
+    case "space_files":
+      return [{ repo: "api", branch: "feat/fix-it", worktree: "/h/api", ahead: null, behind: null, truncated: false, files: [{ path: "src/a.ts", staged: null, unstaged: "modified" }, { path: "src/b.ts", staged: null, unstaged: null }] }];
     case "read_file":
       return "const a = 1;\nconst b = 2;\n";
     case "write_file":
@@ -206,7 +208,7 @@ describe("shell on the Tauri backend", () => {
     // Your own pending hunk shows in the drawer.
     press("b");
     await settle();
-    expect($(".changes")?.textContent).toContain("a.ts");
+    await vi.waitFor(() => expect($(".files")?.textContent).toContain("api"));
     press("b");
   });
 

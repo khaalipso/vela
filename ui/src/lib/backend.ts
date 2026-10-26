@@ -3,12 +3,14 @@ import { listen } from "@tauri-apps/api/event";
 import { fileKey, toolForRole, toolLabel, uniq } from "./format";
 import { composeMessage, planFromHunks, validateFor } from "./commitplan";
 import { isHttpUrl, makeLink, removable, sameLink } from "./links";
+import { fakeContent, repoPaths } from "./seedtree";
 import { REPOS, seedLinks, seedSpaces, type SeedSpace } from "./seed";
 import type {
   Agent,
   AgentRole,
   CommitGroup,
   CommitPlan,
+  ChangeKind,
   CommitRules,
   DiffLine,
   FileChange,
@@ -18,6 +20,7 @@ import type {
   Link,
   LinkSource,
   Problem,
+  RepoFiles,
   Space,
   StackItem,
 } from "./types";
@@ -108,6 +111,11 @@ export interface Backend {
   editHunk(spaceId: string, hunkId: string): Promise<Hunk>;
 
   listFiles(spaceId: string): Promise<FileRef[]>;
+  /** The file tree: every file of every repo of the space with its status. */
+  spaceFiles(spaceId: string): Promise<RepoFiles[]>;
+  /** Stage every change of one file (tracked, deleted or untracked). */
+  stageFile(spaceId: string, repo: string, path: string): Promise<void>;
+  unstageFile(spaceId: string, repo: string, path: string): Promise<void>;
   readFile(spaceId: string, repo: string, path: string): Promise<FileContent>;
   writeFile(spaceId: string, repo: string, path: string, content: string): Promise<void>;
 
@@ -205,6 +213,8 @@ interface MSpace {
   stack: StackItem[];
   tests: { pass: number; total: number };
   baseStaged: FileRef[];
+  /** Files staged or unstaged by hand from the file tree. */
+  fileStage: Map<string, { staged: ChangeKind | null; unstaged: ChangeKind | null }>;
   commitMsg: string;
   links: Link[];
   question: SeedSpace["question"];
@@ -249,6 +259,7 @@ export class MockBackend implements Backend {
         stack: s.stack,
         tests: s.tests,
         baseStaged: s.baseStaged,
+        fileStage: new Map(),
         commitMsg: s.commitMsg,
         question: s.question,
         notes: new Map(
@@ -270,7 +281,12 @@ export class MockBackend implements Backend {
   }
 
   private file(s: MSpace, repo: string, path: string): MFile {
-    const f = s.files.find((x) => x.repo === repo && x.path === path);
+    let f = s.files.find((x) => x.repo === repo && x.path === path);
+    if (!f && s.space.repos.some((r) => r.name === repo) && repoPaths(repo).includes(path)) {
+      // A generated file of the tree: it gets content the first time it is opened.
+      f = { repo, path, firstLine: 1, lines: fakeContent(path), mine: new Set<number>() };
+      s.files.push(f);
+    }
     if (!f) throw new Error(`Unknown file: ${repo}/${path}`);
     return f;
   }
@@ -442,6 +458,7 @@ export class MockBackend implements Backend {
       stack: [{ name: "mise", version: null, source: "mise.toml", kind: "runtime", state: "starting" }],
       tests: { pass: 0, total: 0 },
       baseStaged: [],
+      fileStage: new Map(),
       links: [],
       commitMsg: `feat: ${name.toLowerCase()}`,
       question: null,
@@ -476,7 +493,42 @@ export class MockBackend implements Backend {
     };
     for (const f of this.stagedFiles(s)) get(f).staged = "modified";
     for (const f of s.files) if (f.mine.size) get(f).unstaged = "modified";
-    return [...m.values()];
+    for (const [k, o] of s.fileStage) {
+      const i = k.indexOf("/");
+      const c = get({ repo: k.slice(0, i), path: k.slice(i + 1) });
+      c.staged = o.staged;
+      c.unstaged = o.unstaged;
+    }
+    return [...m.values()].filter((c) => c.staged || c.unstaged);
+  }
+
+  async spaceFiles(spaceId: string): Promise<RepoFiles[]> {
+    const s = this.sp(spaceId);
+    const st = new Map((await this.status(spaceId)).map((c) => [fileKey(c.repo, c.path), c]));
+    return s.space.repos.map((r) => {
+      const paths = new Set(repoPaths(r.name));
+      for (const f of s.files) if (f.repo === r.name) paths.add(f.path);
+      for (const c of st.values()) if (c.repo === r.name) paths.add(c.path);
+      const files = [...paths].sort().map((path) => {
+        const c = st.get(fileKey(r.name, path));
+        return { path, staged: c?.staged ?? null, unstaged: c?.unstaged ?? null };
+      });
+      return { repo: r.name, branch: s.space.branch, worktree: r.worktree, ahead: null, behind: null, files, truncated: false };
+    });
+  }
+
+  async stageFile(spaceId: string, repo: string, path: string): Promise<void> {
+    const s = this.sp(spaceId);
+    const cur = (await this.status(spaceId)).find((c) => c.repo === repo && c.path === path);
+    s.fileStage.set(fileKey(repo, path), { staged: cur?.staged ?? cur?.unstaged ?? "modified", unstaged: null });
+    this.emit(spaceId);
+  }
+
+  async unstageFile(spaceId: string, repo: string, path: string): Promise<void> {
+    const s = this.sp(spaceId);
+    const cur = (await this.status(spaceId)).find((c) => c.repo === repo && c.path === path);
+    s.fileStage.set(fileKey(repo, path), { staged: null, unstaged: cur?.staged ?? null });
+    this.emit(spaceId);
   }
 
   async hunks(spaceId: string): Promise<Hunk[]> {
@@ -738,6 +790,7 @@ export class MockBackend implements Backend {
     s.commitMsg = message;
     s.hunks = s.hunks.filter((h) => h.state === "pending");
     s.baseStaged = [];
+    s.fileStage.clear();
     for (const f of s.files) f.mine = new Set();
     this.commits.push({ spaceId, message, repos, override: passes ? undefined : reason });
     this.emit(spaceId);
@@ -802,6 +855,7 @@ export class MockBackend implements Backend {
     }
     const taken = new Set(groups.flatMap((g) => g.hunks));
     s.hunks = s.hunks.filter((h) => !(h.state !== "pending" && taken.has(h.id)));
+    s.fileStage.clear();
     s.baseStaged = s.baseStaged.filter((f) => !taken.has(`base:${f.repo}/${f.path}`));
     const commits: GroupCommit[] = [];
     for (const g of groups) {
@@ -937,6 +991,15 @@ export class TauriBackend implements Backend {
   }
   listFiles(spaceId: string) {
     return call<FileRef[]>("list_files", { spaceId });
+  }
+  spaceFiles(spaceId: string) {
+    return call<RepoFiles[]>("space_files", { spaceId });
+  }
+  stageFile(spaceId: string, repo: string, path: string) {
+    return call<void>("stage_file", { spaceId, repo, path });
+  }
+  unstageFile(spaceId: string, repo: string, path: string) {
+    return call<void>("unstage_file", { spaceId, repo, path });
   }
   async readFile(spaceId: string, repo: string, path: string): Promise<FileContent> {
     const content = await call<string>("read_file", { spaceId, repo, path });

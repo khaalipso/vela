@@ -1,6 +1,7 @@
 // The shell state: what the backend says about each space, plus what only the UI knows
 // (current view, focused proposal, open overlay). Components read it, `dispatch` changes it.
 
+import { tick } from "svelte";
 import type {
   AgentQuestion,
   Backend,
@@ -15,6 +16,7 @@ import { GATE_NAMES, fileKey, plural, roleLabel, ROLES, toolLabel, uniq } from "
 import type { Action, Overlay, View } from "./keymap";
 import { groupLinks, isHttpUrl, makeLink, removable, topBarChips, type Chips } from "./links";
 import { buildPaletteItems, filterPalette, type PaletteItem } from "./palette";
+import { closeTab, loadRecent, openTab, pushRecent, saveRecent, type Tab } from "./tabs";
 import type {
   Agent,
   AgentRole,
@@ -47,6 +49,10 @@ export interface SpaceUi {
   hi: string | null;
   /** Key (repo/path) of the file open in the code view. */
   file: string;
+  /** Open tabs of the code view: pinned ones, and at most one preview. */
+  tabs: Tab[];
+  /** Files opened last, most recent first (quick open boosts them). */
+  recent: string[];
 }
 
 /** An agent hunk with what the UI needs to show it. */
@@ -92,7 +98,8 @@ export class AppState {
   repos = $state.raw<string[]>([]);
   active = $state(0);
 
-  changes = $state(false);
+  /** The file tree drawer is open. */
+  filesOpen = $state(false);
   overlay = $state<Overlay>(null);
   stackOpen = $state(false);
   role = $state<AgentRole>("developer");
@@ -186,10 +193,16 @@ export class AppState {
     const pending = d.hunks.filter((h) => h.origin.type === "agent" && h.state === "pending");
     const first = pending[0] ?? d.hunks.find((h) => h.origin.type === "agent");
     const file = first ? fileKey(first.repo, first.path) : d.files[0] ? fileKey(d.files[0].repo, d.files[0].path) : "";
+    // Tabs: the files agents touched, plus the one shown. The tree opens the others.
+    let tabs: Tab[] = [];
+    for (const h of d.hunks) if (h.origin.type === "agent") tabs = openTab(tabs, fileKey(h.repo, h.path), true);
+    if (file) tabs = openTab(tabs, file, true);
     this.ui[id] = {
       view: d.question ? "agents" : pending.length ? "review" : "code",
       hi: first?.id ?? null,
       file,
+      tabs,
+      recent: loadRecent(id),
     };
   }
 
@@ -398,12 +411,24 @@ export class AppState {
     this.stackOpen = false;
   }
 
-  openFile(spaceIdx: number, file: string) {
+  /** Show a file in the code view. A click in the tree opens a preview tab, `pin` keeps the tab. */
+  openFile(spaceIdx: number, file: string, pin = true) {
     this.active = spaceIdx;
-    const u = this.ui[this.spaces[spaceIdx].id];
+    const id = this.spaces[spaceIdx].id;
+    const u = this.ui[id];
     u.view = "code";
     u.file = file;
+    u.tabs = openTab(u.tabs, file, pin);
+    u.recent = pushRecent(u.recent, file);
+    saveRecent(id, u.recent);
     this.overlay = null;
+  }
+
+  closeTab(key: string) {
+    const u = this.cui;
+    const r = closeTab(u.tabs, key, u.file);
+    u.tabs = r.tabs;
+    u.file = r.current;
   }
 
   move(delta: 1 | -1) {
@@ -962,8 +987,8 @@ export class AppState {
         return this.askFix();
       case "answer":
         return this.answer(a.yes);
-      case "toggle-changes":
-        this.changes = !this.changes;
+      case "toggle-files":
+        this.filesOpen = !this.filesOpen;
         return;
       case "toggle-stack":
         this.stackOpen = !this.stackOpen;
@@ -1015,6 +1040,14 @@ export class AppState {
         return;
       case "open-file":
         return this.openFile(a.space, a.file);
+      case "quick-open":
+        this.overlay = this.overlay === "quickopen" ? null : "quickopen";
+        return;
+      case "files-filter":
+        if (!this.filesOpen) this.filesOpen = true;
+        await tick();
+        document.querySelector<HTMLElement>("[data-files-filter]")?.focus();
+        return;
     }
   }
 

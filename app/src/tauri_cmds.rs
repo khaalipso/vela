@@ -9,7 +9,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use vela_core::Vela;
 use vela_core::model::{
-    Agent, CommitGroup, CommitPlan, CommitRules, FileChange, Hunk, Link, Problem, Space, StackItem,
+    Agent, CommitGroup, CommitPlan, CommitRules, FileChange, Hunk, Link, Problem, RepoFiles, Space,
+    StackItem,
 };
 
 use crate::commands::{self, CommitResult, FileRef};
@@ -205,6 +206,39 @@ pub async fn reject_hunk(
 #[tauri::command]
 pub async fn list_files(vela: State<'_, Vela>, space_id: String) -> AppResult<Vec<FileRef>> {
     blocking(&vela, move |v| commands::list_files(v, &space_id)).await
+}
+
+#[tauri::command]
+pub async fn space_files(vela: State<'_, Vela>, space_id: String) -> AppResult<Vec<RepoFiles>> {
+    blocking(&vela, move |v| commands::space_files(v, &space_id)).await
+}
+
+#[tauri::command]
+pub async fn stage_file(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    repo: String,
+    path: String,
+) -> AppResult<()> {
+    let id = space_id.clone();
+    blocking(&vela, move |v| commands::stage_file(v, &id, &repo, &path)).await?;
+    notify_state(&app, &space_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn unstage_file(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    repo: String,
+    path: String,
+) -> AppResult<()> {
+    let id = space_id.clone();
+    blocking(&vela, move |v| commands::unstage_file(v, &id, &repo, &path)).await?;
+    notify_state(&app, &space_id);
+    Ok(())
 }
 
 #[tauri::command]

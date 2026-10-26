@@ -530,3 +530,24 @@ fn declares_repos_by_path() {
     let inside = repo(&e.root.join("home/worktrees"), "x", &[("f", "3")]);
     assert!(commands::declare_repo(&vela, inside.to_str().unwrap()).is_err());
 }
+
+#[test]
+fn space_files_and_file_staging() {
+    let e = env();
+    let s = space(&e);
+    write(&wt(&s), "src/new.txt", "n\n");
+    let tree = commands::space_files(&e.vela, &s.id).unwrap();
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].repo, "api");
+    assert!(tree[0].files.iter().any(|f| f.path == "src/b.txt"));
+    commands::stage_file(&e.vela, &s.id, "api", "src/new.txt").unwrap();
+    let tree = commands::space_files(&e.vela, &s.id).unwrap();
+    let f = tree[0]
+        .files
+        .iter()
+        .find(|f| f.path == "src/new.txt")
+        .unwrap();
+    assert!(f.staged.is_some() && f.unstaged.is_none());
+    commands::unstage_file(&e.vela, &s.id, "api", "src/new.txt").unwrap();
+    assert!(commands::stage_file(&e.vela, &s.id, "api", "../x").is_err());
+}

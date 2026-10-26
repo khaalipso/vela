@@ -128,9 +128,11 @@ describe("shell", () => {
     expect($$(".cm-mine-gutter .cm-gutterElement").some((e) => e.textContent === "•")).toBe(true);
     press("b");
     await settle();
-    const groups = $$(".changes .grp").map((g) => g.textContent);
-    expect(groups[1]).toContain("Changed by you");
-    expect(groups[1]).toContain("webhook.ts");
+    await vi.waitFor(() => expect($$(".files .row").length).toBeGreaterThan(0));
+    $$(".files .chip").find((c) => c.textContent === "Changed")!.click();
+    await settle();
+    const names = $$(".files .row.file").map((r) => r.textContent);
+    expect(names.some((n) => n?.includes("webhook.ts") && n.includes("M"))).toBe(true);
     press("b");
   });
 
