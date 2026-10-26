@@ -1,0 +1,8 @@
+{"type":"step_start","timestamp":1760000000000,"sessionID":"ses_abc123","part":{"id":"prt_1","type":"step-start"}}
+{"type":"tool_use","timestamp":1760000001000,"sessionID":"ses_abc123","part":{"id":"prt_2","type":"tool","tool":"read","state":{"status":"completed","input":{"filePath":"/w/api/src/webhook.ts"},"output":"...","title":"src/webhook.ts"}}}
+{"type":"tool_use","timestamp":1760000002000,"sessionID":"ses_abc123","part":{"id":"prt_3","type":"tool","tool":"edit","state":{"status":"completed","input":{"filePath":"/w/api/src/webhook.ts","oldString":"a","newString":"b"},"output":"","title":"src/webhook.ts"}}}
+{"type":"tool_use","timestamp":1760000002500,"sessionID":"ses_abc123","part":{"id":"prt_3b","type":"tool","tool":"edit","state":{"status":"error","input":{"filePath":"/w/api/src/missing.ts"},"error":"not found"}}}
+{"type":"log","level":"debug","message":"something unknown"}
+{"type":"text","timestamp":1760000003000,"sessionID":"ses_abc123","part":{"id":"prt_4","type":"text","text":"Handled the refund event."}}
+stray non json line after json
+{"type":"step_finish","timestamp":1760000004000,"sessionID":"ses_abc123","part":{"id":"prt_5","type":"step-finish","reason":"stop","cost":0.0123,"tokens":{"input":900,"output":120,"reasoning":0,"cache":{"read":50,"write":10}}}}

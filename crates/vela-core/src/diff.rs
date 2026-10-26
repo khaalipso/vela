@@ -457,6 +457,31 @@ pub fn diff_between(repo_dir_a: &Path, repo_dir_b: &Path) -> Result<Vec<Hunk>> {
     Ok(parse_unified(&repo, &text, HunkState::Pending))
 }
 
+/// What the files of `dir` (committed or not, `.gitignore` honoured) changed since the
+/// commit `base`, with the raw patch of every hunk so it can be applied elsewhere.
+/// Hunks are state Pending, origin You; the caller sets `Origin::Agent`.
+pub fn changes_since(dir: &Path, base: &str, repo: &str) -> Result<Vec<ParsedFile>> {
+    let tree = snapshot_tree(dir)?;
+    let text = git(
+        dir,
+        &[
+            "-c",
+            "core.quotepath=off",
+            "diff-tree",
+            "-p",
+            "-r",
+            "--no-color",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "-U3",
+            "-M",
+            base,
+            &tree,
+        ],
+    )?;
+    Ok(parse_diff(repo, &text, HunkState::Pending))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
