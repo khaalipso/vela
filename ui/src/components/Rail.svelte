@@ -1,7 +1,12 @@
 <script lang="ts">
   import { app } from "../lib/app.svelte";
+  import { openAtEvent } from "../lib/contextmenu.svelte";
   import { plural } from "../lib/format";
+  import { archivedMenu, spaceMenu } from "../lib/menus";
+  import { ops } from "../lib/ops.svelte";
   import Kbd from "./Kbd.svelte";
+
+  let showArchived = $state(false);
 </script>
 
 <nav class="rail" aria-label="Spaces">
@@ -22,7 +27,7 @@
   <div class="spaces">
     {#each app.spaces as sp, i (sp.id)}
       {@const w = app.waitingOf(i)}
-      <button class="sp" aria-current={i === app.active} style:--c={sp.color} onclick={() => app.goSpace(i)}>
+      <button class="sp" aria-current={i === app.active} style:--c={sp.color} onclick={() => app.goSpace(i)} oncontextmenu={(e) => openAtEvent(e, spaceMenu(i), sp.name)}>
         <span class="dot"></span>
         <span class="nm">
           <b>{sp.name}</b>
@@ -43,6 +48,22 @@
     >
     New space
   </button>
+  {#if app.archived.length}
+    <div class="arch">
+      <button class="label archhead" aria-expanded={showArchived} onclick={() => (showArchived = !showArchived)}>
+        <span class="chev" class:shut={!showArchived}>▾</span> Archived <span class="n">{app.archived.length}</span>
+      </button>
+      {#if showArchived}
+        {#each app.archived as a (a.id)}
+          <div class="ar" role="group" aria-label={a.name} oncontextmenu={(e) => openAtEvent(e, archivedMenu(a), a.name)}>
+            <span class="dot" style:--c={a.color}></span>
+            <span class="anm">{a.name}</span>
+            <button class="restore" onclick={() => void ops.restore(a)}>Restore</button>
+          </div>
+        {/each}
+      {/if}
+    </div>
+  {/if}
   <div class="railfoot">
     <div><Kbd k="[" /><Kbd k="]" /> switch space</div>
     <div><Kbd k="Shift Enter" /> next space waiting</div>
@@ -169,6 +190,62 @@
   .newsp:hover {
     background: var(--hover);
     color: var(--fg);
+  }
+  .arch {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .archhead {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    text-align: left;
+  }
+  .archhead .n {
+    margin-left: auto;
+    font-family: var(--code);
+  }
+  .chev {
+    display: inline-block;
+    transition: transform 200ms var(--ease);
+  }
+  .chev.shut {
+    transform: rotate(-90deg);
+  }
+  .ar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    border-radius: 10px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .ar:hover {
+    background: color-mix(in srgb, var(--hover) 70%, transparent);
+  }
+  .anm {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .restore {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 6px;
+    color: var(--fg);
+    background: var(--hover);
+  }
+  .restore:hover {
+    background: var(--line);
+  }
+  .arch + .railfoot {
+    margin-top: 0;
   }
   .railfoot {
     margin-top: auto;

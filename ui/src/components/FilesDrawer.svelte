@@ -10,6 +10,7 @@
     buildTree,
     defaultExpanded,
     dirMark,
+    EDIT_ID,
     fileId,
     flatten,
     highlightRuns,
@@ -18,11 +19,15 @@
     revealIds,
     scrollToRow,
     windowRange,
+    withNewRow,
     type Chip,
     type FileEntry,
     type NavCmd,
     type Row,
   } from "../lib/filetree";
+  import { menu, openAtEvent } from "../lib/contextmenu.svelte";
+  import { treeMenu } from "../lib/menus";
+  import { basename, ops } from "../lib/ops.svelte";
   import Kbd from "./Kbd.svelte";
 
   let root: HTMLElement | undefined = $state();
@@ -38,7 +43,10 @@
   const view = $derived(files.filtering ? files.view : null);
   const roots = $derived(view ? view.roots : full);
   const expanded = $derived(view ? ("all" as const) : files.expandedOf(sid));
-  const rows = $derived(flatten(roots, expanded));
+  const baseRows = $derived(flatten(roots, expanded));
+  const edit = $derived(files.edit);
+  // A new file or folder is named in a row of its own, first inside its folder.
+  const rows = $derived(edit && edit.mode !== "rename" && !view ? withNewRow(baseRows, edit.repo, edit.dir) : baseRows);
   const win = $derived(windowRange(rows.length, scrollTop, viewport || 480));
   const shown = $derived(rows.slice(win.start, win.end));
   const openKey = $derived(app.cui.file);
@@ -153,6 +161,44 @@
     }
   }
 
+  function cursorNode() {
+    const r = rows[cursorIndex];
+    return r && r.node.id !== EDIT_ID ? r.node : null;
+  }
+  function renameCursor() {
+    const n = cursorNode();
+    if (n && n.kind !== "repo") ops.startRename(n.repo, n.path, n.kind === "dir");
+  }
+  function deleteCursor() {
+    const n = cursorNode();
+    if (n && n.kind !== "repo") void ops.askDelete(n.repo, n.path, n.kind === "dir");
+  }
+
+  function rowMenu(e: MouseEvent, r: Row) {
+    if (r.node.id === EDIT_ID) return;
+    files.cursor = r.node.id;
+    openAtEvent(e, treeMenu(r.node), r.node.name || "Files");
+  }
+
+  /** The ⋯ button of a row opens the same menu under itself. */
+  function moreMenu(e: MouseEvent, r: Row) {
+    e.stopPropagation();
+    files.cursor = r.node.id;
+    const b = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    menu.open(treeMenu(r.node), { x: b.left, y: b.bottom + 2, invoker: tree ?? null, label: r.node.name });
+  }
+
+  function editKey(e: KeyboardEvent) {
+    e.stopPropagation();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void ops.commitEdit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      ops.cancelEdit();
+    }
+  }
+
   function setChip(c: Chip) {
     files.chip = c;
   }
@@ -201,6 +247,8 @@
     if (cmd) return stop(e), nav(cmd);
     if (k === " ") return stop(e), void toggleStage();
     if (k === ".") return stop(e), reveal();
+    if (k === "F2") return stop(e), renameCursor();
+    if (k === "Delete") return stop(e), deleteCursor();
     if (k === "/") return stop(e), focusFilter();
     if (k === "Escape") {
       stop(e);
@@ -325,9 +373,16 @@
               style:padding-left="{8 + r.depth * 14}px"
               onclick={() => clickRow(r)}
               ondblclick={() => dblRow(r)}
+              oncontextmenu={(e) => rowMenu(e, r)}
               onkeydown={() => {}}
             >
-              {#if n.kind === "file"}
+              {#if n.id === EDIT_ID}
+                <span class="chev"></span>
+                {@render editor()}
+              {:else if edit?.mode === "rename" && edit.repo === n.repo && edit.path === n.path && n.kind !== "repo"}
+                <span class="chev"></span>
+                {@render editor()}
+              {:else if n.kind === "file"}
                 <span class="chev"></span>
                 <span class="nm">
                   {#each highlightRuns(n.name, view?.positions.get(n.id), n.path.length - n.name.length) as h, i (i)}<span class:hit={h.hit}>{h.text}</span>{/each}
@@ -346,6 +401,9 @@
                   {#if n.info.behind}<span class="ab">↓{n.info.behind}</span>{/if}
                 {/if}
                 {#if dm}<span class="dm {dm.tone}" title="{dm.count} changed">{dm.count}</span>{/if}
+              {/if}
+              {#if n.id !== EDIT_ID}
+                <button class="more" tabindex="-1" aria-label="Actions for {n.name || n.repo}" title="Actions" onclick={(e) => moreMenu(e, r)}><svg width="14" height="14" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><circle cx="56" cy="128" r="20" /><circle cx="128" cy="128" r="20" /><circle cx="200" cy="128" r="20" /></svg></button>
               {/if}
             </div>
           {/each}
@@ -366,6 +424,30 @@
     onkeydown={resizeKey}
   ></div>
 </aside>
+
+{#snippet editor()}
+  <span class="ed">
+    <input
+      class="edit"
+      data-tree-edit
+      aria-label={edit?.mode === "rename" ? "New name" : edit?.mode === "dir" ? "Name of the new folder" : "Name of the new file"}
+      aria-invalid={edit?.error ? true : undefined}
+      placeholder={edit?.mode === "dir" ? "folder name" : "file name"}
+      autocomplete="off"
+      spellcheck="false"
+      value={edit?.value ?? ""}
+      oninput={(e) => {
+        if (!files.edit) return;
+        files.edit.value = e.currentTarget.value;
+        files.edit.error = "";
+      }}
+      onkeydown={editKey}
+      onblur={() => files.edit && (files.edit.value.trim() ? void ops.commitEdit() : ops.cancelEdit())}
+      onclick={(e) => e.stopPropagation()}
+    />
+    {#if edit?.error}<span class="edit-err" role="alert">{edit.error}</span>{/if}
+  </span>
+{/snippet}
 
 <style>
   .files {
@@ -543,6 +625,58 @@
   .row.dir .dm,
   .row.repo .dm {
     margin-left: auto;
+  }
+  .more {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    display: none;
+    place-items: center;
+    color: var(--muted);
+    font-weight: 700;
+    line-height: 1;
+  }
+  .row:hover .more,
+  .row.cur .more,
+  .more:focus-visible {
+    display: grid;
+  }
+  .more:hover {
+    background: var(--line);
+    color: var(--fg);
+  }
+  .ed {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .edit {
+    width: 100%;
+    height: 22px;
+    padding: 0 6px;
+    border: 0;
+    border-radius: 6px;
+    background: var(--raised);
+    color: var(--fg);
+    font: inherit;
+    font-size: 13px;
+    outline: 2px solid var(--space);
+  }
+  .edit[aria-invalid="true"] {
+    outline-color: var(--del);
+  }
+  .edit-err {
+    position: absolute;
+    z-index: 2;
+    margin-top: 24px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--del);
+    color: var(--on-accent);
+    font-size: 11px;
   }
   .note {
     padding: 6px 16px;

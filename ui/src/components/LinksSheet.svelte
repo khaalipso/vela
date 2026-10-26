@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { app } from "../lib/app.svelte";
+  import { openAtEvent } from "../lib/contextmenu.svelte";
+  import { linkMenu } from "../lib/menus";
   import { KIND_LABEL, KIND_SINGULAR, SOURCE_LABEL, linkSub, removable } from "../lib/links";
   import Kbd from "./Kbd.svelte";
   import LinkMark from "./LinkMark.svelte";
@@ -62,6 +64,10 @@
           onclick={() => {
             app.linksUi.i = i;
             void app.openLink(l.id);
+          }}
+          oncontextmenu={(e) => {
+            app.linksUi.i = i;
+            openAtEvent(e, linkMenu(l), l.title);
           }}
         >
           <LinkMark link={l} />

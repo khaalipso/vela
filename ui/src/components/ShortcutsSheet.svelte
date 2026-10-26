@@ -20,6 +20,8 @@
         ["@", "Ask an agent"],
         ["C", "Commit composer"],
         ["L", "Links of this space"],
+        ["Right click", "Actions of what is under the pointer"],
+        ["Menu  Shift F10", "The same from the keyboard, on the focused item"],
         ["?", "This sheet"],
       ],
     ],

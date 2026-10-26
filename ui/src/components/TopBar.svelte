@@ -1,5 +1,7 @@
 <script lang="ts">
   import { app } from "../lib/app.svelte";
+  import { openAtEvent } from "../lib/contextmenu.svelte";
+  import { linkMenu, repoChipMenu } from "../lib/menus";
   import LinkMark from "./LinkMark.svelte";
   import ViewSwitch from "./ViewSwitch.svelte";
 
@@ -15,6 +17,7 @@
           class="lk"
           title={l.url || `${l.key ?? l.title}: no tracker URL configured`}
           onclick={() => app.openLink(l.id)}
+          oncontextmenu={(e) => openAtEvent(e, linkMenu(l), l.title)}
         >
           <LinkMark link={l} /><span class="lt">{l.key && l.kind === "issue" ? l.key : l.title}</span>
         </button>
@@ -30,7 +33,8 @@
   </button>
   <div class="chips">
     {#each app.space.repos as r (r.name)}
-      <span class="chip">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <span class="chip" oncontextmenu={(e) => openAtEvent(e, repoChipMenu(r.name), r.name)}>
         <button class="chipb" title={r.worktree} onclick={() => { if (!app.filesOpen) app.dispatch({ type: "toggle-files" }); }}><b>{r.name}</b><span class="mono">{app.space.branch}</span></button>
         {#if app.space.repos.length > 1}
           <button class="rm" aria-label={`Remove ${r.name} from this space`} title="Remove from this space (its worktree must be clean)" onclick={() => app.dispatch({ type: "remove-repo", repo: r.name })}>×</button>

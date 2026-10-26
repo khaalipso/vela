@@ -1,5 +1,5 @@
 export type View = "code" | "review" | "agents";
-export type Overlay = "palette" | "quickopen" | "newspace" | "commit" | "composer" | "links" | "help" | null;
+export type Overlay = "palette" | "quickopen" | "newspace" | "commit" | "composer" | "links" | "help" | "sheet" | null;
 
 /** Everything that can happen in the shell. Keys, buttons and the command bar all produce these. */
 export type Action =
@@ -57,6 +57,7 @@ export type Action =
   | { type: "open-palette" }
   | { type: "open-help" }
   | { type: "open-file"; space: number; file: string }
+  | { type: "context-menu" } // Menu key / Shift F10: the right-click menu of the focused item
   // review view
   | { type: "rv-file"; delta: 1 | -1 } // J / K: next, previous file
   | { type: "rv-check"; delta: 1 | -1 } // Shift J / Shift K: next, previous check
@@ -124,6 +125,8 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
   const shift = !!e.shiftKey;
 
   if (ctrl && (k === "k" || k === "K")) return { type: "palette-toggle" };
+  // The menu key works everywhere, even in a text field or the editor.
+  if (k === "ContextMenu" || (shift && !ctrl && !alt && k === "F10")) return { type: "context-menu" };
   if (ctrl && !alt && (k === "p" || k === "P") && !c.overlay?.match(/^(newspace|commit|composer|links|help)$/)) {
     return { type: "quick-open" };
   }
@@ -198,6 +201,8 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
     return null;
   }
   if (c.overlay === "help") return k === "?" ? { type: "close" } : null;
+  // Confirmation and prompt sheets take their own keys.
+  if (c.overlay === "sheet") return null;
 
   if (c.typing) return null;
 
@@ -312,4 +317,40 @@ export function resolveReviewKey(k: string, shift: boolean): Action | null {
     default:
       return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Shortcut hints that cannot drift from the keymap
+// ---------------------------------------------------------------------------
+
+const HINT_KEYS: KeyLike[] = [
+  ...[..."abcdefghijklmnopqrstuvwxyz0123456789@?/[]"].map((key) => ({ key })),
+  ...[..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"].map((key) => ({ key, shiftKey: true })),
+  { key: "Enter" },
+  { key: "Enter", shiftKey: true },
+  { key: " " },
+  { key: "Tab" },
+  { key: "Tab", shiftKey: true },
+  { key: "p", ctrlKey: true },
+  { key: "k", ctrlKey: true },
+];
+
+/** The text of a hint as the UI writes it: `Y`, `Shift A`, `Ctrl P`, `Space`. */
+export function keyLabel(e: KeyLike): string {
+  const base = e.key === " " ? "Space" : e.key.length === 1 ? e.key.toUpperCase() : e.key;
+  return `${e.ctrlKey ? "Ctrl " : ""}${e.shiftKey ? "Shift " : ""}${base}`;
+}
+
+/**
+ * The key that runs `action` in `view`, found by asking `resolveKey` itself, so a hint shown in
+ * a menu is always a key that really works. Returns undefined when the action has no key.
+ */
+export function shortcutFor(action: Action, view: View = "code"): string | undefined {
+  const ctx: KeyContext = { typing: false, overlay: null, stackOpen: false, view, hasQuestion: false, filesOpen: true };
+  const want = JSON.stringify(action);
+  for (const k of HINT_KEYS) {
+    const got = resolveKey(k, ctx);
+    if (got && JSON.stringify(got) === want) return keyLabel(k);
+  }
+  return undefined;
 }

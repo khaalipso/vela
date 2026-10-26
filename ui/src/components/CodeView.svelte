@@ -1,10 +1,14 @@
 <script lang="ts">
+  import { selectAll } from "@codemirror/commands";
   import { EditorView } from "@codemirror/view";
   import { onDestroy, onMount, tick } from "svelte";
   import { app } from "../lib/app.svelte";
   import type { FileContent } from "../lib/backend";
-  import { createState, focusLine, replaceContent, setHunks, setMine, type HunkSpec } from "../lib/editor";
+  import { menu, openAtEvent, isKeyboardEvent } from "../lib/contextmenu.svelte";
+  import { createState, firstLineFacet, focusLine, replaceContent, setHunks, setMine, type HunkSpec } from "../lib/editor";
   import { fileKey } from "../lib/format";
+  import { editorMenu, tabMenu } from "../lib/menus";
+  import { readClipboard, writeClipboard } from "../lib/ops.svelte";
 
   let host: HTMLDivElement | undefined = $state();
   let view: EditorView | undefined;
@@ -90,6 +94,53 @@
   onMount(() => {
     view = new EditorView({ parent: host! });
   });
+
+  /** Right click (or the Menu key) in the editor: Cut, Copy, Paste, Select all, then file actions. */
+  function editorContext(e: MouseEvent) {
+    const v = view;
+    if (!v || !current) return;
+    const keyboard = isKeyboardEvent(e);
+    const sel = v.state.selection.main;
+    let pos = sel.head;
+    if (!keyboard) {
+      pos = v.posAtCoords({ x: e.clientX, y: e.clientY }) ?? sel.head;
+      // A right click outside the selection puts the cursor there, like most editors.
+      if (pos < sel.from || pos > sel.to) v.dispatch({ selection: { anchor: pos } });
+    }
+    const main = v.state.selection.main;
+    const first = v.state.facet(firstLineFacet);
+    const info = {
+      key: current,
+      line: v.state.doc.lineAt(pos).number + first - 1,
+      lastLine: v.state.doc.lines + first - 1,
+      selection: !main.empty,
+      copy: () => {
+        void writeClipboard(v.state.sliceDoc(main.from, main.to));
+        v.focus();
+      },
+      cut: () => {
+        void writeClipboard(v.state.sliceDoc(main.from, main.to));
+        v.dispatch(v.state.replaceSelection(""));
+        v.focus();
+      },
+      paste: () => {
+        void readClipboard().then((t) => {
+          if (t === null) app.toast("Press Ctrl V to paste here");
+          else v.dispatch(v.state.replaceSelection(t));
+          v.focus();
+        });
+      },
+      selectAll: () => {
+        selectAll(v);
+        v.focus();
+      },
+    };
+    if (keyboard) {
+      e.preventDefault();
+      const c = v.coordsAtPos(pos);
+      menu.open(editorMenu(info), { x: c?.left ?? e.clientX, y: (c?.bottom ?? e.clientY) + 2, keyboard: true, label: "Editor" });
+    } else openAtEvent(e, editorMenu(info), "Editor");
+  }
   onDestroy(() => {
     loadSeq++;
     view?.destroy();
@@ -121,7 +172,7 @@
 <div class="tabs" role="tablist">
   {#each tabs as t (t.key)}
     {@const k = t.key}
-    <div class="tab" class:preview={!t.pinned} role="tab" aria-selected={k === current} tabindex="0" onclick={() => (app.cui.file = k)} ondblclick={() => app.openFile(app.active, k, true)} onkeydown={(e) => e.key === "Enter" && (app.cui.file = k)}>
+    <div class="tab" class:preview={!t.pinned} role="tab" aria-selected={k === current} tabindex="0" onclick={() => (app.cui.file = k)} ondblclick={() => app.openFile(app.active, k, true)} oncontextmenu={(e) => openAtEvent(e, tabMenu(k), "Tab")} onkeydown={(e) => e.key === "Enter" && (app.cui.file = k)}>
       <span class="rp">{k.slice(0, k.indexOf("/"))}</span><span class="mono">{k.slice(k.indexOf("/") + 1)}</span>
       <button class="close" aria-label="Close tab" onclick={(e) => { e.stopPropagation(); app.closeTab(k); }}>×</button>
     </div>
@@ -134,7 +185,8 @@
     {#if !app.filesOpen}<button class="btn" onclick={() => app.dispatch({ type: "toggle-files" })}>Show files <kbd>B</kbd></button>{/if}
   </div>
 {/if}
-<div class="code" class:hidden={!current} bind:this={host}></div>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="code" class:hidden={!current} bind:this={host} oncontextmenu={editorContext}></div>
 
 <style>
   .nofile {

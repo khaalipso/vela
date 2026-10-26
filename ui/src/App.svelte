@@ -7,6 +7,8 @@
   import CommandBar from "./components/CommandBar.svelte";
   import CommitSheet from "./components/CommitSheet.svelte";
   import Composer from "./components/Composer.svelte";
+  import ContextMenu from "./components/ContextMenu.svelte";
+  import SheetModal from "./components/SheetModal.svelte";
   import Island from "./components/Island.svelte";
   import Kbd from "./components/Kbd.svelte";
   import LinksSheet from "./components/LinksSheet.svelte";
@@ -20,6 +22,9 @@
   import { app } from "./lib/app.svelte";
   import { isTyping, resolveKey } from "./lib/keymap";
   import { isHttpUrl } from "./lib/links";
+  import { installMenus, onGlobalContextMenu } from "./lib/menus";
+
+  installMenus();
 
   // A URL pasted while no field has the focus is linked to the current space.
   function onPaste(e: ClipboardEvent) {
@@ -57,7 +62,7 @@
   const surfaceKey = $derived(app.ready && app.spaces.length ? `${app.space.id}:${app.view}:${app.space.window ?? 1}` : "");
 </script>
 
-<svelte:window onkeydown={onKeydown} onpaste={onPaste} />
+<svelte:window onkeydown={onKeydown} onpaste={onPaste} oncontextmenu={onGlobalContextMenu} />
 
 {#if app.ready && !app.spaces.length}
   <main class="empty">
@@ -76,6 +81,8 @@
     {/if}
   </main>
   {#if app.overlay === "newspace"}<NewSpaceSheet />{/if}
+  {#if app.overlay === "sheet"}<SheetModal />{/if}
+  <ContextMenu />
   <Toast />
 {:else if app.ready}
   <div class="app">
@@ -113,6 +120,8 @@
   {#if app.overlay === "commit"}<CommitSheet />{/if}
   {#if app.overlay === "links"}<LinksSheet />{/if}
   {#if app.overlay === "help"}<ShortcutsSheet />{/if}
+  {#if app.overlay === "sheet"}<SheetModal />{/if}
+  <ContextMenu />
   <Toast />
 {/if}
 

@@ -17,6 +17,7 @@ import {
   type RepoInput,
 } from "./filetree";
 import { createMatcher, type Matcher } from "./matcher";
+import type { TreeEdit } from "./ops.svelte";
 import type { RepoFiles } from "./types";
 
 /** What is known about the files of a space, prepared once per listing. */
@@ -59,6 +60,8 @@ export class FilesState {
   /** The filter view for the current query and chip, null when not filtering. */
   view = $state.raw<FilterView | null>(null);
   width = $state(DEFAULT_WIDTH);
+  /** A rename, new file or new folder being typed in a row of the tree. */
+  edit = $state<TreeEdit | null>(null);
 
   private prepared = new Map<string, Prepared>();
   private seeded = new Set<string>();

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { app } from "../lib/app.svelte";
+  import { openAtEvent } from "../lib/contextmenu.svelte";
+  import { hunkMenu } from "../lib/menus";
   import { ROLE_COLORS, roleLabel, toolLabel } from "../lib/format";
   import { SECTION_TITLES } from "../lib/review";
   import DiffBlock from "./DiffBlock.svelte";
@@ -55,6 +57,10 @@
         data-focus={foc}
         data-state={h.state}
         onclick={() => app.rvHunkSet(i)}
+        oncontextmenu={(e) => {
+          app.rvHunkSet(i);
+          openAtEvent(e, hunkMenu(h), "Hunk");
+        }}
       >
         <div class="hh">
           {#if p}

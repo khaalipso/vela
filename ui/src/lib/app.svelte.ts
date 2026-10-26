@@ -108,6 +108,32 @@ export interface GateState {
   composer: ComposerState;
 }
 
+/** A small modal asked for by a menu: confirm something, or type one value. */
+export type SheetSpec =
+  | {
+      kind: "confirm";
+      title: string;
+      body: string;
+      /** What is lost or changed, one line each. */
+      items?: string[];
+      confirmLabel: string;
+      danger?: boolean;
+      /** The confirm button stays disabled until this box is ticked. */
+      ack?: string;
+      run: () => Promise<void> | void;
+    }
+  | {
+      kind: "prompt";
+      title: string;
+      label: string;
+      value: string;
+      submitLabel: string;
+      hint?: string;
+      /** Returns a message when the value is not acceptable. */
+      validate?: (v: string) => string | null;
+      run: (v: string) => Promise<void> | void;
+    };
+
 export class AppState {
   backend!: Backend;
   ready = $state(false);
@@ -116,6 +142,14 @@ export class AppState {
   ui = $state<Record<string, SpaceUi>>({});
   repos = $state.raw<string[]>([]);
   active = $state(0);
+  /** Spaces hidden from the rail with "Archive". */
+  archived = $state.raw<Space[]>([]);
+  /** The confirmation or prompt sheet that is open (overlay "sheet"). */
+  sheet = $state<SheetSpec | null>(null);
+  /** Extra command bar items for the current context (set by the menus module). */
+  contextItems: () => PaletteItem[] = () => [];
+  /** Menu key / Shift F10 (set by the menus module). */
+  onContextMenuKey: () => void = () => {};
 
   /** The file tree drawer is open. Open by default, remembered per window. */
   filesOpen = $state(readFlag("vela.filesOpen", true));
@@ -207,7 +241,17 @@ export class AppState {
     this.newSp.repos = this.defaultRepos();
     this.spaces = this.forThisWindow(await backend.listSpaces());
     await Promise.all(this.spaces.map((s) => this.load(s.id)));
+    await this.loadArchived();
     this.ready = true;
+  }
+
+  /** Refresh the list of archived spaces (the main window only; a pinned window has none). */
+  async loadArchived() {
+    if (this.pinned) {
+      this.archived = [];
+      return;
+    }
+    this.archived = await this.backend.listArchived().catch((): Space[] => []);
   }
 
   destroy() {
@@ -227,7 +271,7 @@ export class AppState {
   }
 
   /** Refresh the list of spaces, loading the data of new ones before they are shown. */
-  private async syncSpaces() {
+  async syncSpaces() {
     const list = this.forThisWindow(await this.backend.listSpaces());
     await Promise.all(list.filter((s) => !this.data[s.id]).map((s) => this.load(s.id)));
     this.spaces = list;
@@ -235,7 +279,7 @@ export class AppState {
 
   private async onEvent(e: BackendEvent) {
     await this.syncSpaces();
-    if (!this.data[e.spaceId]) return;
+    if (!this.data[e.spaceId] || !this.spaces.some((s) => s.id === e.spaceId)) return;
     await this.load(e.spaceId, e.kind === "file");
     if (e.kind !== "file") this.contentRev[e.spaceId] = (this.contentRev[e.spaceId] ?? 0) + 1;
     if (e.toast) this.toast(e.toast);
@@ -677,6 +721,9 @@ export class AppState {
         files: this.data[s.id].files.map((f) => ({ id: fileKey(f.repo, f.path), repo: f.repo, path: f.path })),
       })),
     });
+    // The actions of the current context ("Here") come right after the general actions.
+    const at = items.findIndex((x) => x.sec !== "Actions");
+    items.splice(at < 0 ? items.length : at, 0, ...this.contextItems());
     return filterPalette(items, this.pal.q);
   }
 
@@ -722,13 +769,13 @@ export class AppState {
     }, 2400);
   }
 
-  private async refresh(id = this.space.id) {
+  async refresh(id = this.space.id) {
     await this.syncSpaces();
     await this.load(id);
     this.contentRev[id] = (this.contentRev[id] ?? 0) + 1;
   }
 
-  private fail(e: unknown) {
+  fail(e: unknown) {
     this.toast(e instanceof Error ? e.message : String(e));
   }
 
@@ -773,6 +820,12 @@ export class AppState {
     u.recent = pushRecent(u.recent, file);
     saveRecent(id, u.recent);
     this.overlay = null;
+  }
+
+  /** Open a file and put the cursor on an (absolute) line. */
+  gotoLine(file: string, line: number) {
+    this.openFile(this.active, file, true);
+    this.focusRequest = { file, line, seq: ++this.focusSeq };
   }
 
   closeTab(key: string) {
@@ -1144,6 +1197,7 @@ export class AppState {
 
   closeOverlay() {
     this.overlay = null;
+    this.sheet = null;
     this.gate = null;
     this.stackOpen = false;
     this.gateSeq++;
@@ -1294,7 +1348,8 @@ export class AppState {
     if (!item) return;
     this.overlay = null;
     this.pal = { q: "", i: 0 };
-    void this.dispatch(item.action);
+    if (item.run) item.run();
+    else if (item.action) void this.dispatch(item.action);
   }
 
   upNextGo() {
@@ -1444,6 +1499,8 @@ export class AppState {
         return;
       case "open-file":
         return this.openFile(a.space, a.file);
+      case "context-menu":
+        return this.onContextMenuKey();
       case "quick-open":
         this.overlay = this.overlay === "quickopen" ? null : "quickopen";
         return;

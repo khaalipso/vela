@@ -266,6 +266,18 @@ export function flatten(roots: TNode[], expanded: ReadonlySet<string> | "all"): 
   return out;
 }
 
+/** Id of the row where a new file or folder is being named. */
+export const EDIT_ID = "__edit__";
+
+/** Put the row that names a new entry first among the children of `dir` ("" is the repo itself). */
+export function withNewRow(rows: Row[], repo: string, dir: string): Row[] {
+  const at = rows.findIndex((r) => r.node.repo === repo && (dir ? r.node.kind === "dir" && r.node.path === dir : r.node.kind === "repo"));
+  if (at < 0) return rows;
+  const host = rows[at];
+  const node: TNode = { id: EDIT_ID, kind: "file", name: "", repo, path: dir, children: [], staged: 0, unstaged: 0, changed: 0 };
+  return [...rows.slice(0, at + 1), { node, depth: host.depth + 1 }, ...rows.slice(at + 1)];
+}
+
 /** Ids of every folder and repo node (to expand everything). */
 export function allContainerIds(roots: TNode[]): Set<string> {
   const ids = new Set<string>();

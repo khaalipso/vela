@@ -27,6 +27,34 @@ export function closeTab(tabs: Tab[], key: string, current: string): { tabs: Tab
   return { tabs: next, current: next[Math.min(at, next.length - 1)]?.key ?? "" };
 }
 
+/** Pin or unpin one tab. A second preview tab cannot exist: the others stay as they are. */
+export function setPinned(tabs: Tab[], key: string, pinned: boolean): Tab[] {
+  return tabs.map((t) => (t.key === key ? { ...t, pinned } : t));
+}
+
+/** Keep only `key`. */
+export function closeOthers(tabs: Tab[], key: string): Tab[] {
+  return tabs.filter((t) => t.key === key);
+}
+
+/** Close every tab after `key`. */
+export function closeToRight(tabs: Tab[], key: string): Tab[] {
+  const at = tabs.findIndex((t) => t.key === key);
+  return at < 0 ? tabs : tabs.slice(0, at + 1);
+}
+
+/** The tab to show after closing some: keep `current` when it survived, else `fallback` (or the last tab). */
+export function currentAfter(tabs: Tab[], current: string, fallback: string): string {
+  if (tabs.some((t) => t.key === current)) return current;
+  if (tabs.some((t) => t.key === fallback)) return fallback;
+  return tabs[tabs.length - 1]?.key ?? "";
+}
+
+/** A file or folder was renamed: every key at or below `from` moves to `to`. */
+export function renameKeys(keys: string[], from: string, to: string): string[] {
+  return keys.map((k) => (k === from ? to : k.startsWith(`${from}/`) ? to + k.slice(from.length) : k));
+}
+
 /** Most recent first, no duplicates. */
 export function pushRecent(list: string[], key: string, max = 30): string[] {
   return [key, ...list.filter((k) => k !== key)].slice(0, max);

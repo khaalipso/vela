@@ -1,7 +1,9 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { app } from "../lib/app.svelte";
+  import { openAtEvent } from "../lib/contextmenu.svelte";
   import { plural } from "../lib/format";
+  import { reviewFileMenu } from "../lib/menus";
   import { SECTIONS, SECTION_TITLES, type FileRow, type RepoGroup, type Section } from "../lib/review";
   import Kbd from "./Kbd.svelte";
 
@@ -64,6 +66,10 @@
               tabindex="-1"
               style:--c={COLORS[sec]}
               onclick={() => pick(r)}
+              oncontextmenu={(e) => {
+                pick(r);
+                openAtEvent(e, reviewFileMenu(r), r.path);
+              }}
             >
               <span class="st">{r.letter}</span>
               <span class="pt"><em>{dir}</em>{name}</span>

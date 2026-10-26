@@ -2,14 +2,17 @@ import type { Action } from "./keymap";
 import type { Link } from "./types";
 
 export interface PaletteItem {
-  sec: "Actions" | "Links" | "Spaces" | "Files";
+  sec: "Actions" | "Here" | "Links" | "Spaces" | "Files";
   title: string;
   sub?: string;
   /** Color of the dot (a space color). */
   dot?: string;
   /** Shortcut shown on the right. */
   key?: string;
-  action: Action;
+  /** What a key press or click dispatches. */
+  action?: Action;
+  /** Or a function, for the actions of the right-click menus. */
+  run?: () => void;
 }
 
 export interface PaletteSource {
