@@ -20,12 +20,14 @@
 
   function onKeydown(e: KeyboardEvent) {
     if (!app.ready) return;
+    // With no space yet only the new space sheet takes keys (the button opens it).
+    if (!app.spaces.length && app.overlay !== "newspace") return;
     const action = resolveKey(e, {
       typing: isTyping(e.target as HTMLElement | null),
       overlay: app.overlay,
       stackOpen: app.stackOpen,
       view: app.view,
-      hasQuestion: !!app.sd.question,
+      hasQuestion: app.spaces.length > 0 && !!app.sd.question,
     });
     if (action) {
       e.preventDefault();
@@ -35,15 +37,29 @@
 
   // The accent of the whole window follows the active space.
   $effect(() => {
-    if (app.ready) document.documentElement.style.setProperty("--space", app.space.color);
+    if (app.ready && app.spaces.length) document.documentElement.style.setProperty("--space", app.space.color);
   });
 
-  const surfaceKey = $derived(app.ready ? `${app.space.id}:${app.view}:${app.space.window ?? 1}` : "");
+  const surfaceKey = $derived(app.ready && app.spaces.length ? `${app.space.id}:${app.view}:${app.space.window ?? 1}` : "");
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
-{#if app.ready}
+{#if app.ready && !app.spaces.length}
+  <main class="empty">
+    <h1>{app.pinned ? "This space is gone" : "No space yet"}</h1>
+    <p>
+      {app.pinned
+        ? "Close this window and pick another space."
+        : "A space is one task: the repos it touches, one worktree each, and the agents working on it."}
+    </p>
+    {#if !app.pinned}
+      <button class="btn p" onclick={() => app.dispatch({ type: "open-newspace" })}>Create your first space</button>
+    {/if}
+  </main>
+  {#if app.overlay === "newspace"}<NewSpaceSheet />{/if}
+  <Toast />
+{:else if app.ready}
   <div class="app">
     <Rail />
     <div class="main">
@@ -81,6 +97,26 @@
 {/if}
 
 <style>
+  .empty {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: var(--muted);
+    text-align: center;
+    padding: 24px;
+  }
+  .empty h1 {
+    margin: 0;
+    color: var(--fg);
+    font-size: 20px;
+  }
+  .empty p {
+    margin: 0;
+    max-width: 420px;
+  }
   .app {
     height: 100%;
     display: flex;

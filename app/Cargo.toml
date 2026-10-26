@@ -1,0 +1,20 @@
+[package]
+name = "vela-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Vela desktop app: Tauri shell over vela-core"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+vela-core = { path = "../crates/vela-core" }
+tauri = { version = "2", features = [] }
+serde.workspace = true
+serde_json.workspace = true
+notify = "8"
+notify-debouncer-mini = "0.7"
+
+[dev-dependencies]
+tempfile.workspace = true

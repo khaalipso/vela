@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Main and space windows",
+  "windows": ["main", "space-*"],
+  "permissions": ["core:default"]
+}
