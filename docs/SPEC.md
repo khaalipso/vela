@@ -39,6 +39,12 @@ The types in `crates/vela-core/src/model.rs` are the contract. The UI mirrors th
 
 An agent works in its own worktree. Its proposals are the diff between its worktree and the user's worktree for the same repo. Accepting a hunk applies that patch to the user's worktree (`git apply`), then stages it. Rejecting records the hunk id so it is not shown again. Editing accepts, then opens the lines in the editor.
 
+## Review view and checks
+
+The Review view has three zones: files (Staged first and big, then Not staged, then Proposed by agents), the diff of the selected file with every hunk and its state, and the Checks panel (hooks, lint, types, optional tests, your own scripts) with live status and logs. Checks run in your worktree on the staged set, are cached by the tree of the index, and rerun by themselves when the staged set changes (`checks.auto`). Detection, config layers and keys: `docs/CONFIG.md`. Keys in the view: `J` `K` files, `Space` stage or unstage the file, `Shift A` / `Shift U` all, `Enter` focus the diff, `Tab` / `Shift Tab` hunks, `Y` stage / accept, `U` unstage, `N` reject a proposal (your own edits are never discarded), `R` run all checks, `Shift J` / `Shift K` pick a check, `Shift R` run it, `O` its log.
+
+The composer's gate lists the results of these checks (a failing one needs an override). If every enabled hook check passed on the exact index tree and `checks.skip_hooks_on_commit_if_passed` is on, the commit runs with `--no-verify` and carries `Vela-Checks: <ids> passed on <short tree>`.
+
 ## Commit gate
 
 Before a commit, run in parallel on the staged diff only: reviewer agent (non interactive CLI call), tests touched by the diff, lint, secret scan, repo rules. Results are cached per hunk id. One commit is made per repo with the same message; push goes to the same branch name everywhere. Override needs a written reason, stored in the commit trailer `Vela-Override:`.

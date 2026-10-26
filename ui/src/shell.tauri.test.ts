@@ -323,7 +323,7 @@ describe("shell on the Tauri backend", () => {
 
   it("commits every commit in order with an empty gate, without claiming a push", async () => {
     await openComposer();
-    expect($(".checks")?.textContent).toContain("No gate checks yet");
+    expect($(".checks")?.textContent).toContain("No checks configured");
     const btn = $$(".sheet .btn.p")[0] as HTMLButtonElement;
     expect(btn.disabled).toBe(false);
     expect(btn.textContent).toContain("Commit 2 commits");

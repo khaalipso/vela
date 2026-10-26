@@ -9,10 +9,11 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use vela_core::Vela;
 use vela_core::model::{
-    Agent, CommitGroup, CommitPlan, CommitRules, FileChange, Hunk, Link, Problem, RepoFiles, Space,
-    StackItem,
+    Agent, CommitGroup, CommitPlan, CommitRules, FileChange, Hunk, Link, Problem, RepoChecks,
+    RepoFiles, Space, StackItem,
 };
 
+use crate::checkrun::{self, CheckEvent, CheckRunner, EmitCheck};
 use crate::commands::{self, CommitResult, FileRef};
 use crate::error::{AppError, AppResult};
 use crate::watch::{self, ChangeEvent, ChangeKind, Emit, Watchers};
@@ -28,11 +29,27 @@ where
         .map_err(|e| AppError::new("internal", e.to_string()))?
 }
 
-/// Emitter that broadcasts the change event to every window.
+/// Emitter that broadcasts the change event to every window. A change of the index or HEAD
+/// also schedules the automatic rerun of the checks (debounced).
 pub fn emitter(app: &AppHandle) -> Emit {
     let app = app.clone();
     Arc::new(move |e: ChangeEvent| {
+        let auto = e.kind == ChangeKind::State;
+        let space_id = e.space_id.clone();
         let _ = app.emit(watch::EVENT, e);
+        if auto {
+            let vela = app.state::<Vela>().inner().clone();
+            let runner = app.state::<Arc<CheckRunner>>().inner().clone();
+            runner.schedule_auto(&vela, &space_id, &check_emitter(&app));
+        }
+    })
+}
+
+/// Emitter that broadcasts check events (`vela://check`) to every window.
+pub fn check_emitter(app: &AppHandle) -> EmitCheck {
+    let app = app.clone();
+    Arc::new(move |e: CheckEvent| {
+        let _ = app.emit(checkrun::EVENT, e);
     })
 }
 
@@ -368,6 +385,93 @@ pub fn open_url(app: AppHandle, url: String) -> AppResult<()> {
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|e| AppError::new("open", e.to_string()))
+}
+
+#[tauri::command]
+pub async fn set_checks_auto(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    repo: String,
+    auto: bool,
+) -> AppResult<()> {
+    let sid = space_id.clone();
+    blocking(&vela, move |v| {
+        commands::set_checks_auto(v, &sid, &repo, auto)
+    })
+    .await?;
+    notify_state(&app, &space_id);
+    Ok(())
+}
+
+// -- checks -----------------------------------------------------------------
+
+#[tauri::command]
+pub async fn checks(
+    vela: State<'_, Vela>,
+    runner: State<'_, Arc<CheckRunner>>,
+    space_id: String,
+) -> AppResult<Vec<RepoChecks>> {
+    let runner = runner.inner().clone();
+    blocking(&vela, move |v| commands::checks(v, &runner, &space_id)).await
+}
+
+/// Start checks in the background. Progress arrives as `vela://check` events.
+#[tauri::command]
+pub async fn run_checks(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    runner: State<'_, Arc<CheckRunner>>,
+    space_id: String,
+    ids: Option<Vec<String>>,
+    force: Option<bool>,
+) -> AppResult<Vec<(String, String)>> {
+    let runner = runner.inner().clone();
+    let emit = check_emitter(&app);
+    blocking(&vela, move |v| {
+        commands::run_checks(
+            v,
+            &runner,
+            &space_id,
+            ids.as_deref(),
+            force.unwrap_or(false),
+            &emit,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn check_log(
+    vela: State<'_, Vela>,
+    runner: State<'_, Arc<CheckRunner>>,
+    space_id: String,
+    repo: String,
+    id: String,
+) -> AppResult<String> {
+    let runner = runner.inner().clone();
+    blocking(&vela, move |v| {
+        commands::check_log(v, &runner, &space_id, &repo, &id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn set_check_enabled(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    repo: String,
+    id: String,
+    enabled: bool,
+) -> AppResult<()> {
+    let sid = space_id.clone();
+    blocking(&vela, move |v| {
+        commands::set_check_enabled(v, &sid, &repo, &id, enabled)
+    })
+    .await?;
+    notify_state(&app, &space_id);
+    Ok(())
 }
 
 // -- later milestones: empty or neutral --------------------------------------

@@ -40,27 +40,31 @@ describe("shell", () => {
     expect($("h1")?.textContent).toContain("Stripe v2 billing");
     expect($$(".sp").length).toBe(3);
     expect($(".island b")?.textContent).toBe("Review 3 proposals");
-    expect($$(".hunk").length).toBe(3);
+    // three zones: files with the proposals listed, the diff of the first one, the checks
+    expect($$("[data-section='proposed'] .frow").length).toBe(2);
+    expect($$(".hunk").length).toBe(2);
     expect($$(".hunk.focus").length).toBe(1);
+    expect($(".hunk.focus")?.textContent).toContain("Verify the Stripe signature");
+    expect($("aside[aria-label='Checks']")).toBeTruthy();
     expect(document.documentElement.style.getPropertyValue("--space")).toBe("#E8A14A");
   });
 
-  it("J moves the focus, Y accepts, U undoes", async () => {
-    press("j");
+  it("Tab moves the hunk cursor, Y accepts, U undoes", async () => {
+    press("Tab");
     await settle();
-    expect($(".hunk.focus")?.textContent).toContain("Pin the new API version");
+    expect($(".hunk.focus")?.textContent).toContain("Log event ids");
     press("y");
     await settle();
-    expect($$(".hunk.done").length).toBe(1);
+    expect($$(".hunk[data-state='staged']").length).toBe(1);
     expect($(".island b")?.textContent).toBe("Review 2 proposals");
-    // after accepting, the focus moved on to the next pending proposal
-    expect($(".hunk.focus")?.textContent).toContain("Log event ids");
-    press("k");
+    // after accepting, the cursor moved on to the next pending proposal
+    expect($(".hunk.focus")?.textContent).toContain("Verify the Stripe signature");
+    press("Tab");
     await settle();
-    expect($(".hunk.focus")?.textContent).toContain("Pin the new API version");
+    expect($(".hunk.focus")?.textContent).toContain("Log event ids");
     press("u");
     await settle();
-    expect($$(".hunk.done").length).toBe(0);
+    expect($$(".hunk[data-state='staged']").length).toBe(0);
     expect($(".island b")?.textContent).toBe("Review 3 proposals");
   });
 
@@ -137,6 +141,7 @@ describe("shell", () => {
   });
 
   it("Y in the code view accepts the focused widget and the editor shows the new lines", async () => {
+    app.cui.hi = "s1";
     await vi.waitFor(() => expect(app.focused?.hunk.state).toBe("pending"));
     const id = app.focused!.hunk.id;
     press("y");
@@ -147,11 +152,17 @@ describe("shell", () => {
     expect(doc).toContain("// by hand");
   });
 
-  it("the commit gate opens on C and lists five checks", async () => {
+  it("the commit gate opens on C and reads the real checks plus the backend gate", async () => {
     press("c");
     await settle();
-    await vi.waitFor(() => expect($$(".checks li").length).toBe(5));
-    await vi.waitFor(() => expect($$(".checks li em").every((e) => e.textContent !== "checking")).toBe(true));
+    // pre-commit and lint from the checks, then the five rows of the backend gate
+    await vi.waitFor(() => expect($$(".checks li").length).toBe(7));
+    await vi.waitFor(() =>
+      expect($$(".checks li em").every((e) => e.textContent !== "running" && e.textContent !== "not run")).toBe(true),
+    );
+    const rows = $$(".checks li").map((e) => (e.textContent ?? "").trim());
+    expect(rows.some((t) => t.includes("pre-commit") && t.includes("passed")), JSON.stringify(rows)).toBe(true);
+    expect(rows.some((t) => t.startsWith("Lint") && !t.startsWith("Lint and") && t.includes("failed")), JSON.stringify(rows)).toBe(true);
     // the stripe space fails its gate: override needed
     expect($("#ov-in")).toBeTruthy();
     expect(($(".btn.p[disabled]") as HTMLButtonElement | null)).toBeTruthy();

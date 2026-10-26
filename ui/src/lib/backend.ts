@@ -20,6 +20,10 @@ import type {
   Link,
   LinkSource,
   Problem,
+  CheckEntry,
+  CheckKind,
+  CheckStatus,
+  RepoChecks,
   RepoFiles,
   Space,
   StackItem,
@@ -84,6 +88,19 @@ export interface BackendEvent {
   kind: "file" | "state";
   /** Message to show in a toast, if any. */
   toast?: string;
+}
+
+/** `vela://check`: live progress of one check. `line` is one line of output while running. */
+export interface CheckEvent {
+  spaceId: string;
+  repo: string;
+  id: string;
+  status: CheckStatus;
+  line?: string;
+  durationMs?: number;
+  cached?: boolean;
+  exitCode?: number;
+  timedOut?: boolean;
 }
 
 export type Unsubscribe = () => void;
@@ -155,6 +172,16 @@ export interface Backend {
   openUrl(url: string): Promise<void>;
 
   onChange(listener: (e: BackendEvent) => void): Unsubscribe;
+
+
+  /** Checks of every repo of the space with the status for the current staged set. */
+  checks(spaceId: string): Promise<RepoChecks[]>;
+  /** Start checks (`ids` picks some, even disabled ones; none runs every enabled check). Progress comes through `onCheck`. */
+  runChecks(spaceId: string, ids?: string[], force?: boolean): Promise<void>;
+  checkLog(spaceId: string, repo: string, id: string): Promise<string>;
+  setCheckEnabled(spaceId: string, repo: string, id: string, enabled: boolean): Promise<void>;
+  setChecksAuto(spaceId: string, repo: string, auto: boolean): Promise<void>;
+  onCheck(listener: (e: CheckEvent) => void): Unsubscribe;
 }
 
 export function languageOf(path: string): FileContent["language"] {
@@ -219,6 +246,30 @@ interface MSpace {
   links: Link[];
   question: SeedSpace["question"];
   notes: Map<string, { note: ReviewNote; fix: string[] }>;
+}
+
+interface MCheckDef {
+  repo: string;
+  id: string;
+  name: string;
+  kind: CheckKind;
+  command: string;
+  optional: boolean;
+  source: string;
+  /** Simulated duration. */
+  ms: number;
+  fails: boolean;
+  log: string[];
+}
+
+interface MCheckState {
+  defs: MCheckDef[];
+  enabled: Map<string, boolean>;
+  auto: Map<string, boolean>;
+  running: Set<string>;
+  cache: Map<string, { status: CheckStatus; durationMs: number }>;
+  logs: Map<string, string>;
+  autoSeq: number;
 }
 
 export interface MockOptions {
@@ -293,6 +344,7 @@ export class MockBackend implements Backend {
 
   private emit(spaceId: string, kind: BackendEvent["kind"] = "state", toast?: string) {
     for (const l of [...this.listeners]) l({ spaceId, kind, toast });
+    if (kind === "state") this.scheduleAuto(spaceId);
   }
 
   private later(ms: number, fn: () => void) {
@@ -395,12 +447,23 @@ export class MockBackend implements Backend {
     return [...m.values()];
   }
 
-  private gateChecks(s: MSpace): GateCheck[] {
+  /** Enabled checks whose result for the staged set is a failure: they block the gate. */
+  private failingChecks(s: MSpace): GateCheck[] {
+    const st = this.checkStates.get(s.space.id);
+    if (!st) return [];
+    const tree = this.stagedTree(s);
+    return st.defs
+      .filter((d) => this.isEnabled(st, d) && st.cache.get(`${this.ckKey(d)}@${tree}`)?.status === "fail")
+      .map((d) => ({ name: d.name, detail: "failed", pass: false }));
+  }
+
+  private gateChecks(s: MSpace, withChecks = true): GateCheck[] {
     const blocking = [...s.notes.values()].filter(
       (n) => !n.note.resolved && s.hunks.find((h) => h.id === n.note.hunkId)?.state !== "rejected",
     ).length;
     const t = s.tests;
     return [
+      ...(withChecks ? this.failingChecks(s) : []),
       { name: "Reviewer", detail: blocking ? `${blocking} blocking` : "no blocking notes", pass: !blocking },
       { name: "Tests touched by the diff", detail: `${t.pass} of ${t.total}`, pass: t.pass === t.total },
       { name: "Lint and types", detail: "clean", pass: true },
@@ -515,20 +578,6 @@ export class MockBackend implements Backend {
       });
       return { repo: r.name, branch: s.space.branch, worktree: r.worktree, ahead: null, behind: null, files, truncated: false };
     });
-  }
-
-  async stageFile(spaceId: string, repo: string, path: string): Promise<void> {
-    const s = this.sp(spaceId);
-    const cur = (await this.status(spaceId)).find((c) => c.repo === repo && c.path === path);
-    s.fileStage.set(fileKey(repo, path), { staged: cur?.staged ?? cur?.unstaged ?? "modified", unstaged: null });
-    this.emit(spaceId);
-  }
-
-  async unstageFile(spaceId: string, repo: string, path: string): Promise<void> {
-    const s = this.sp(spaceId);
-    const cur = (await this.status(spaceId)).find((c) => c.repo === repo && c.path === path);
-    s.fileStage.set(fileKey(repo, path), { staged: null, unstaged: cur?.staged ?? null });
-    this.emit(spaceId);
   }
 
   async hunks(spaceId: string): Promise<Hunk[]> {
@@ -764,7 +813,8 @@ export class MockBackend implements Backend {
   }
 
   async runGate(spaceId: string, onCheck?: (index: number, check: GateCheck) => void): Promise<GateCheck[]> {
-    const checks = this.gateChecks(this.sp(spaceId));
+    // The checks of the Review view are shown by the UI itself; this is the rest of the gate.
+    const checks = this.gateChecks(this.sp(spaceId), false);
     return new Promise((resolve) => {
       let i = 0;
       const step = () => {
@@ -904,6 +954,261 @@ export class MockBackend implements Backend {
     this.opened.push(url.trim());
   }
 
+  // -- files: stage and unstage whole files -----------------------------------
+
+  async stageFile(spaceId: string, repo: string, path: string): Promise<void> {
+    const s = this.sp(spaceId);
+    const bk = `${spaceId}:${fileKey(repo, path)}`;
+    if (this.unstagedBase.delete(bk)) {
+      // Staged before the session and unstaged since: stage it back.
+      if (!s.baseStaged.some((x) => x.repo === repo && x.path === path)) s.baseStaged.push({ repo, path });
+      this.emit(spaceId);
+      return;
+    }
+    const f = this.file(s, repo, path);
+    if (f.mine.size) {
+      this.parked.set(`${spaceId}:${fileKey(repo, path)}`, new Set(f.mine));
+      f.mine = new Set();
+      if (!s.baseStaged.some((x) => x.repo === repo && x.path === path)) s.baseStaged.push({ repo, path });
+    }
+    this.emit(spaceId);
+  }
+
+  async unstageFile(spaceId: string, repo: string, path: string): Promise<void> {
+    const s = this.sp(spaceId);
+    const f = this.file(s, repo, path);
+    for (const h of s.hunks) {
+      if (h.repo === repo && h.path === path && h.state === "staged") {
+        this.unapply(s, h);
+        h.state = "pending";
+      }
+    }
+    const i = s.baseStaged.findIndex((x) => x.repo === repo && x.path === path);
+    if (i >= 0) s.baseStaged.splice(i, 1);
+    const key = `${spaceId}:${fileKey(repo, path)}`;
+    const parked = this.parked.get(key);
+    if (parked) {
+      f.mine = parked;
+      this.parked.delete(key);
+    } else if (i >= 0) {
+      this.unstagedBase.add(key);
+    }
+    this.emit(spaceId);
+  }
+
+  // -- checks ---------------------------------------------------------------
+
+  private parked = new Map<string, Set<number>>();
+  /** Files staged before the session that you unstaged, so Space can stage them back. */
+  private unstagedBase = new Set<string>();
+  private checkStates = new Map<string, MCheckState>();
+  private checkListeners = new Set<(e: CheckEvent) => void>();
+
+  private ck(spaceId: string): MCheckState {
+    let st = this.checkStates.get(spaceId);
+    if (!st) {
+      const s = this.sp(spaceId);
+      const repo = s.space.repos[0].name;
+      const defs: MCheckDef[] = [
+        {
+          repo,
+          id: "pre-commit",
+          name: "pre-commit",
+          kind: "hook",
+          command: "pre-commit run --files {files}",
+          optional: false,
+          source: ".pre-commit-config.yaml",
+          ms: 600,
+          fails: false,
+          log: [
+            "trim trailing whitespace.................................................Passed",
+            "fix end of files.........................................................Passed",
+            "check yaml...............................................................Passed",
+            "check for added large files..............................................Passed",
+          ],
+        },
+        {
+          repo,
+          id: "test",
+          name: "Tests (pnpm)",
+          kind: "test",
+          command: "pnpm test",
+          optional: true,
+          source: "package.json",
+          ms: 1800,
+          fails: false,
+          log: [
+            " RUN  v5.0.5",
+            " ✓ src/webhook.test.ts (6 tests) 41ms",
+            " ✓ src/refunds.test.ts (4 tests) 22ms",
+            "",
+            " Test Files  2 passed (2)",
+            "      Tests  10 passed (10)",
+          ],
+        },
+      ];
+      if (spaceId === "stripe") {
+        defs.splice(1, 0, {
+          repo,
+          id: "lint",
+          name: "Lint",
+          kind: "lint",
+          command: "pnpm run lint",
+          optional: false,
+          source: "package.json",
+          ms: 900,
+          fails: true,
+          log: [
+            "> api@1.0.0 lint /home/me/wt/stripe-v2",
+            "> eslint src --max-warnings 0",
+            "",
+            "src/billing/webhook.ts",
+            "  14:9  error  'sig' is assigned a value but never used  @typescript-eslint/no-unused-vars",
+            "  22:3  error  Unexpected console statement              no-console",
+            "",
+            "✖ 2 problems (2 errors, 0 warnings)",
+            "ELIFECYCLE Command failed with exit code 1.",
+          ],
+        });
+      }
+      st = { defs, enabled: new Map(), auto: new Map(), running: new Set(), cache: new Map(), logs: new Map(), autoSeq: 0 };
+      this.checkStates.set(spaceId, st);
+    }
+    return st;
+  }
+
+  /** Identity of the staged set, the way the tree of the index is in the real core. */
+  private stagedTree(s: MSpace): string {
+    const files = this.stagedFiles(s).map((f) => fileKey(f.repo, f.path));
+    const hunks = s.hunks.filter((h) => h.state === "staged").map((h) => h.id);
+    return [...files.sort(), "|", ...hunks.sort()].join(",");
+  }
+
+  private isEnabled(st: MCheckState, d: MCheckDef): boolean {
+    return st.enabled.get(`${d.repo}/${d.id}`) ?? !d.optional;
+  }
+
+  private ckKey(d: MCheckDef): string {
+    return `${d.repo}/${d.id}`;
+  }
+
+  private emitCheck(e: CheckEvent) {
+    for (const l of [...this.checkListeners]) l(e);
+  }
+
+  async checks(spaceId: string): Promise<RepoChecks[]> {
+    const s = this.sp(spaceId);
+    const st = this.ck(spaceId);
+    const tree = this.stagedTree(s);
+    return s.space.repos.map((r) => ({
+      repo: r.name,
+      auto: st.auto.get(r.name) ?? true,
+      checks: st.defs
+        .filter((d) => d.repo === r.name)
+        .map((d): CheckEntry => {
+          const hit = st.cache.get(`${this.ckKey(d)}@${tree}`);
+          const enabled = this.isEnabled(st, d);
+          const status: CheckStatus = !enabled
+            ? "disabled"
+            : st.running.has(this.ckKey(d))
+              ? "running"
+              : hit
+                ? hit.status
+                : "idle";
+          return {
+            repo: d.repo,
+            id: d.id,
+            name: d.name,
+            kind: d.kind,
+            command: d.command,
+            optional: d.optional,
+            enabled,
+            missing: false,
+            source: d.source,
+            when: "staged",
+            status,
+            durationMs: hit?.durationMs ?? null,
+            cached: !!hit,
+            exitCode: hit ? (hit.status === "pass" ? 0 : 1) : null,
+            timedOut: false,
+          };
+        }),
+      warnings: [],
+    }));
+  }
+
+  async runChecks(spaceId: string, ids?: string[], force = false): Promise<void> {
+    const st = this.ck(spaceId);
+    for (const d of st.defs) {
+      const wanted = ids ? ids.includes(d.id) : this.isEnabled(st, d);
+      if (wanted) this.runCheck(spaceId, d, force);
+    }
+  }
+
+  private runCheck(spaceId: string, d: MCheckDef, force: boolean) {
+    const s = this.sp(spaceId);
+    const st = this.ck(spaceId);
+    const k = this.ckKey(d);
+    if (st.running.has(k)) return;
+    const cacheKey = `${k}@${this.stagedTree(s)}`;
+    const hit = force ? undefined : st.cache.get(cacheKey);
+    const base = { spaceId, repo: d.repo, id: d.id };
+    st.running.add(k);
+    this.emitCheck({ ...base, status: "running" });
+    const lines = [`$ ${d.command}`, ...d.log];
+    for (const line of lines) this.emitCheck({ ...base, status: "running", line });
+    st.logs.set(k, lines.join("\n") + "\n");
+    this.later(hit ? 0 : d.ms, () => {
+      st.running.delete(k);
+      const status: CheckStatus = d.fails ? "fail" : "pass";
+      if (!hit) st.cache.set(cacheKey, { status, durationMs: d.ms });
+      this.emitCheck({
+        ...base,
+        status,
+        durationMs: hit?.durationMs ?? d.ms,
+        cached: !!hit,
+        exitCode: d.fails ? 1 : 0,
+        timedOut: false,
+      });
+    });
+  }
+
+  async checkLog(spaceId: string, repo: string, id: string): Promise<string> {
+    return this.ck(spaceId).logs.get(`${repo}/${id}`) ?? "";
+  }
+
+  async setCheckEnabled(spaceId: string, repo: string, id: string, enabled: boolean): Promise<void> {
+    this.ck(spaceId).enabled.set(`${repo}/${id}`, enabled);
+    this.emit(spaceId);
+  }
+
+  async setChecksAuto(spaceId: string, repo: string, auto: boolean): Promise<void> {
+    this.ck(spaceId).auto.set(repo, auto);
+    this.emit(spaceId);
+  }
+
+  onCheck(listener: (e: CheckEvent) => void): Unsubscribe {
+    this.checkListeners.add(listener);
+    return () => this.checkListeners.delete(listener);
+  }
+
+  /** Rerun the enabled checks 500 ms after the staged set changed (checks.auto). */
+  private scheduleAuto(spaceId: string) {
+    const st = this.checkStates.get(spaceId);
+    if (!st) return;
+    const seq = ++st.autoSeq;
+    this.later(500, () => {
+      if (seq !== st.autoSeq) return;
+      const s = this.sp(spaceId);
+      if (!this.stagedFiles(s).length) return;
+      for (const d of st.defs) {
+        if (!(st.auto.get(d.repo) ?? true) || !this.isEnabled(st, d)) continue;
+        if (st.cache.has(`${this.ckKey(d)}@${this.stagedTree(s)}`)) continue;
+        this.runCheck(spaceId, d, false);
+      }
+    });
+  }
+
   onChange(listener: (e: BackendEvent) => void): Unsubscribe {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -944,6 +1249,8 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 
 /** Event the file watcher of the app emits; the payload is a BackendEvent. */
 export const CHANGED_EVENT = "vela://changed";
+/** Event the check runner of the app emits; the payload is a CheckEvent. */
+export const CHECK_EVENT = "vela://check";
 
 /**
  * Talks to the Rust core. Agents, notes, questions, stack and gate come back empty until
@@ -1073,10 +1380,31 @@ export class TauriBackend implements Backend {
   openUrl(url: string) {
     return call<void>("open_url", { url });
   }
+  checks(spaceId: string) {
+    return call<RepoChecks[]>("checks", { spaceId });
+  }
+  async runChecks(spaceId: string, ids?: string[], force?: boolean) {
+    await call<[string, string][]>("run_checks", { spaceId, ids: ids ?? null, force: force ?? false });
+  }
+  checkLog(spaceId: string, repo: string, id: string) {
+    return call<string>("check_log", { spaceId, repo, id });
+  }
+  setCheckEnabled(spaceId: string, repo: string, id: string, enabled: boolean) {
+    return call<void>("set_check_enabled", { spaceId, repo, id, enabled });
+  }
+  setChecksAuto(spaceId: string, repo: string, auto: boolean) {
+    return call<void>("set_checks_auto", { spaceId, repo, auto });
+  }
+  onCheck(listener: (e: CheckEvent) => void): Unsubscribe {
+    return this.subscribe(CHECK_EVENT, listener);
+  }
   onChange(listener: (e: BackendEvent) => void): Unsubscribe {
+    return this.subscribe(CHANGED_EVENT, listener);
+  }
+  private subscribe<T>(name: string, listener: (e: T) => void): Unsubscribe {
     let off: (() => void) | null = null;
     let cancelled = false;
-    void listen<BackendEvent>(CHANGED_EVENT, (ev) => listener(ev.payload)).then((u) => {
+    void listen<T>(name, (ev) => listener(ev.payload)).then((u) => {
       if (cancelled) u();
       else off = u;
     });

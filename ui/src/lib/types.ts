@@ -262,3 +262,38 @@ export interface RepoFiles {
   /** The listing was cut at 200 000 entries. */
   truncated: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Checks: hooks, tests, lint and types run on the staged set
+// ---------------------------------------------------------------------------
+
+export type CheckKind = "hook" | "test" | "lint" | "types" | "custom";
+export type CheckWhen = "staged" | "manual";
+export type CheckStatus = "idle" | "running" | "pass" | "fail" | "skipped" | "missing" | "disabled";
+
+/** One check of one repo, with the status of its last run for the current staged set. */
+export interface CheckEntry {
+  repo: string;
+  id: string;
+  name: string;
+  kind: CheckKind;
+  command: string;
+  /** Optional checks (tests) are off until the user turns them on. */
+  optional: boolean;
+  enabled: boolean;
+  missing: boolean;
+  source: string;
+  when: CheckWhen;
+  status: CheckStatus;
+  durationMs?: number | null;
+  cached?: boolean;
+  exitCode?: number | null;
+  timedOut?: boolean;
+}
+
+export interface RepoChecks {
+  repo: string;
+  auto: boolean;
+  checks: CheckEntry[];
+  warnings?: string[];
+}

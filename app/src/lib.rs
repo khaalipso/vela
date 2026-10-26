@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tauri::{Manager, WindowEvent};
 use vela_core::Vela;
 
+pub mod checkrun;
 pub mod commands;
 pub mod error;
 mod tauri_cmds;
@@ -21,10 +22,12 @@ pub fn run() {
         }
     };
     let watchers = Arc::new(watch::Watchers::default());
+    let runner = Arc::new(checkrun::CheckRunner::default());
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(vela)
         .manage(watchers)
+        .manage(runner)
         .setup(|app| {
             let vela = app.state::<Vela>().inner().clone();
             let watchers = app.state::<Arc<watch::Watchers>>().inner().clone();
@@ -88,6 +91,11 @@ pub fn run() {
             c::ask_fix,
             c::stack,
             c::run_gate,
+            c::set_checks_auto,
+            c::checks,
+            c::run_checks,
+            c::check_log,
+            c::set_check_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Vela");

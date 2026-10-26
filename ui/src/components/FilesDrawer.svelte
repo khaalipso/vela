@@ -144,9 +144,9 @@
     const e = row?.node.file;
     if (!e) return;
     try {
-      if (e.unstaged) await app.backend.stageFile(sid, e.repo, e.path);
-      else if (e.staged) await app.backend.unstageFile(sid, e.repo, e.path);
-      else return;
+      // Fully staged: unstage. Anything else (unstaged change, or a clean row): stage.
+      if (e.staged && !e.unstaged) await app.backend.unstageFile(sid, e.repo, e.path);
+      else await app.backend.stageFile(sid, e.repo, e.path);
       await files.load(sid);
     } catch (err) {
       app.toast(err instanceof Error ? err.message : String(err));

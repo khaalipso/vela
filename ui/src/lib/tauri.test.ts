@@ -13,7 +13,7 @@ vi.mock("@tauri-apps/api/event", () => ({
   },
 }));
 
-import { BackendError, CHANGED_EVENT, TauriBackend, pinnedSpace, toBackendError } from "./backend";
+import { BackendError, CHANGED_EVENT, CHECK_EVENT, TauriBackend, pinnedSpace, toBackendError } from "./backend";
 
 beforeEach(() => {
   invoke.mockReset();
@@ -177,6 +177,51 @@ describe("TauriBackend", () => {
     expect(got).toEqual([{ spaceId: "s", kind: "file" }]);
     off();
     expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("TauriBackend checks and files", () => {
+  const b = new TauriBackend();
+
+  it("calls the check and file commands with camelCase arguments", async () => {
+    invoke.mockResolvedValue([]);
+    await b.checks("s");
+    expect(invoke).toHaveBeenLastCalledWith("checks", { spaceId: "s" });
+    await b.runChecks("s");
+    expect(invoke).toHaveBeenLastCalledWith("run_checks", { spaceId: "s", ids: null, force: false });
+    await b.runChecks("s", ["lint", "test"], true);
+    expect(invoke).toHaveBeenLastCalledWith("run_checks", { spaceId: "s", ids: ["lint", "test"], force: true });
+    invoke.mockResolvedValue("line 1\nline 2\n");
+    expect(await b.checkLog("s", "api", "lint")).toBe("line 1\nline 2\n");
+    expect(invoke).toHaveBeenLastCalledWith("check_log", { spaceId: "s", repo: "api", id: "lint" });
+    invoke.mockResolvedValue(undefined);
+    await b.setCheckEnabled("s", "api", "cargo-test", true);
+    expect(invoke).toHaveBeenLastCalledWith("set_check_enabled", { spaceId: "s", repo: "api", id: "cargo-test", enabled: true });
+    await b.setChecksAuto("s", "api", false);
+    expect(invoke).toHaveBeenLastCalledWith("set_checks_auto", { spaceId: "s", repo: "api", auto: false });
+    await b.stageFile("s", "api", "a.ts");
+    expect(invoke).toHaveBeenLastCalledWith("stage_file", { spaceId: "s", repo: "api", path: "a.ts" });
+    await b.unstageFile("s", "api", "a.ts");
+    expect(invoke).toHaveBeenLastCalledWith("unstage_file", { spaceId: "s", repo: "api", path: "a.ts" });
+  });
+
+  it("forwards vela://check events and unsubscribes", async () => {
+    const got: unknown[] = [];
+    const off = b.onCheck((e) => got.push(e));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(CHECK_EVENT).toBe("vela://check");
+    const ev = { spaceId: "s", repo: "api", id: "lint", status: "running", line: "x" };
+    listeners.get(CHECK_EVENT)!({ payload: ev });
+    expect(got).toEqual([ev]);
+    off();
+    expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+
+  it("turns command errors into Errors", async () => {
+    invoke.mockRejectedValue({ kind: "repo_not_found", message: "repo not found in space: zz" });
+    const err = await b.setCheckEnabled("s", "zz", "x", true).catch((e) => e);
+    expect(err.kind).toBe("repo_not_found");
   });
 });
 

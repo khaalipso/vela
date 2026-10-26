@@ -129,12 +129,14 @@ describe("files drawer", () => {
     const name = row.textContent!.trim().split(/\s/)[0];
     row.click();
     await settle();
+    files.chip = "all";
+    await settle();
     press(" ", {}, tree);
     const find = () => $$(".files .row.file").find((r) => r.textContent?.includes(name));
-    await vi.waitFor(() => expect(find()?.querySelector(".st.unstaged")).toBeTruthy());
+    // The mock drops a change staged before the session once unstaged (real git keeps it unstaged).
+    await vi.waitFor(() => expect(find()?.querySelector(".st.staged")).toBeFalsy());
     press(" ", {}, tree);
     await vi.waitFor(() => expect(find()?.querySelector(".st.staged")).toBeTruthy());
-    files.chip = "all";
   });
 
   it("Ctrl P opens quick open, which finds a file across repos and opens it", async () => {

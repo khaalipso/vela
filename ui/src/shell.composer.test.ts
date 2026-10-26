@@ -154,8 +154,11 @@ describe("commit composer", () => {
     expect(app.staged.map((f) => f.path).sort()).toEqual(["lib/stripe.ts", "src/billing/checkout.ts", "src/billing/webhook.ts"]);
     press("c");
     await settle();
-    await vi.waitFor(() => expect($$(".checks li em").length).toBe(5));
-    await vi.waitFor(() => expect($$(".checks li em").every((e) => e.textContent !== "checking")).toBe(true));
+    // two rows from the checks of the Review view (pre-commit, lint), five from the backend gate
+    await vi.waitFor(() => expect($$(".checks li em").length).toBe(7));
+    await vi.waitFor(() =>
+      expect($$(".checks li em").every((e) => e.textContent !== "running" && e.textContent !== "not run")).toBe(true),
+    );
     expect($$(".card").length).toBe(2);
     expect($$(".card .prev").map((e) => e.textContent)).toEqual([
       "fix(billing): update webhook and checkout",
