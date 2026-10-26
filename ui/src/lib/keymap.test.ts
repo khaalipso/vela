@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveKey, type Action, type KeyContext, type KeyLike } from "./keymap";
+import { isTyping, resolveKey, type Action, type KeyContext, type KeyLike } from "./keymap";
 
 const ctx = (o: Partial<KeyContext> = {}): KeyContext => ({
   typing: false,
@@ -151,5 +151,21 @@ describe("overlays", () => {
   it("shortcuts sheet: ? closes it, other keys do nothing", () => {
     expect(resolveKey(key("?"), ctx({ overlay: "help" }))).toEqual({ type: "close" });
     expect(resolveKey(key("y"), ctx({ overlay: "help" }))).toBeNull();
+  });
+});
+
+describe("isTyping", () => {
+  it("is true in inputs, textareas and contenteditable elements", () => {
+    expect(isTyping({ tagName: "INPUT" })).toBe(true);
+    expect(isTyping({ tagName: "textarea" })).toBe(true);
+    expect(isTyping({ tagName: "DIV", isContentEditable: true })).toBe(true);
+    expect(isTyping({ tagName: "DIV", closest: () => ({}) })).toBe(true);
+  });
+
+  it("is false on buttons, the body and nothing", () => {
+    expect(isTyping({ tagName: "BUTTON", closest: () => null })).toBe(false);
+    expect(isTyping({ tagName: "BODY" })).toBe(false);
+    expect(isTyping(null)).toBe(false);
+    expect(isTyping(undefined)).toBe(false);
   });
 });

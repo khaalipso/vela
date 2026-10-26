@@ -51,4 +51,7 @@ export function stackColor(s: StackState): string {
           : "var(--faint)";
 }
 
-export const fileKey = (repo: string, path: string): string => `${repo}/${path}`;
+/** Names of the commit gate checks, in order, so the sheet can list them before results arrive. */
+export const GATE_NAMES = ["Reviewer", "Tests touched by the diff", "Lint and types", "Secrets and .env", "Repo rules"];
+
+export const fileKey =(repo: string, path: string): string => `${repo}/${path}`;

@@ -1,0 +1,205 @@
+<script lang="ts">
+  import { app } from "../lib/app.svelte";
+  import { plural } from "../lib/format";
+  import Kbd from "./Kbd.svelte";
+</script>
+
+<nav class="rail" aria-label="Spaces">
+  <div class="brand">
+    <svg width="20" height="20" viewBox="0 0 256 256" fill="none" stroke="var(--space)" stroke-width="18" stroke-linejoin="round" aria-hidden="true"
+      ><path d="M128 28v172M128 40c40 30 64 76 64 140H128M120 64c-30 24-48 62-48 116h48" /><path d="M40 212h176" /></svg
+    >
+    Vela<small>Window 1</small>
+  </div>
+  <button class="find" onclick={() => app.dispatch({ type: "open-palette" })}>
+    <svg width="16" height="16" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="20" stroke-linecap="round" aria-hidden="true"
+      ><circle cx="112" cy="112" r="72" /><path d="M163 163l53 53" /></svg
+    >
+    <span>Spaces, files, actions</span>
+    <Kbd k="Ctrl K" />
+  </button>
+  <div class="label">Spaces</div>
+  <div class="spaces">
+    {#each app.spaces as sp, i (sp.id)}
+      {@const w = app.waitingOf(i)}
+      <button class="sp" aria-current={i === app.active} style:--c={sp.color} onclick={() => app.goSpace(i)}>
+        <span class="dot"></span>
+        <span class="nm">
+          <b>{sp.name}</b>
+          <i>{plural(sp.repos.length, "repo", "repos")} · {app.data[sp.id].agents.length} agents</i>
+        </span>
+        {#if sp.window != null}
+          <span class="win">W{sp.window}</span>
+        {:else if w}
+          <span class="cnt">{w}</span>
+        {/if}
+        {#if i < 9}<Kbd k={`Alt ${i + 1}`} />{/if}
+      </button>
+    {/each}
+  </div>
+  <button class="newsp" onclick={() => app.dispatch({ type: "open-newspace" })}>
+    <svg width="16" height="16" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="20" stroke-linecap="round" aria-hidden="true"
+      ><path d="M128 48v160M48 128h160" /></svg
+    >
+    New space
+  </button>
+  <div class="railfoot">
+    <div><Kbd k="[" /><Kbd k="]" /> switch space</div>
+    <div><Kbd k="Shift Enter" /> next space waiting</div>
+    <div><Kbd k="W" /> open in its own window</div>
+    <div><Kbd k="?" /> all shortcuts</div>
+  </div>
+</nav>
+
+<style>
+  .rail {
+    width: 232px;
+    flex: none;
+    background: var(--rail);
+    border-radius: 16px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: background-color 400ms var(--ease);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 4px 0;
+    font-weight: 600;
+    font-size: 16px;
+  }
+  .brand small {
+    margin-left: auto;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--faint);
+  }
+  .find {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 36px;
+    padding: 0 10px;
+    border-radius: 10px;
+    background: var(--hover);
+    color: var(--muted);
+    font-size: 13px;
+    transition: background-color 240ms var(--ease);
+  }
+  .find:hover {
+    background: var(--line);
+  }
+  .find span {
+    flex: 1;
+    text-align: left;
+  }
+  .label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--faint);
+    padding: 4px 8px 0;
+    letter-spacing: 0.01em;
+  }
+  .spaces {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .sp {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px;
+    border-radius: 10px;
+    text-align: left;
+    transition: background-color 240ms var(--ease);
+  }
+  .sp:hover {
+    background: color-mix(in srgb, var(--hover) 70%, transparent);
+  }
+  .sp[aria-current="true"] {
+    background: var(--hover);
+  }
+  .nm {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .nm b {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .nm i {
+    font-style: normal;
+    font-size: 12px;
+    color: var(--faint);
+  }
+  .cnt {
+    font-size: 12px;
+    font-weight: 600;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 9999px;
+    display: grid;
+    place-items: center;
+    background: var(--raised);
+    color: var(--c);
+  }
+  .win {
+    font-size: 11px;
+    color: var(--faint);
+    font-family: var(--code);
+  }
+  .newsp {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px;
+    border-radius: 10px;
+    color: var(--faint);
+    transition: background-color 240ms var(--ease);
+  }
+  .newsp:hover {
+    background: var(--hover);
+    color: var(--fg);
+  }
+  .railfoot {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--panel) 60%, transparent);
+    font-size: 12px;
+    color: var(--faint);
+  }
+  .railfoot div {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  @media (max-width: 760px) {
+    .rail {
+      width: auto;
+    }
+    .spaces {
+      flex-direction: row;
+      overflow-x: auto;
+    }
+    .sp {
+      flex: none;
+    }
+    .railfoot,
+    .label {
+      display: none;
+    }
+  }
+</style>

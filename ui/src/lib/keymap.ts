@@ -56,6 +56,23 @@ export interface KeyContext {
   hasQuestion: boolean;
 }
 
+/** The part of an element `isTyping` reads. */
+export interface TargetLike {
+  tagName?: string;
+  isContentEditable?: boolean;
+  closest?: (selector: string) => unknown;
+}
+
+/** Is focus in a text field or in the editor? Single letters must not act then. */
+export function isTyping(t: TargetLike | null | undefined): boolean {
+  if (!t) return false;
+  if (t.isContentEditable) return true;
+  const tag = (t.tagName ?? "").toUpperCase();
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  // CodeMirror's content element, or any contenteditable ancestor, for engines without isContentEditable.
+  return !!t.closest?.('[contenteditable]:not([contenteditable="false"])');
+}
+
 /**
  * Pure key resolution. Returns the action to run (the caller prevents the default
  * browser behaviour) or null when the key is not ours.

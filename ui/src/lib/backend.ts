@@ -82,6 +82,8 @@ export interface Backend {
   status(spaceId: string): Promise<FileChange[]>;
   /** Agent proposals (any state) and the lines you typed (origin "you"). */
   hunks(spaceId: string): Promise<Hunk[]>;
+  /** One-line reason each agent gives for its proposals, by hunk id. Not in model.rs yet. */
+  reasons(spaceId: string): Promise<Record<string, string>>;
   /** Accept: apply the proposal to your worktree and stage it. */
   stageHunk(spaceId: string, hunkId: string): Promise<Hunk>;
   /** Undo an accepted or rejected hunk: back to pending. */
@@ -431,6 +433,10 @@ export class MockBackend implements Backend {
     return [...s.hunks.map((h) => this.toHunk(s, h)), ...this.youHunks(s)];
   }
 
+  async reasons(spaceId: string): Promise<Record<string, string>> {
+    return Object.fromEntries(this.sp(spaceId).hunks.map((h) => [h.id, h.why]));
+  }
+
   async stageHunk(spaceId: string, hunkId: string): Promise<Hunk> {
     const s = this.sp(spaceId);
     const h = this.find(s, hunkId);
@@ -715,6 +721,9 @@ export class TauriBackend implements Backend {
   }
   hunks(spaceId: string) {
     return invoke<Hunk[]>("hunks", { spaceId });
+  }
+  reasons(spaceId: string) {
+    return invoke<Record<string, string>>("reasons", { spaceId });
   }
   stageHunk(spaceId: string, hunkId: string) {
     return invoke<Hunk>("stage_hunk", { spaceId, hunkId });
