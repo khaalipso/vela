@@ -197,7 +197,9 @@ pub fn apply_event(entry: &mut Entry, ev: &AgentEvent, ts: &str) {
             a.question = Some(text.clone());
             a.options = options.clone();
             entry.pending_tools = tools.clone();
-            a.summary = one_line(text, 160);
+            if a.summary.is_empty() {
+                a.summary = one_line(text, 160);
+            }
         }
         AgentEvent::Usage {
             input_tokens,

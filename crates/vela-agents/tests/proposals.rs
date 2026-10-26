@@ -142,7 +142,13 @@ fn proposals_are_what_the_agent_changed_not_what_the_user_changed() {
     write(agent_wt, "notes.txt", &NOTES.replace("ten\n", "TEN\n"));
     write(agent_wt, "added.txt", "new file\n");
 
-    let list = proposals(&e.space, std::slice::from_ref(&entry), &BTreeSet::new(), false).unwrap();
+    let list = proposals(
+        &e.space,
+        std::slice::from_ref(&entry),
+        &BTreeSet::new(),
+        false,
+    )
+    .unwrap();
     let paths: Vec<_> = list.iter().map(|p| p.hunk.path.as_str()).collect();
     assert_eq!(paths.len(), 2, "{paths:?}");
     assert!(paths.contains(&"notes.txt") && paths.contains(&"added.txt"));
@@ -174,7 +180,13 @@ fn accepting_applies_to_the_user_worktree_and_stages() {
     write(agent_wt, "notes.txt", &NOTES.replace("ten\n", "TEN\n"));
     write(agent_wt, "added.txt", "new file\n");
 
-    let list = proposals(&e.space, std::slice::from_ref(&entry), &BTreeSet::new(), false).unwrap();
+    let list = proposals(
+        &e.space,
+        std::slice::from_ref(&entry),
+        &BTreeSet::new(),
+        false,
+    )
+    .unwrap();
     let notes = list.iter().find(|p| p.hunk.path == "notes.txt").unwrap();
     let h = accept(&e.space, notes).unwrap();
     assert_eq!(h.state, HunkState::Staged);
@@ -196,7 +208,13 @@ fn accepting_applies_to_the_user_worktree_and_stages() {
     let staged = sh(user_wt, &["diff", "--cached", "--name-only"]);
     assert_eq!(staged.trim(), "notes.txt");
     // Accepted hunks are no longer proposals; the other one still is.
-    let again = proposals(&e.space, std::slice::from_ref(&entry), &BTreeSet::new(), false).unwrap();
+    let again = proposals(
+        &e.space,
+        std::slice::from_ref(&entry),
+        &BTreeSet::new(),
+        false,
+    )
+    .unwrap();
     assert_eq!(again.len(), 1);
     assert_eq!(again[0].hunk.path, "added.txt");
     // And a new file can be accepted too.
@@ -239,7 +257,13 @@ fn rejected_proposals_are_hidden_but_can_be_listed() {
     let entry = entry_with_trees(&e, "developer-1");
     let agent_wt = Path::new(&entry.agent.worktrees[0].1);
     write(agent_wt, "notes.txt", &NOTES.replace("ten\n", "TEN\n"));
-    let list = proposals(&e.space, std::slice::from_ref(&entry), &BTreeSet::new(), false).unwrap();
+    let list = proposals(
+        &e.space,
+        std::slice::from_ref(&entry),
+        &BTreeSet::new(),
+        false,
+    )
+    .unwrap();
     let id = list[0].hunk.id.clone();
     let rejected: BTreeSet<String> = [id.clone()].into();
     assert!(

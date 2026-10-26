@@ -6,6 +6,10 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use vela_agents::HarnessInfo;
+use vela_agents::manager::{AgentManager, AskRequest, Emit as EmitAgent, QuestionView};
+use vela_agents::proposals::{self, Proposal};
+use vela_agents::registry::{self, LogEntry};
 use vela_core::Vela;
 use vela_core::checks;
 use vela_core::commitplan::{self, GroupCommit};
@@ -13,8 +17,8 @@ use vela_core::config;
 use vela_core::git::git;
 use vela_core::links::{self, IssueConfig};
 use vela_core::model::{
-    CommitGroup, CommitPlan, CommitRules, FileChange, Hunk, HunkState, Link, LinkSource, Problem,
-    RepoChecks, RepoFiles, Space, UpNext,
+    Agent, AgentRole, AgentUsage, CommitGroup, CommitPlan, CommitRules, FileChange, Hunk,
+    HunkState, Link, LinkSource, Problem, RepoChecks, RepoFiles, Space, Tier, UpNext,
 };
 use vela_core::{commit as core_commit, diff, files, paths, space, stage, status, store, upnext};
 
@@ -135,7 +139,32 @@ pub fn hunks(vela: &Vela, id: &str) -> AppResult<Vec<Hunk>> {
         .filter(|h| !rejected.contains(&h.id) && !staged.iter().any(|s| s.id == h.id))
         .collect();
     out.extend(staged);
+    // What the agents propose: their changes that are not in the worktree yet.
+    out.extend(
+        agent_proposals(vela, &space, &rejected, false)?
+            .into_iter()
+            .map(|p| p.hunk),
+    );
     Ok(out)
+}
+
+/// The proposals of the agents of the space (see `vela_agents::proposals`).
+fn agent_proposals(
+    vela: &Vela,
+    space: &Space,
+    rejected: &BTreeSet<String>,
+    with_rejected: bool,
+) -> AppResult<Vec<Proposal>> {
+    let entries = registry::load(vela, &space.id)?;
+    if entries.iter().all(|e| e.agent.worktrees.is_empty()) {
+        return Ok(Vec::new());
+    }
+    Ok(proposals::proposals(
+        space,
+        &entries,
+        rejected,
+        with_rejected,
+    )?)
 }
 
 fn find(list: Vec<Hunk>, hunk_id: &str) -> AppResult<Hunk> {
@@ -147,7 +176,12 @@ fn find(list: Vec<Hunk>, hunk_id: &str) -> AppResult<Hunk> {
 /// Stage one hunk (also what accepting a proposal does) and return it as staged.
 pub fn stage_hunk(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> {
     let space = load(vela, id)?;
-    let mut hunk = find(diff::worktree_hunks(&space)?, hunk_id)?;
+    let Some(mut hunk) = diff::worktree_hunks(&space)?
+        .into_iter()
+        .find(|h| h.id == hunk_id)
+    else {
+        return accept_proposal(vela, id, hunk_id);
+    };
     stage::stage_hunk(&space, hunk_id)?;
     let mut rejected = rejected_ids(vela, id)?;
     if rejected.remove(hunk_id) {
@@ -170,7 +204,19 @@ pub fn unstage_hunk(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> {
     let mut rejected = rejected_ids(vela, id)?;
     if rejected.remove(hunk_id) {
         save_rejected(vela, id, &rejected)?;
-        let mut h = find(diff::worktree_hunks(&space)?, hunk_id)?;
+        let mut h = match diff::worktree_hunks(&space)?
+            .into_iter()
+            .find(|h| h.id == hunk_id)
+        {
+            Some(h) => h,
+            None => find(
+                agent_proposals(vela, &space, &rejected, false)?
+                    .into_iter()
+                    .map(|p| p.hunk)
+                    .collect(),
+                hunk_id,
+            )?,
+        };
         h.state = HunkState::Pending;
         return Ok(h);
     }
@@ -183,8 +229,20 @@ pub fn unstage_hunk(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> {
 /// Hide a pending hunk for good: its id is stored in `spaces/<id>.rejected.json`.
 pub fn reject_hunk(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> {
     let space = load(vela, id)?;
-    let mut h = find(diff::worktree_hunks(&space)?, hunk_id)?;
     let mut rejected = rejected_ids(vela, id)?;
+    let mut h = match diff::worktree_hunks(&space)?
+        .into_iter()
+        .find(|h| h.id == hunk_id)
+    {
+        Some(h) => h,
+        None => find(
+            agent_proposals(vela, &space, &rejected, false)?
+                .into_iter()
+                .map(|p| p.hunk)
+                .collect(),
+            hunk_id,
+        )?,
+    };
     if rejected.insert(hunk_id.to_string()) {
         save_rejected(vela, id, &rejected)?;
     }
@@ -511,7 +569,127 @@ pub fn up_next(vela: &Vela, id: &str) -> AppResult<UpNext> {
         .filter(|h| h.state == HunkState::Pending)
         .count();
     let changes = status::space_status(&space)?;
-    Ok(upnext::up_next(pending, &changes, &[]))
+    let questions: Vec<(String, String)> = registry::load(vela, id)?
+        .into_iter()
+        .filter(|e| e.agent.status == vela_core::model::AgentStatus::Waiting)
+        .filter_map(|e| Some((e.agent.id, e.agent.question?)))
+        .collect();
+    Ok(upnext::up_next(pending, &changes, &questions))
+}
+
+// ---------------------------------------------------------------------------
+// Agents
+// ---------------------------------------------------------------------------
+
+/// Which harnesses are installed, with their versions.
+pub fn harnesses(agents: &AgentManager) -> Vec<HarnessInfo> {
+    agents.harnesses()
+}
+
+/// The agents of the space, newest first. Runs cut short by a restart show as interrupted.
+pub fn agents(vela: &Vela, agents: &AgentManager, id: &str) -> AppResult<Vec<Agent>> {
+    load(vela, id)?;
+    Ok(agents.list(vela, id)?)
+}
+
+/// Start an agent for a role. `harness` and `tier` override the role's defaults.
+#[allow(clippy::too_many_arguments)]
+pub fn ask_agent(
+    vela: &Vela,
+    agents: &std::sync::Arc<AgentManager>,
+    id: &str,
+    role: &str,
+    prompt: &str,
+    harness: Option<&str>,
+    tier: Option<&str>,
+    emit: &EmitAgent,
+) -> AppResult<Agent> {
+    let space = load(vela, id)?;
+    let role =
+        AgentRole::parse(role).ok_or_else(|| AppError::invalid(format!("unknown role: {role}")))?;
+    let tier = match tier {
+        None => None,
+        Some(t) => Some(
+            Tier::ALL
+                .into_iter()
+                .find(|x| x.as_str() == t)
+                .ok_or_else(|| AppError::invalid(format!("unknown tier: {t}")))?,
+        ),
+    };
+    let req = AskRequest {
+        role,
+        prompt: prompt.to_string(),
+        harness: harness.map(str::to_string),
+        tier,
+    };
+    Ok(agents.ask(vela, &space, req, emit)?)
+}
+
+/// Answer the question of an agent (a resumed run).
+pub fn answer_agent(
+    vela: &Vela,
+    agents: &std::sync::Arc<AgentManager>,
+    id: &str,
+    agent: &str,
+    text: &str,
+    emit: &EmitAgent,
+) -> AppResult<Agent> {
+    let space = load(vela, id)?;
+    Ok(agents.answer(vela, &space, agent, text, emit)?)
+}
+
+/// Kill a running agent. Returns whether it was running.
+pub fn cancel_agent(agents: &AgentManager, id: &str, agent: &str) -> bool {
+    agents.cancel(id, agent)
+}
+
+/// Everything the agent did and said, oldest first.
+pub fn agent_log(
+    vela: &Vela,
+    agents: &AgentManager,
+    id: &str,
+    agent: &str,
+) -> AppResult<Vec<LogEntry>> {
+    Ok(agents.log(vela, id, agent)?)
+}
+
+/// The question an agent of the space waits on, if any.
+pub fn question(vela: &Vela, agents: &AgentManager, id: &str) -> AppResult<Option<QuestionView>> {
+    Ok(agents.question(vela, id)?)
+}
+
+/// Tokens and cost of every agent of the space.
+pub fn agent_usage(vela: &Vela, id: &str) -> AppResult<AgentUsage> {
+    Ok(registry::totals(&registry::load(vela, id)?))
+}
+
+/// Why each proposed hunk exists: the latest message of the agent that proposed it.
+pub fn reasons(vela: &Vela, id: &str) -> AppResult<std::collections::HashMap<String, String>> {
+    let space = load(vela, id)?;
+    let rejected = rejected_ids(vela, id)?;
+    let entries = registry::load(vela, id)?;
+    let hunks: Vec<Hunk> = agent_proposals(vela, &space, &rejected, true)?
+        .into_iter()
+        .map(|p| p.hunk)
+        .collect();
+    Ok(proposals::reasons(&entries, &hunks))
+}
+
+/// Apply a proposal of an agent to your worktree and stage it.
+pub fn accept_proposal(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> {
+    let space = load(vela, id)?;
+    let rejected = rejected_ids(vela, id)?;
+    let list = agent_proposals(vela, &space, &rejected, true)?;
+    let p = list
+        .iter()
+        .find(|p| p.hunk.id == hunk_id)
+        .ok_or_else(|| vela_core::Error::HunkNotFound(hunk_id.to_string()))?;
+    let hunk = proposals::accept(&space, p)?;
+    let mut rejected = rejected;
+    if rejected.remove(hunk_id) {
+        save_rejected(vela, id, &rejected)?;
+    }
+    Ok(hunk)
 }
 
 // ---------------------------------------------------------------------------

@@ -4253,6 +4253,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tempfile",
  "toml 0.8.23",
+ "vela-agents",
  "vela-core",
 ]
 
