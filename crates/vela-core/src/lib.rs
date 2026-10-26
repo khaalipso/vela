@@ -5,8 +5,10 @@
 
 use std::path::{Path, PathBuf};
 
+pub mod checks;
 pub mod commit;
 pub mod commitplan;
+pub mod config;
 pub mod diff;
 pub mod error;
 pub mod git;

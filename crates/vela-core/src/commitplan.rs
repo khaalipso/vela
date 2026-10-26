@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
+use crate::commit::{HookSkip, append_trailer};
 use crate::diff::{ParsedFile, hunk_id, staged_files};
 use crate::error::{Error, Result};
 use crate::git::{git, git_with};
@@ -1005,6 +1006,17 @@ pub fn commit_groups(
     conventional: bool,
     groups: &[CommitGroup],
 ) -> Result<Vec<GroupCommit>> {
+    commit_groups_with(space, conventional, groups, None)
+}
+
+/// [`commit_groups`], skipping the hooks where `skip` says they passed on the exact tree of
+/// that commit (it then adds the `Vela-Checks:` trailer it returned).
+pub fn commit_groups_with(
+    space: &Space,
+    conventional: bool,
+    groups: &[CommitGroup],
+    skip: Option<HookSkip>,
+) -> Result<Vec<GroupCommit>> {
     if groups.is_empty() {
         return Err(Error::NothingToCommit);
     }
@@ -1063,7 +1075,15 @@ pub fn commit_groups(
                 })?;
             }
             let message = compose_message(g, conventional);
-            git_with(dir, &["commit", "-q", "-F", "-"], &[], Some(&message))?;
+            match skip.and_then(|f| f(&g.repo, dir)) {
+                Some(trailer) => git_with(
+                    dir,
+                    &["commit", "-q", "--no-verify", "-F", "-"],
+                    &[],
+                    Some(&append_trailer(&message, &trailer)),
+                )?,
+                None => git_with(dir, &["commit", "-q", "-F", "-"], &[], Some(&message))?,
+            };
             done.push(GroupCommit {
                 group: g.id.clone(),
                 repo: g.repo.clone(),

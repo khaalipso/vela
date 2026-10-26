@@ -344,3 +344,79 @@ pub struct Problem {
     pub field: String,
     pub message: String,
 }
+
+// ---------------------------------------------------------------------------
+// Checks: hooks, tests, lint and types run on the staged set
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CheckKind {
+    Hook,
+    Test,
+    Lint,
+    Types,
+    Custom,
+}
+
+/// When a check runs by itself: when the staged set changes, or only on request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CheckWhen {
+    Staged,
+    Manual,
+}
+
+/// What the Checks panel shows for one check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CheckStatus {
+    Idle,
+    Running,
+    Pass,
+    Fail,
+    Skipped,
+    /// The tool the command needs is not on PATH.
+    Missing,
+    Disabled,
+}
+
+/// One check of one repo, with its last known result for the current staged set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckEntry {
+    pub repo: String,
+    pub id: String,
+    pub name: String,
+    pub kind: CheckKind,
+    pub command: String,
+    /// Optional checks (tests) are off until the user turns them on.
+    pub optional: bool,
+    pub enabled: bool,
+    pub missing: bool,
+    /// Where it comes from: a file name such as `.pre-commit-config.yaml`, or `config`.
+    pub source: String,
+    pub when: CheckWhen,
+    pub status: CheckStatus,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    /// The result was served from the cache.
+    #[serde(default)]
+    pub cached: bool,
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub timed_out: bool,
+}
+
+/// The checks of one repo of the space, plus the effective `checks.auto`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoChecks {
+    pub repo: String,
+    pub auto: bool,
+    pub checks: Vec<CheckEntry>,
+    /// Problems found in the config files (unknown keys, bad syntax).
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
