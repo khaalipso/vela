@@ -17,7 +17,9 @@ Arc replaced tabs with spaces. Vela replaces the open folder with the **space**:
 
 The types in `crates/vela-core/src/model.rs` are the contract. The UI mirrors them in `ui/src/lib/types.ts`.
 
-- **Space**: id (slug), name, color, branch, repos, window.
+- **Space**: id (slug), name, color, branch, repos, window, links (added by hand or pasted; detected and repo links are computed).
+- **Link**: kind, provider, url, title, key, source (manual, branch, commit, paste, repo). Issue keys come from the branch and commit subjects, tracker URLs from `$XDG_CONFIG_HOME/vela/config.toml` (`[issues] jira = "https://acme.atlassian.net/browse/{key}"`), shared repo links from `<repo>/.vela/links.toml`.
+- **CommitPlan / CommitGroup**: proposed commits for the staged hunks (type, scope, breaking, subject, body, footers, hunk ids), rules from commitlint or history.
 - **SpaceRepo**: source clone, worktree created by Vela, base ref.
 - **FileChange**: staged side and unstaged side, like VS Code.
 - **Hunk**: stable id (hash of repo, path, content), lines, origin (`You` or `Agent`), state.
@@ -55,7 +57,8 @@ Before a commit, run in parallel on the staged diff only: reviewer agent (non in
 | `B` | Changes drawer (staged, changed by you, proposed) |
 | `S` | Stack and containers |
 | `@` | Ask an agent (Tab cycles the role) |
-| `C` | Commit gate |
+| `C` | Commit composer: gate checks, then one card per commit (`T` type, `!` breaking, `1`-`9` move a hunk, `G` split, `M` merge, `Ctrl Enter` commit all) |
+| `L` | Links of the space (paste a URL anywhere to add one) |
 | `W` | Open the space in its own window |
 | `?` | All shortcuts |
 
