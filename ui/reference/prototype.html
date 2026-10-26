@@ -1,0 +1,694 @@
+<title>Vela</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one focused surface per space. A slim space rail, a single "Up next" island, contextual key hints. Nothing docked that you did not ask for. */
+:root{
+  --bg:#000000; --rail:#131209; --panel:#181818; --raised:#1F1F1F; --hover:#272727; --line:#313131;
+  --fg:#EDEDED; --muted:#A1A1A1; --faint:#8A8A8A; --gutter:#767676;
+  --add:#4ADE80; --add-bg:rgba(74,222,128,.11); --del:#F87171; --del-bg:rgba(248,113,113,.11);
+  --warn:#E8A14A; --info:#7DB8F5; --on-accent:#131209;
+  --ui:"Geist",ui-sans-serif,system-ui,sans-serif; --code:"Geist Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  --ease:cubic-bezier(0.32,0.72,0,1);
+  --space:#E8A14A;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){
+  --bg:#EFEEEA; --rail:#E6E3DA; --panel:#FFFFFF; --raised:#F6F5F2; --hover:#ECEBE6; --line:#DDDBD4;
+  --fg:#141414; --muted:#545454; --faint:#666666; --gutter:#8A8A8A;
+  --add:#15803D; --add-bg:rgba(22,163,74,.12); --del:#B91C1C; --del-bg:rgba(220,38,38,.10);
+  --warn:#B45309; --info:#1D4ED8; --on-accent:#131209; color-scheme:light}}
+:root[data-theme="light"]{
+  --bg:#EFEEEA; --rail:#E6E3DA; --panel:#FFFFFF; --raised:#F6F5F2; --hover:#ECEBE6; --line:#DDDBD4;
+  --fg:#141414; --muted:#545454; --faint:#666666; --gutter:#8A8A8A;
+  --add:#15803D; --add-bg:rgba(22,163,74,.12); --del:#B91C1C; --del-bg:rgba(220,38,38,.10);
+  --warn:#B45309; --info:#1D4ED8; --on-accent:#131209; color-scheme:light}
+
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--ui);font-size:14px;line-height:20px;overflow:hidden}
+*{box-sizing:border-box}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+kbd{font-family:var(--code);font-size:11px;line-height:16px;padding:0 5px;border-radius:4px;background:var(--hover);color:var(--fg);white-space:nowrap}
+:focus-visible{outline:2px solid var(--space);outline-offset:2px}
+.mono{font-family:var(--code)}
+.dot{width:8px;height:8px;border-radius:9999px;flex:none;background:var(--c,var(--faint))}
+
+.app{height:100%;display:flex;gap:8px;padding:8px 16px}
+/* Rail */
+.rail{width:232px;flex:none;background:var(--rail);border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:12px;transition:background-color 400ms var(--ease)}
+.brand{display:flex;align-items:center;gap:8px;padding:4px 4px 0;font-weight:600;font-size:16px}
+.brand small{margin-left:auto;font-size:12px;font-weight:500;color:var(--faint)}
+.find{display:flex;align-items:center;gap:8px;height:36px;padding:0 10px;border-radius:10px;background:var(--hover);color:var(--muted);font-size:13px;transition:background-color 240ms var(--ease)}
+.find:hover{background:var(--line)}
+.find span{flex:1;text-align:left}
+.label{font-size:12px;font-weight:500;color:var(--faint);padding:4px 8px 0;letter-spacing:.01em}
+.spaces{display:flex;flex-direction:column;gap:2px}
+.sp{display:flex;align-items:center;gap:10px;padding:8px;border-radius:10px;text-align:left;transition:background-color 240ms var(--ease)}
+.sp:hover{background:color-mix(in srgb,var(--hover) 70%,transparent)}
+.sp[aria-current="true"]{background:var(--hover)}
+.sp .nm{flex:1;min-width:0;display:flex;flex-direction:column}
+.sp .nm b{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sp .nm i{font-style:normal;font-size:12px;color:var(--faint)}
+.sp .cnt{font-size:12px;font-weight:600;min-width:20px;height:20px;padding:0 6px;border-radius:9999px;display:grid;place-items:center;background:var(--raised);color:var(--c)}
+.sp .win{font-size:11px;color:var(--faint);font-family:var(--code)}
+.newsp{display:flex;align-items:center;gap:10px;padding:8px;border-radius:10px;color:var(--faint);transition:background-color 240ms var(--ease)}
+.newsp:hover{background:var(--hover);color:var(--fg)}
+.railfoot{margin-top:auto;display:flex;flex-direction:column;gap:6px;padding:8px;border-radius:10px;background:color-mix(in srgb,var(--panel) 60%,transparent);font-size:12px;color:var(--faint)}
+.railfoot div{display:flex;align-items:center;gap:6px}
+
+/* Main */
+.main{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;position:relative}
+.top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-height:44px;padding:4px 4px 0}
+.top h1{margin:0;font-size:18px;line-height:28px;font-weight:600;display:flex;align-items:center;gap:10px}
+.top h1 .dot{width:10px;height:10px;background:var(--space)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{display:flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:8px;background:var(--panel);font-size:12px;color:var(--muted)}
+.chip b{color:var(--fg);font-weight:600}
+.views{margin-left:auto;display:flex;gap:2px;padding:3px;border-radius:10px;background:var(--panel)}
+.views button{height:30px;padding:0 10px;border-radius:7px;display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;transition:background-color 240ms var(--ease),color 240ms var(--ease)}
+.views button[aria-pressed="true"]{background:var(--hover);color:var(--fg);font-weight:600}
+.views button .n{font-size:11px;font-weight:600;color:var(--space)}
+
+.body{flex:1;min-height:0;display:flex;gap:8px}
+.surface{flex:1;min-width:0;background:var(--panel);border-radius:16px;overflow:auto;position:relative;padding-bottom:96px}
+.surface.enter{animation:enter 320ms var(--ease)}
+@keyframes enter{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* Changes drawer */
+.changes{width:280px;flex:none;background:var(--panel);border-radius:16px;padding:12px;overflow:auto;display:flex;flex-direction:column;gap:14px;animation:enter 320ms var(--ease)}
+.grp h3{margin:0 0 4px;padding:0 6px;font-size:12px;font-weight:600;color:var(--muted);display:flex;justify-content:space-between}
+.grp h3 span{color:var(--faint);font-weight:500}
+.frow{width:100%;display:flex;align-items:center;gap:8px;padding:6px;border-radius:8px;font-size:12px;text-align:left;transition:background-color 200ms var(--ease)}
+.frow:hover{background:var(--hover)}
+.frow .rp{font-size:11px;color:var(--faint);padding:0 5px;border-radius:4px;background:var(--raised)}
+.frow .pt{flex:1;min-width:0;font-family:var(--code);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.frow .st{font-family:var(--code);font-weight:600;color:var(--c)}
+.empty{font-size:12px;color:var(--faint);padding:2px 6px}
+
+/* Review */
+.rv{max-width:920px;margin:0 auto;padding:20px 20px 0;display:flex;flex-direction:column;gap:10px}
+.rvhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:0 4px 6px}
+.rvhead h2{margin:0;font-size:16px;font-weight:600}
+.bar{flex:1;min-width:120px;height:4px;border-radius:9999px;background:var(--hover);overflow:hidden}
+.bar i{display:block;height:100%;background:var(--space);transition:width 400ms var(--ease)}
+.counts{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.hunk{background:var(--raised);border-radius:14px;overflow:hidden;box-shadow:0 0 0 1px transparent;transition:box-shadow 240ms var(--ease),opacity 240ms var(--ease)}
+.hunk.focus{box-shadow:0 0 0 2px var(--space)}
+.hunk .hh{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;font-size:12px;color:var(--muted)}
+.hunk .hh b{color:var(--fg);font-weight:600;font-size:13px}
+.hunk .hh .loc{font-family:var(--code);color:var(--faint)}
+.hunk .hh .keys{margin-left:auto;display:flex;gap:10px;align-items:center}
+.hunk .why{padding:0 14px 10px;font-size:13px;color:var(--fg)}
+.diff{font-family:var(--code);font-size:13px;line-height:22px;overflow-x:auto;padding-bottom:8px}
+.dl{display:flex;gap:12px;padding-right:16px;white-space:pre}
+.dl .g{width:44px;flex:none;text-align:right;color:var(--gutter);user-select:none}
+.dl .s{width:10px;flex:none;user-select:none}
+.dl.a{background:var(--add-bg)}.dl.a .s{color:var(--add)}
+.dl.d{background:var(--del-bg);color:var(--muted)}.dl.d .s{color:var(--del)}
+.note{margin:4px 14px 14px;padding:10px 12px;border-radius:10px;background:var(--hover);display:flex;gap:10px;align-items:flex-start;font-size:13px}
+.note .dot{margin-top:6px}
+.note div{flex:1;display:flex;flex-direction:column;gap:2px}
+.note small{font-size:12px;font-weight:600}
+.hunk.done{opacity:.72}
+.hunk.done .hh{padding:8px 14px}
+.state{font-size:12px;font-weight:600;color:var(--c)}
+.allclear{padding:56px 20px;text-align:center;display:flex;flex-direction:column;gap:8px;align-items:center;color:var(--muted)}
+.allclear h3{margin:0;color:var(--fg);font-size:18px;font-weight:600}
+
+/* Code */
+.tabs{display:flex;gap:4px;padding:8px;position:sticky;top:0;background:var(--panel);z-index:2;overflow-x:auto}
+.tab{display:flex;align-items:center;gap:8px;height:30px;padding:0 12px;border-radius:8px;font-size:12px;color:var(--faint);white-space:nowrap;transition:background-color 200ms var(--ease)}
+.tab:hover{background:var(--hover)}
+.tab[aria-selected="true"]{background:var(--hover);color:var(--fg)}
+.tab .rp{color:var(--faint)}
+.code{font-family:var(--code);font-size:13px;line-height:22px;padding:8px 0 0;overflow-x:auto}
+.ln{display:flex;gap:12px;padding-right:16px}
+.ln .g{width:44px;flex:none;text-align:right;color:var(--gutter);user-select:none}
+.ln .s{width:10px;flex:none;user-select:none}
+.ln .t{flex:1;white-space:pre;outline:none;min-height:22px}
+.ln .t:focus{background:color-mix(in srgb,var(--space) 9%,transparent)}
+.ln.mine .s{color:var(--info)}
+.inline{margin:6px 16px 6px 66px;border-radius:12px;background:var(--raised);overflow:hidden;box-shadow:0 0 0 1px transparent;transition:box-shadow 240ms var(--ease)}
+.inline.focus{box-shadow:0 0 0 2px var(--space)}
+.inline .ib{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;font-family:var(--ui);font-size:12px;color:var(--muted)}
+.inline .ib b{color:var(--fg);font-weight:600}
+.inline .ib .keys{margin-left:auto;display:flex;gap:10px}
+.inline .dl .g{width:0;display:none}
+
+/* Agents */
+.ag{max-width:820px;margin:0 auto;padding:20px 20px 0;display:flex;flex-direction:column;gap:10px}
+.ask{background:var(--raised);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px;box-shadow:0 0 0 2px var(--space)}
+.ask p{margin:0;font-size:15px;line-height:22px}
+.ask .row{display:flex;gap:8px;flex-wrap:wrap}
+.btn{height:32px;padding:0 12px;border-radius:8px;background:var(--hover);font-weight:600;font-size:13px;display:inline-flex;align-items:center;gap:8px;transition:background-color 200ms var(--ease),transform 200ms var(--ease)}
+.btn:hover{background:var(--line)}
+.btn:active{transform:scale(.98)}
+.btn.p{background:var(--space);color:var(--on-accent)}
+.btn.p:hover{filter:brightness(1.08)}
+.btn.p kbd{background:rgba(0,0,0,.18);color:var(--on-accent)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.agent{background:var(--raised);border-radius:14px;padding:14px;display:grid;grid-template-columns:auto 1fr auto;gap:4px 12px;align-items:center}
+.agent .who{font-weight:600}
+.agent .who span{font-weight:400;color:var(--faint);font-size:12px;margin-left:6px}
+.agent .stt{font-size:12px;color:var(--c)}
+.agent .txt{grid-column:2/4;font-size:13px;color:var(--fg)}
+.agent .wt{grid-column:2/4;font-family:var(--code);font-size:12px;color:var(--faint)}
+.pulse{animation:pulse 1.4s var(--ease) infinite}
+@keyframes pulse{50%{opacity:.35}}
+
+/* Island */
+.island{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);z-index:5;display:flex;align-items:center;gap:12px;max-width:min(640px,calc(100% - 32px));padding:10px 10px 10px 16px;border-radius:9999px;background:var(--hover);box-shadow:0 12px 40px rgba(0,0,0,.35),0 0 0 1px var(--line);text-align:left;transition:transform 320ms var(--ease),background-color 240ms var(--ease)}
+.island:hover{background:var(--line)}
+.island .dot{background:var(--space)}
+.island .tx{min-width:0;display:flex;flex-direction:column}
+.island .tx b{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.island .tx span{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.island .go{flex:none;height:32px;padding:0 12px;border-radius:9999px;background:var(--space);color:var(--on-accent);font-weight:600;font-size:13px;display:flex;align-items:center;gap:8px}
+.island .go kbd{background:rgba(0,0,0,.18);color:var(--on-accent)}
+.island.quiet .go{background:var(--panel);color:var(--muted)}
+.island.quiet .go kbd{background:var(--hover);color:var(--fg)}
+.island.quiet .dot{background:var(--faint)}
+
+/* Bottom */
+.bottom{display:flex;align-items:center;gap:16px;flex-wrap:wrap;min-height:32px;padding:0 6px;font-size:12px;color:var(--faint)}
+.hints{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+.hints span{display:flex;gap:6px;align-items:center}
+.stack{margin-left:auto;display:flex;gap:6px;align-items:center;height:28px;padding:0 10px;border-radius:8px;transition:background-color 200ms var(--ease)}
+.stack:hover{background:var(--panel)}
+.stack .dot{width:6px;height:6px}
+
+/* Overlays */
+.scrim{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.45);display:flex;justify-content:center;align-items:flex-start;padding:12vh 16px 16px;animation:fade 200ms var(--ease)}
+@keyframes fade{from{opacity:0}}
+.sheet{width:100%;max-width:620px;background:var(--panel);border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.5),0 0 0 1px var(--line);overflow:hidden;animation:pop 280ms var(--ease)}
+@keyframes pop{from{opacity:0;transform:translateY(-8px) scale(.985)}}
+.pin{display:flex;align-items:center;gap:10px;padding:14px 16px}
+.pin input{flex:1;background:none;border:0;outline:none;font:inherit;font-size:16px;color:var(--fg)}
+.pin input::placeholder{color:var(--faint)}
+.plist{max-height:52vh;overflow:auto;padding:6px}
+.psec{font-size:11px;font-weight:600;color:var(--faint);padding:8px 10px 4px;letter-spacing:.02em}
+.pit{width:100%;display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;text-align:left}
+.pit[aria-selected="true"]{background:var(--hover)}
+.pit .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pit .t small{color:var(--faint);margin-left:8px;font-size:12px}
+.pfoot{display:flex;gap:16px;padding:10px 16px;background:var(--raised);font-size:12px;color:var(--faint);flex-wrap:wrap}
+.pfoot span{display:flex;gap:6px;align-items:center}
+.form{padding:16px;display:flex;flex-direction:column;gap:14px}
+.form label{font-size:12px;font-weight:600;color:var(--muted)}
+.field{width:100%;height:40px;padding:0 12px;border-radius:10px;border:0;background:var(--hover);color:var(--fg);font:inherit;font-size:15px}
+textarea.field{height:auto;padding:10px 12px;resize:vertical;line-height:20px;font-size:13px}
+.repos{display:flex;flex-wrap:wrap;gap:6px}
+.rtog{height:32px;padding:0 12px;border-radius:8px;background:var(--hover);font-size:13px;display:flex;gap:8px;align-items:center}
+.rtog[aria-pressed="true"]{background:var(--space);color:var(--on-accent);font-weight:600}
+.checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.checks li{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:10px;background:var(--raised)}
+.checks li span:nth-child(2){flex:1}
+.checks li em{font-style:normal;font-size:12px;color:var(--c)}
+.cost{font-size:12px;color:var(--faint)}
+.blocked{font-size:12px;color:var(--del)}
+.help{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:4px 24px;padding:16px}
+.help h4{grid-column:1/-1;margin:10px 0 2px;font-size:12px;color:var(--faint);font-weight:600}
+.help div{display:flex;justify-content:space-between;gap:12px;padding:5px 0;font-size:13px}
+.composer{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);z-index:6;width:min(640px,calc(100% - 32px));background:var(--hover);border-radius:18px;padding:12px;box-shadow:0 12px 40px rgba(0,0,0,.35),0 0 0 1px var(--line);display:flex;flex-direction:column;gap:10px;animation:pop 260ms var(--ease)}
+.composer textarea{background:none;border:0;outline:none;color:var(--fg);font:inherit;font-size:15px;resize:none;min-height:44px}
+.composer .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--faint)}
+.role{height:26px;padding:0 10px;border-radius:9999px;background:var(--panel);font-size:12px;color:var(--muted)}
+.role[aria-pressed="true"]{background:var(--space);color:var(--on-accent);font-weight:600}
+.pop{position:absolute;right:6px;bottom:40px;z-index:7;width:300px;background:var(--panel);border-radius:14px;padding:10px;box-shadow:0 12px 40px rgba(0,0,0,.4),0 0 0 1px var(--line);display:flex;flex-direction:column;gap:4px;animation:pop 240ms var(--ease)}
+.pop .r{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;font-size:13px}
+.pop .r .m{margin-left:auto;font-size:12px;color:var(--faint);font-family:var(--code)}
+.toast{position:fixed;right:24px;bottom:24px;z-index:30;padding:10px 14px;border-radius:12px;background:var(--fg);color:var(--bg);font-weight:500;font-size:13px;box-shadow:0 12px 40px rgba(0,0,0,.35);animation:pop 260ms var(--ease)}
+.elsewhere{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--muted);text-align:center;padding:24px}
+.elsewhere h3{margin:0;color:var(--fg);font-size:18px}
+
+@media (max-width: 760px){
+  body{overflow:auto}
+  .app{flex-direction:column;height:auto;min-height:100%}
+  .rail{width:auto}
+  .spaces{flex-direction:row;overflow-x:auto}
+  .sp{flex:none}
+  .railfoot,.label{display:none}
+  .body{flex-direction:column;min-height:70vh}
+  .changes{width:auto}
+  .hints{display:none}
+  .views{margin-left:0}
+  .island{position:sticky;transform:none;left:auto;bottom:8px;margin:0 auto;max-width:100%}
+}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="app" id="app"></div>
+<div id="layer"></div>
+
+<script>
+(function(){
+"use strict";
+var esc=function(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")};
+var K=function(k){return "<kbd>"+k+"</kbd>"};
+var COLORS={Developer:"var(--info)",Reviewer:"var(--warn)",Tester:"var(--add)",Planner:"#C9A0F0",Debugger:"var(--del)",You:"var(--fg)"};
+var REPOS=["api","web","infra","research-engine","set.mm","sillage","maths"];
+
+/* ---------- Example data ---------- */
+var spaces=[
+ {id:"stripe",name:"Stripe v2 billing",color:"#E8A14A",branch:"feat/stripe-v2",win:1,view:"review",hi:0,file:"wh",
+  repos:[{name:"api",wt:"wt/stripe-v2"},{name:"web",wt:"wt/stripe-v2"},{name:"infra",wt:"main"}],
+  stack:[["node 22.11","mise","ok"],["pnpm 9.12","mise","ok"],["postgres 17","docker :5432","ok"],["redis 7","docker :6379","ok"],["stripe listen","tunnel","info"]],
+  tests:{pass:12,total:14},baseStaged:[["api","src/billing/checkout.ts"]],
+  commitMsg:"feat(billing): verify Stripe webhook signatures\n\nReject unsigned events with 400 before parsing.\nPin API version in lib/stripe.ts.",
+  files:{
+   wh:{repo:"api",path:"src/billing/webhook.ts",from:12,lines:[
+    "export async function handleWebhook(req: Request) {",
+    "  const sig = req.headers.get(\"stripe-signature\")",
+    "  const event = JSON.parse(await req.text())",
+    "  switch (event.type) {",
+    "    case \"checkout.session.completed\":",
+    "      await fulfillOrder(event.data.object)",
+    "      break",
+    "    case \"invoice.paid\":",
+    "      await markInvoicePaid(event.data.object)",
+    "      break",
+    "  }",
+    "  return new Response(null, { status: 200 })",
+    "}"]},
+   ls:{repo:"web",path:"lib/stripe.ts",from:1,lines:[
+    "import Stripe from \"stripe\"",
+    "export const stripe = new Stripe(process.env.STRIPE_KEY!, {",
+    "  apiVersion: \"2024-06-20\",",
+    "})"]},
+   co:{repo:"api",path:"src/billing/checkout.ts",from:30,lines:[
+    "export async function createCheckout(cart: Cart) {",
+    "  return stripe.checkout.sessions.create({",
+    "    mode: \"payment\",",
+    "    line_items: cart.items.map(toLineItem),",
+    "  })",
+    "}"]}
+  },
+  hunks:[
+   {id:"s1",file:"wh",at:2,del:["  const event = JSON.parse(await req.text())"],add:["  const body = await req.text()","  const event = stripe.webhooks.constructEvent(","    body, sig!, env.STRIPE_WEBHOOK_SECRET","  )"],role:"Developer",tool:"Claude Code",why:"Verify the Stripe signature before trusting the event.",
+    note:{by:"Reviewer · Codex",text:"constructEvent throws on a bad signature, so this answers 500 and Stripe retries for 3 days. Catch it and return 400.",fix:["  const body = await req.text()","  let event: Stripe.Event","  try {","    event = stripe.webhooks.constructEvent(body, sig!, env.STRIPE_WEBHOOK_SECRET)","  } catch {","    return new Response(\"bad signature\", { status: 400 })","  }"]},state:"pending"},
+   {id:"s2",file:"ls",at:2,del:["  apiVersion: \"2024-06-20\","],add:["  apiVersion: \"2025-09-30.clover\","],role:"Developer",tool:"Claude Code",why:"Pin the new API version in one place, used by web and api.",state:"pending"},
+   {id:"s3",file:"wh",at:3,del:[],add:["  log.info(\"stripe.webhook\", { type: event.type, id: event.id })"],role:"Tester",tool:"opencode",why:"Log event ids so the two failing tests can be traced.",state:"pending"}
+  ],
+  agents:[
+   {role:"Developer",tool:"Claude Code",wt:"api · wt/stripe-v2-dev",status:"working",text:"Writing test/webhook.test.ts"},
+   {role:"Reviewer",tool:"Codex",wt:"read only",status:"done",text:"1 blocking note on webhook.ts"},
+   {role:"Tester",tool:"opencode",wt:"api · wt/stripe-v2-test",status:"warn",text:"12 of 14 tests pass"}],
+  question:null,mine:{}},
+
+ {id:"pg",name:"Postgres 17",color:"#7DB8F5",branch:"chore/pg17",win:1,view:"agents",hi:0,file:"cmp",
+  repos:[{name:"api",wt:"wt/pg17"},{name:"infra",wt:"wt/pg17"}],
+  stack:[["node 22.11","mise","ok"],["postgres 17","docker :5433","warn"],["postgres 15","docker :5432 · old","off"]],
+  tests:{pass:88,total:88},baseStaged:[],
+  commitMsg:"chore(db): move to Postgres 17\n\nAdd a healthcheck so dependent services wait for the db.",
+  files:{
+   cmp:{repo:"infra",path:"compose.yml",from:8,lines:[
+    "services:","  db:","    image: postgres:15-alpine","    environment:","      POSTGRES_DB: app","    volumes:","      - pgdata:/var/lib/postgresql/data"]},
+   mig:{repo:"api",path:"migrations/0042_trgm.sql",from:1,lines:[
+    "-- fuzzy search on customer names","CREATE EXTENSION IF NOT EXISTS pg_trgm;","CREATE INDEX customers_name_trgm ON customers USING gin (name gin_trgm_ops);"]}
+  },
+  hunks:[
+   {id:"p1",file:"cmp",at:2,del:["    image: postgres:15-alpine"],add:["    image: postgres:17-alpine"],role:"Developer",tool:"Crush",why:"Bump the base image. Data volume is copied per worktree.",state:"pending"},
+   {id:"p2",file:"cmp",at:5,del:[],add:["    healthcheck:","      test: [\"CMD\", \"pg_isready\", \"-U\", \"app\"]","      interval: 5s"],role:"Developer",tool:"Crush",why:"Let api wait for the db instead of crashing on boot.",state:"pending"}
+  ],
+  agents:[
+   {role:"Developer",tool:"Crush",wt:"api · wt/pg17-dev",status:"waiting",text:"Waiting for your answer"},
+   {role:"Tester",tool:"Claude Code",wt:"api · wt/pg17-test",status:"working",text:"Replaying 41 migrations on a copy of prod schema"}],
+  question:{by:"Developer · Crush",text:"pg_trgm is used by the fuzzy index on customers.name. Keep the extension in the new image?",yes:"Keep it",no:"Drop it and the index"},mine:{}},
+
+ {id:"mm",name:"Metamath verifier",color:"#C9A0F0",branch:"feat/ac-axiom",win:1,view:"code",hi:0,file:"fr",
+  repos:[{name:"research-engine",wt:"wt/ac-axiom"},{name:"set.mm",wt:"main · read only"}],
+  stack:[["rust 1.91","rust-toolchain.toml","ok"],["cargo nextest","","ok"]],
+  tests:{pass:41,total:41},baseStaged:[["research-engine","src/verify/frame.rs"],["research-engine","tests/ac.rs"]],
+  commitMsg:"fix(verify): reject $d with identical variables\n\nAdds tests for the axiom of choice frame.",
+  files:{
+   fr:{repo:"research-engine",path:"src/verify/frame.rs",from:88,lines:[
+    "fn check_disjoint(&self, a: Var, b: Var) -> Result<(), VerifyError> {",
+    "    if a == b {",
+    "        return Err(VerifyError::DisjointSame(a));",
+    "    }",
+    "    if !self.dv.contains(&(a.min(b), a.max(b))) {",
+    "        return Err(VerifyError::MissingDv(a, b));",
+    "    }",
+    "    Ok(())",
+    "}"]},
+   ac:{repo:"research-engine",path:"tests/ac.rs",from:1,lines:[
+    "#[test]","fn ac_frame_rejects_same_var() {","    let db = load(\"set.mm\");","    assert!(db.verify(\"ac6sg\").is_ok());","}"]}
+  },
+  hunks:[],
+  agents:[
+   {role:"Reviewer",tool:"Claude Code",wt:"read only",status:"done",text:"No blocking notes"},
+   {role:"Tester",tool:"Codex",wt:"wt/ac-axiom-test",status:"done",text:"cargo nextest: 41 of 41"}],
+  question:null,mine:{}}
+];
+
+var S={sp:0,changes:false,overlay:null,pal:{q:"",i:0},role:"Developer",stackOpen:false,toast:null,gate:null,newSp:{name:"",repos:["api"]}};
+var cur=function(){return spaces[S.sp]};
+
+/* ---------- Derived state ---------- */
+function pending(sp){return sp.hunks.filter(function(h){return h.state==="pending"})}
+function accepted(sp){return sp.hunks.filter(function(h){return h.state==="accepted"||h.state==="edited"})}
+function blockingNotes(sp){return sp.hunks.filter(function(h){return h.note&&!h.note.resolved&&h.state!=="rejected"})}
+function stagedFiles(sp){
+  var m={};sp.baseStaged.forEach(function(f){m[f[0]+"/"+f[1]]={repo:f[0],path:f[1],st:"S"}});
+  accepted(sp).forEach(function(h){var f=sp.files[h.file];m[f.repo+"/"+f.path]={repo:f.repo,path:f.path,st:"S",id:h.file}});
+  return Object.keys(m).map(function(k){return m[k]});
+}
+function waiting(sp){return (sp.question?1:0)+pending(sp).length+(readyToCommit(sp)?1:0)}
+function readyToCommit(sp){return !sp.committed&&pending(sp).length===0&&!sp.question&&stagedFiles(sp).length>0}
+function upNext(sp){
+  if(sp.win!==1) return {t:"This space is open in window "+sp.win,s:"Press W to bring it here",go:"Bring here",act:function(){toggleWindow()}};
+  if(sp.question) return {t:sp.question.by.split(" · ")[1]+" is waiting for you",s:sp.question.text,go:"Answer",act:function(){setView("agents")}};
+  var p=pending(sp);
+  if(p.length){var repos={};p.forEach(function(h){repos[sp.files[h.file].repo]=1});
+    return {t:"Review "+p.length+(p.length>1?" proposals":" proposal"),s:"in "+Object.keys(repos).join(", ")+" · from "+uniq(p.map(function(h){return h.tool})).join(", "),go:"Review",act:function(){setView("review");sp.hi=sp.hunks.indexOf(p[0]);render()}};}
+  if(readyToCommit(sp)){var n=uniq(stagedFiles(sp).map(function(f){return f.repo})).length;
+    return {t:"Commit and push "+n+(n>1?" repos":" repo"),s:sp.branch+" · "+stagedFiles(sp).length+" files staged",go:"Commit",act:openCommit};}
+  var other=nextWaitingSpace();
+  if(other!==null) return {quiet:true,t:"Nothing waiting here",s:spaces[other].name+" needs you",go:"Next space",k:"Shift Enter",act:function(){goSpace(other)}};
+  return {quiet:true,t:"Nothing waiting",s:"Ask an agent or keep typing",go:"Ask",k:"@",act:openComposer};
+}
+function nextWaitingSpace(){for(var j=1;j<=spaces.length;j++){var k=(S.sp+j)%spaces.length;if(k!==S.sp&&waiting(spaces[k])>0&&spaces[k].win===1)return k}return null}
+function uniq(a){return a.filter(function(x,i){return a.indexOf(x)===i})}
+
+/* ---------- Render ---------- */
+var app=document.getElementById("app"),layer=document.getElementById("layer"),lastView="";
+function render(){
+  var sp=cur();
+  document.documentElement.style.setProperty("--space",sp.color);
+  app.innerHTML=rail()+'<div class="main">'+top(sp)+'<div class="body">'+(S.changes?changes(sp):"")+surface(sp)+'</div>'+island(sp)+bottom(sp)+(S.stackOpen?stackPop(sp):"")+(S.overlay==="composer"?composer(sp):"")+'</div>';
+  var key=sp.id+":"+sp.view+":"+sp.win;
+  var s=app.querySelector(".surface");if(s&&key!==lastView){s.classList.add("enter")}lastView=key;
+  bind();renderLayer();
+  var f=app.querySelector(".hunk.focus,.inline.focus");if(f)f.scrollIntoView({block:"nearest",behavior:"smooth"});
+  if(S.overlay==="composer"){var ta=document.getElementById("cmp-in");if(ta&&document.activeElement!==ta)ta.focus()}
+}
+function rail(){
+  var h='<nav class="rail" aria-label="Spaces"><div class="brand"><svg width="20" height="20" viewBox="0 0 256 256" fill="none" stroke="var(--space)" stroke-width="18" stroke-linejoin="round" aria-hidden="true"><path d="M128 28v172M128 40c40 30 64 76 64 140H128M120 64c-30 24-48 62-48 116h48"></path><path d="M40 212h176"></path></svg>Vela<small>Window 1</small></div>';
+  h+='<button class="find" data-act="palette"><svg width="16" height="16" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="20" stroke-linecap="round" aria-hidden="true"><circle cx="112" cy="112" r="72"></circle><path d="M163 163l53 53"></path></svg><span>Spaces, files, actions</span>'+K("Ctrl K")+'</button>';
+  h+='<div class="label">Spaces</div><div class="spaces">';
+  spaces.forEach(function(sp,i){var w=waiting(sp);
+    h+='<button class="sp" data-sp="'+i+'" aria-current="'+(i===S.sp)+'" style="--c:'+sp.color+'"><span class="dot"></span><span class="nm"><b>'+esc(sp.name)+'</b><i>'+sp.repos.length+(sp.repos.length>1?" repos":" repo")+' · '+sp.agents.length+' agents</i></span>'+(sp.win!==1?'<span class="win">W'+sp.win+'</span>':(w?'<span class="cnt">'+w+'</span>':''))+(i<9?K("Alt "+(i+1)):'')+'</button>';});
+  h+='</div><button class="newsp" data-act="newspace"><svg width="16" height="16" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="20" stroke-linecap="round" aria-hidden="true"><path d="M128 48v160M48 128h160"></path></svg>New space</button>';
+  h+='<div class="railfoot"><div>'+K("[")+K("]")+' switch space</div><div>'+K("Shift Enter")+' next space waiting</div><div>'+K("W")+' open in its own window</div><div>'+K("?")+' all shortcuts</div></div></nav>';
+  return h;
+}
+function top(sp){
+  var h='<div class="top"><h1><span class="dot"></span>'+esc(sp.name)+'</h1><div class="chips">';
+  sp.repos.forEach(function(r){h+='<span class="chip"><b>'+esc(r.name)+'</b><span class="mono">'+esc(r.wt)+'</span></span>'});
+  h+='</div><div class="views" role="group" aria-label="View">';
+  [["code","Code","1"],["review","Review","2"],["agents","Agents","3"]].forEach(function(v){
+    var n=v[0]==="review"?pending(sp).length:v[0]==="agents"?(sp.question?1:0):0;
+    h+='<button data-view="'+v[0]+'" aria-pressed="'+(sp.view===v[0])+'">'+v[1]+(n?'<span class="n">'+n+'</span>':'')+K(v[2])+'</button>'});
+  return h+'</div></div>';
+}
+function changes(sp){
+  var mine=Object.keys(sp.mine).map(function(id){var f=sp.files[id];return {repo:f.repo,path:f.path,st:"M",id:id}});
+  var prop={};pending(sp).forEach(function(h){var f=sp.files[h.file];prop[h.file]={repo:f.repo,path:f.path,st:"P",id:h.file}});
+  var groups=[["Staged",stagedFiles(sp),"var(--add)"],["Changed by you",mine,"var(--info)"],["Proposed by agents",Object.keys(prop).map(function(k){return prop[k]}),"var(--warn)"]];
+  var h='<aside class="changes" aria-label="Changes">';
+  groups.forEach(function(g){h+='<div class="grp"><h3>'+g[0]+'<span>'+g[1].length+'</span></h3>';
+    if(!g[1].length)h+='<div class="empty">Nothing here</div>';
+    g[1].forEach(function(f){h+='<button class="frow" '+(f.id?'data-file="'+f.id+'"':'')+' style="--c:'+g[2]+'"><span class="rp">'+esc(f.repo)+'</span><span class="pt">'+esc(f.path)+'</span><span class="st">'+f.st+'</span></button>'});
+    h+='</div>'});
+  return h+'</aside>';
+}
+function surface(sp){
+  if(sp.win!==1) return '<section class="surface"><div class="elsewhere"><span class="dot" style="--c:'+sp.color+';width:12px;height:12px"></span><h3>'+esc(sp.name)+' is open in window '+sp.win+'</h3><p>Each window shows one space. Your other spaces stay here.</p><button class="btn p" data-act="window">Bring it to this window '+K("W")+'</button></div></section>';
+  return '<section class="surface" aria-label="'+sp.view+'">'+(sp.view==="review"?review(sp):sp.view==="code"?code(sp):agents(sp))+'</section>';
+}
+function diffLines(h,from){
+  var o="",n=from+h.at;
+  h.del.forEach(function(l,i){o+='<div class="dl d"><span class="g">'+(n+i)+'</span><span class="s">−</span><span>'+esc(l)+'</span></div>'});
+  h.add.forEach(function(l,i){o+='<div class="dl a"><span class="g">'+(n+i)+'</span><span class="s">+</span><span>'+esc(l)+'</span></div>'});
+  return o;
+}
+function review(sp){
+  var p=pending(sp).length,a=accepted(sp).length,r=sp.hunks.filter(function(h){return h.state==="rejected"}).length,tot=sp.hunks.length;
+  var h='<div class="rv"><div class="rvhead"><h2>Review</h2><div class="bar"><i style="width:'+(tot?((a+r)/tot*100):100)+'%"></i></div><span class="counts">'+p+' to review · '+a+' accepted · '+r+' rejected</span></div>';
+  if(!tot||!p){h+='<div class="allclear"><h3>'+(tot?"All proposals reviewed":"No proposals yet")+'</h3><span>'+(readyToCommit(sp)?'Press '+K("C")+' to run the commit gate':'Agents will drop their changes here')+'</span></div>'}
+  sp.hunks.forEach(function(x,i){var f=sp.files[x.file],foc=i===sp.hi;
+    if(x.state!=="pending"){
+      h+='<article class="hunk done'+(foc?' focus':'')+'" data-h="'+i+'"><div class="hh"><span class="dot" style="--c:'+(x.state==="rejected"?"var(--del)":"var(--add)")+'"></span><b>'+esc(f.repo)+'</b><span class="loc">'+esc(f.path)+':'+(f.from+x.at)+'</span><span>'+esc(x.why)+'</span><span class="keys"><span class="state" style="--c:'+(x.state==="rejected"?"var(--del)":"var(--add)")+'">'+(x.state==="edited"?"edited by you":x.state)+'</span>'+(foc?K("U")+' undo':'')+'</span></div></article>';return}
+    h+='<article class="hunk'+(foc?' focus':'')+'" data-h="'+i+'"><div class="hh"><span class="dot" style="--c:'+COLORS[x.role]+'"></span><b>'+x.role+'</b><span>'+esc(x.tool)+'</span><span class="loc">'+esc(f.repo)+' / '+esc(f.path)+':'+(f.from+x.at)+'</span>'+(foc?'<span class="keys"><span>'+K("Y")+' accept</span><span>'+K("N")+' reject</span><span>'+K("E")+' edit</span></span>':'')+'</div>';
+    h+='<div class="why">'+esc(x.why)+'</div><div class="diff">'+diffLines(x,f.from)+'</div>';
+    if(x.note&&!x.note.resolved)h+='<div class="note"><span class="dot" style="--c:var(--del)"></span><div><small>'+esc(x.note.by)+' · blocking</small><span>'+esc(x.note.text)+'</span></div><button class="btn" data-fix="'+i+'">'+(x.note.busy?'<span class="pulse">Fixing…</span>':'Ask to fix '+K("F"))+'</button></div>';
+    h+='</article>'});
+  return h+'</div>';
+}
+function code(sp){
+  var f=sp.files[sp.file],h='<div class="tabs" role="tablist">';
+  Object.keys(sp.files).forEach(function(id){var x=sp.files[id];h+='<button class="tab" role="tab" data-file="'+id+'" aria-selected="'+(id===sp.file)+'"><span class="rp">'+esc(x.repo)+'</span><span class="mono">'+esc(x.path)+'</span></button>'});
+  h+='</div><div class="code">';
+  var hs=sp.hunks.map(function(x,i){return {x:x,i:i}}).filter(function(o){return o.x.file===sp.file&&o.x.state==="pending"});
+  var i=0,L=f.lines;
+  while(i<=L.length){
+    var here=hs.filter(function(o){return o.x.at===i});
+    var skip=0;
+    here.forEach(function(o){var x=o.x,foc=o.i===sp.hi;
+      h+='<div class="inline'+(foc?' focus':'')+'" data-h="'+o.i+'"><div class="ib"><span class="dot" style="--c:'+COLORS[x.role]+'"></span><b>'+x.role+'</b><span>'+esc(x.tool)+' · '+esc(x.why)+'</span><span class="keys"><span>'+K("Y")+' accept</span><span>'+K("N")+' reject</span><span>'+K("E")+' edit</span></span></div><div class="diff">'+diffLines(x,f.from)+'</div></div>';
+      skip=Math.max(skip,x.del.length)});
+    i+=skip;
+    if(i<L.length){var mine=sp.mine[sp.file]&&sp.mine[sp.file][i];
+      h+='<div class="ln'+(mine?' mine':'')+'"><span class="g">'+(f.from+i)+'</span><span class="s">'+(mine?'•':'')+'</span><span class="t" contenteditable="plaintext-only" spellcheck="false" data-line="'+i+'">'+esc(L[i])+'</span></div>'}
+    i++;
+  }
+  return h+'</div>';
+}
+function agents(sp){
+  var h='<div class="ag">';
+  if(sp.question)h+='<div class="ask"><small style="font-size:12px;font-weight:600;color:var(--muted)">'+esc(sp.question.by)+' asks</small><p>'+esc(sp.question.text)+'</p><div class="row"><button class="btn p" data-ans="yes">'+esc(sp.question.yes)+' '+K("Y")+'</button><button class="btn" data-ans="no">'+esc(sp.question.no)+' '+K("N")+'</button><button class="btn" data-act="composer">Answer in words '+K("@")+'</button></div></div>';
+  sp.agents.forEach(function(a){var c=a.status==="working"?"var(--info)":a.status==="waiting"?"var(--space)":a.status==="warn"?"var(--del)":"var(--add)";
+    h+='<div class="agent"><span class="dot'+(a.status==="working"?" pulse":"")+'" style="--c:'+c+'"></span><span class="who">'+a.role+'<span>'+esc(a.tool)+'</span></span><span class="stt" style="--c:'+c+'">'+a.status+'</span><span class="txt">'+esc(a.text)+'</span><span class="wt">'+esc(a.wt)+'</span></div>'});
+  h+='<button class="btn" data-act="composer" style="align-self:flex-start">Ask an agent '+K("@")+'</button>';
+  return h+'</div>';
+}
+function island(sp){
+  if(S.overlay==="composer")return "";
+  var u=upNext(sp);
+  return '<button class="island'+(u.quiet?' quiet':'')+'" data-act="next" aria-label="Up next: '+esc(u.t)+'"><span class="dot"></span><span class="tx"><b>'+esc(u.t)+'</b><span>'+esc(u.s)+'</span></span><span class="go">'+esc(u.go)+' '+K(u.k||"Enter")+'</span></button>';
+}
+function bottom(sp){
+  var hints={review:[["J K","move"],["Y","accept"],["N","reject"],["E","edit by hand"],["F","ask to fix"]],code:[["Click","type anywhere"],["J K","proposals"],["Y N","accept, reject"],["B","changes"]],agents:[["@","ask"],["Y N","answer"]]}[sp.view];
+  hints=hints.concat([["C","commit"],["Ctrl K","everything"]]);
+  var h='<div class="bottom"><div class="hints">'+hints.map(function(x){return '<span>'+K(x[0])+x[1]+'</span>'}).join("")+'</div>';
+  var bad=sp.stack.filter(function(s){return s[2]==="warn"}).length;
+  h+='<button class="stack" data-act="stack" aria-expanded="'+S.stackOpen+'">'+sp.stack.slice(0,3).map(function(s){return '<span class="dot" style="--c:'+stc(s[2])+'"></span><span class="mono">'+esc(s[0])+'</span>'}).join("")+(sp.stack.length>3?'<span>+'+(sp.stack.length-3)+'</span>':'')+(bad?'<span style="color:var(--warn)">· '+bad+' starting</span>':'')+K("S")+'</button></div>';
+  return h;
+}
+function stc(s){return s==="ok"?"var(--add)":s==="warn"?"var(--warn)":s==="info"?"var(--info)":"var(--faint)"}
+function stackPop(sp){
+  return '<div class="pop" role="dialog" aria-label="Stack"><div class="psec">Stack for '+esc(sp.branch)+'</div>'+sp.stack.map(function(s){return '<div class="r"><span class="dot" style="--c:'+stc(s[2])+'"></span><span class="mono">'+esc(s[0])+'</span><span class="m">'+esc(s[1])+'</span></div>'}).join("")+'<div class="psec">Each worktree gets its own containers and ports</div></div>';
+}
+function composer(sp){
+  var roles=["Developer","Reviewer","Tester","Planner","Debugger"];
+  return '<div class="composer" role="dialog" aria-label="Ask an agent"><label for="cmp-in" class="psec" style="padding:0 4px">Ask in '+esc(sp.name)+' · runs in a new worktree</label><textarea id="cmp-in" rows="2" placeholder="Handle charge.refunded in the webhook"></textarea><div class="row">'+roles.map(function(r){return '<button class="role" data-role="'+r+'" aria-pressed="'+(S.role===r)+'">'+r+'</button>'}).join("")+'<span style="margin-left:auto">'+K("Tab")+' role · '+K("Enter")+' send · '+K("Esc")+' close</span></div></div>';
+}
+
+/* ---------- Overlays ---------- */
+function renderLayer(){
+  if(S.overlay==="palette")layer.innerHTML=palette();
+  else if(S.overlay==="newspace")layer.innerHTML=newSpace();
+  else if(S.overlay==="commit")layer.innerHTML=commitSheet();
+  else if(S.overlay==="help")layer.innerHTML=help();
+  else layer.innerHTML="";
+  layer.querySelectorAll("[data-close]").forEach(function(el){el.addEventListener("click",function(e){if(e.target===el){S.overlay=null;render()}})});
+  if(S.overlay==="palette"){var i=document.getElementById("pal-in");i.value=S.pal.q;i.focus();i.addEventListener("input",function(){S.pal.q=i.value;S.pal.i=0;drawPal()});drawPal()}
+  if(S.overlay==="newspace"){var n=document.getElementById("ns-name");n.focus();n.value=S.newSp.name;n.addEventListener("input",function(){S.newSp.name=n.value});
+    layer.querySelectorAll("[data-repo]").forEach(function(b){b.addEventListener("click",function(){var r=b.dataset.repo,a=S.newSp.repos,k=a.indexOf(r);if(k<0)a.push(r);else a.splice(k,1);b.setAttribute("aria-pressed",k<0)})});
+    document.getElementById("ns-go").addEventListener("click",createSpace);
+    document.getElementById("ns-form").addEventListener("submit",function(e){e.preventDefault();createSpace()})}
+  if(S.overlay==="commit"){layer.querySelector("[data-commit]").addEventListener("click",doCommit);var ov=document.getElementById("ov-in");if(ov)ov.addEventListener("input",function(){S.gate.reason=ov.value;var b=layer.querySelector("[data-commit]");b.disabled=!gateOk()})}
+}
+function paletteItems(){
+  var sp=cur(),it=[];
+  var a=[["Up next: "+upNext(sp).t,"Enter",function(){upNext(sp).act()}],["Go to review","2",function(){setView("review")}],["Go to code","1",function(){setView("code")}],["Go to agents","3",function(){setView("agents")}],["Ask an agent","@",openComposer],["Commit and push","C",openCommit],["New space","",function(){S.overlay="newspace";render()}],["Open this space in its own window","W",toggleWindow],["Toggle changes","B",function(){S.changes=!S.changes;render()}],["Show the stack","S",function(){S.stackOpen=true;render()}],["All shortcuts","?",function(){S.overlay="help";render()}]];
+  a.forEach(function(x){it.push({sec:"Actions",t:x[0],k:x[1],run:x[2]})});
+  spaces.forEach(function(s,i){it.push({sec:"Spaces",t:s.name,sub:s.branch,dot:s.color,k:i<9?"Alt "+(i+1):"",run:function(){goSpace(i)}})});
+  spaces.forEach(function(s,i){Object.keys(s.files).forEach(function(id){var f=s.files[id];it.push({sec:"Files",t:f.path,sub:s.name+" · "+f.repo,dot:s.color,run:function(){S.sp=i;s.view="code";s.file=id;S.overlay=null;render()}})})});
+  var q=S.pal.q.toLowerCase().trim();
+  if(q)it=it.filter(function(x){var hay=(x.t+" "+(x.sub||"")).toLowerCase();return q.split(/\s+/).every(function(w){return hay.indexOf(w)>=0})});
+  return it;
+}
+function palette(){
+  return '<div class="scrim" data-close><div class="sheet" role="dialog" aria-label="Command bar"><div class="pin"><svg width="18" height="18" viewBox="0 0 256 256" fill="none" stroke="var(--faint)" stroke-width="20" stroke-linecap="round" aria-hidden="true"><circle cx="112" cy="112" r="72"></circle><path d="M163 163l53 53"></path></svg><label for="pal-in" style="position:absolute;left:-9999px">Search</label><input id="pal-in" autocomplete="off" placeholder="Jump to a space, a file, or run an action"></div><div class="plist" id="pal-list" role="listbox"></div><div class="pfoot"><span>'+K("↑")+K("↓")+' move</span><span>'+K("Enter")+' run</span><span>'+K("Esc")+' close</span></div></div></div>';
+}
+var palCache=[];
+function drawPal(){
+  palCache=paletteItems();var el=document.getElementById("pal-list");if(!el)return;
+  if(S.pal.i>=palCache.length)S.pal.i=Math.max(0,palCache.length-1);
+  var h="",sec="";
+  if(!palCache.length)h='<div class="empty" style="padding:16px">No match. Try a file name, a space, or “commit”.</div>';
+  palCache.forEach(function(x,i){if(x.sec!==sec){sec=x.sec;h+='<div class="psec">'+sec+'</div>'}
+    h+='<button class="pit" role="option" data-pi="'+i+'" aria-selected="'+(i===S.pal.i)+'">'+(x.dot?'<span class="dot" style="--c:'+x.dot+'"></span>':'<span class="dot" style="--c:var(--line)"></span>')+'<span class="t">'+esc(x.t)+(x.sub?'<small>'+esc(x.sub)+'</small>':'')+'</span>'+(x.k?K(x.k):'')+'</button>'});
+  el.innerHTML=h;
+  el.querySelectorAll("[data-pi]").forEach(function(b){b.addEventListener("click",function(){runPal(+b.dataset.pi)})});
+  var s=el.querySelector('[aria-selected="true"]');if(s)s.scrollIntoView({block:"nearest"});
+}
+function runPal(i){var x=palCache[i];if(!x)return;S.overlay=null;S.pal.q="";x.run();render()}
+function newSpace(){
+  return '<div class="scrim" data-close><form class="sheet" id="ns-form" role="dialog" aria-label="New space"><div class="form"><div style="font-size:16px;font-weight:600">New space</div><div style="display:flex;flex-direction:column;gap:6px"><label for="ns-name">What are you working on?</label><input class="field" id="ns-name" autocomplete="off" placeholder="Refunds in checkout"></div><div style="display:flex;flex-direction:column;gap:6px"><label>Repos for this task</label><div class="repos">'+REPOS.map(function(r){return '<button type="button" class="rtog" data-repo="'+r+'" aria-pressed="'+(S.newSp.repos.indexOf(r)>=0)+'">'+r+'</button>'}).join("")+'</div></div><div class="cost">Vela creates one branch and one worktree per repo, then starts the stack from mise.toml and compose.yml.</div><div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" class="btn" data-close-btn>Cancel</button><button type="button" class="btn p" id="ns-go">Create space '+K("Ctrl Enter")+'</button></div></div></form></div>';
+}
+function gateChecks(sp){
+  var bn=blockingNotes(sp).length,t=sp.tests;
+  return [["Reviewer",bn?bn+" blocking":"no blocking notes",!bn],["Tests touched by the diff",t.pass+" of "+t.total,t.pass===t.total],["Lint and types","clean",true],["Secrets and .env","clean",true],["Repo rules","AGENTS.md",true]];
+}
+function gateOk(){var g=S.gate;return g&&g.done>=5&&(g.checks.every(function(c){return c[2]})||(g.reason||"").trim().length>3)}
+function commitSheet(){
+  var sp=cur(),g=S.gate,files=stagedFiles(sp),repos=uniq(files.map(function(f){return f.repo}));
+  var h='<div class="scrim" data-close><div class="sheet" role="dialog" aria-label="Commit gate"><div class="form"><div style="display:flex;align-items:center;gap:10px"><span class="dot" style="--c:'+sp.color+'"></span><span style="font-size:16px;font-weight:600">Commit '+esc(sp.name)+'</span><span class="cost" style="margin-left:auto">'+files.length+' files · '+repos.join(", ")+'</span></div><ul class="checks">';
+  g.checks.forEach(function(c,i){var st=i<g.done?(c[2]?"pass":"fail"):"run";var col=st==="pass"?"var(--add)":st==="fail"?"var(--del)":"var(--faint)";
+    h+='<li><span class="dot'+(st==="run"?" pulse":"")+'" style="--c:'+col+'"></span><span>'+c[0]+'</span><em style="--c:'+col+'">'+(st==="run"?"checking":c[1])+'</em></li>'});
+  h+='</ul><div class="cost">Reads the staged diff only, in parallel. Blocks already reviewed come from cache.</div>';
+  if(pending(sp).length)h+='<div class="blocked">'+pending(sp).length+' proposals are still unreviewed and will not be committed.</div>';
+  h+='<div style="display:flex;flex-direction:column;gap:6px"><label for="msg-in">Message</label><textarea class="field mono" id="msg-in" rows="4">'+esc(sp.commitMsg)+'</textarea></div>';
+  var fails=g.done>=5&&!g.checks.every(function(c){return c[2]});
+  if(fails)h+='<div style="display:flex;flex-direction:column;gap:6px"><label for="ov-in" style="color:var(--del)">Blocked. Fix it with F in review, or give a reason to override</label><input class="field" id="ov-in" autocomplete="off" placeholder="Hotfix, tests are flaky on CI" value="'+esc(g.reason||"")+'"></div>';
+  h+='<div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" data-close-btn>Cancel</button><button class="btn p" data-commit '+(gateOk()?"":"disabled")+'>Commit and push '+repos.length+(repos.length>1?" repos":" repo")+' '+K("Ctrl Enter")+'</button></div></div></div></div>';
+  return h;
+}
+function help(){
+  var g=[["Anywhere",[["Ctrl K","Spaces, files, actions"],["Enter","Do what is up next"],["Shift Enter","Next space waiting for you"],["[  ]","Previous, next space"],["Alt 1 to 9","Jump to space"],["W","Open space in its own window"],["1  2  3","Code, review, agents"],["B","Changes drawer"],["S","Stack and containers"],["@","Ask an agent"],["C","Commit and push"],["?","This sheet"]]],["On a proposal",[["J  K","Next, previous"],["Y","Accept"],["N","Reject"],["E","Accept and edit by hand"],["F","Ask the author to fix the note"],["U","Undo"]]],["In the editor",[["Click","Type anywhere, your lines get a blue mark"],["Esc","Leave the line, keys work again"]]]];
+  var h='<div class="scrim" data-close><div class="sheet" role="dialog" aria-label="Shortcuts" style="max-width:720px"><div class="help">';
+  g.forEach(function(s){h+='<h4>'+s[0]+'</h4>';s[1].forEach(function(r){h+='<div><span>'+r[1]+'</span>'+K(r[0])+'</div>'})});
+  return h+'</div><div class="pfoot"><span>In the desktop app these use Ctrl, here they are single keys like in Linear or Gmail</span></div></div></div>';
+}
+
+/* ---------- Actions ---------- */
+function setView(v){cur().view=v;S.overlay=null;render()}
+function goSpace(i){if(i<0||i>=spaces.length)return;S.sp=i;S.overlay=null;S.stackOpen=false;render()}
+function toast(t){S.toast=t;var el=document.createElement("div");el.className="toast";el.setAttribute("role","status");el.textContent=t;document.body.appendChild(el);setTimeout(function(){el.remove()},2400)}
+function shift(sp,h,delta){sp.hunks.forEach(function(o){if(o!==h&&o.file===h.file&&o.at>h.at)o.at+=delta})}
+function apply(sp,h){var f=sp.files[h.file];f.lines.splice.apply(f.lines,[h.at,h.del.length].concat(h.add));shift(sp,h,h.add.length-h.del.length)}
+function unapply(sp,h){var f=sp.files[h.file];f.lines.splice.apply(f.lines,[h.at,h.add.length].concat(h.del));shift(sp,h,h.del.length-h.add.length)}
+function focusHunk(){var sp=cur();return sp.hunks[sp.hi]}
+function nextPendingIndex(sp,from){for(var j=1;j<=sp.hunks.length;j++){var k=(from+j)%sp.hunks.length;if(sp.hunks[k].state==="pending")return k}return from}
+function visibleHunks(sp){return sp.hunks.map(function(h,i){return i}).filter(function(i){return sp.view!=="code"||(sp.hunks[i].file===sp.file&&sp.hunks[i].state==="pending")})}
+function move(d){var sp=cur(),v=visibleHunks(sp);if(!v.length){if(sp.view==="code"){var p=pending(sp)[0];if(p){sp.file=p.file;sp.hi=sp.hunks.indexOf(p);render()}}return}var k=v.indexOf(sp.hi);k=k<0?0:Math.min(v.length-1,Math.max(0,k+d));sp.hi=v[k];render()}
+function decide(kind){
+  var sp=cur(),h=focusHunk();if(!h||h.state!=="pending")return;
+  if(kind==="accept"){apply(sp,h);h.state="accepted"}
+  if(kind==="reject"){h.state="rejected"}
+  if(kind==="edit"){apply(sp,h);h.state="edited";sp.view="code";sp.file=h.file;render();
+    var el=app.querySelector('.t[data-line="'+h.at+'"]');if(el){el.focus();placeEnd(el)}toast("Accepted. Edit the lines, then Esc");return}
+  sp.hi=nextPendingIndex(sp,sp.hi);
+  if(!pending(sp).length)toast(readyToCommit(sp)?"All reviewed. Press C to commit":"All reviewed");
+  render();
+}
+function undo(){var sp=cur(),h=focusHunk();if(!h||h.state==="pending")return;if(h.state!=="rejected")unapply(sp,h);h.state="pending";render()}
+function placeEnd(el){try{var r=document.createRange();r.selectNodeContents(el);r.collapse(false);var s=getSelection();s.removeAllRanges();s.addRange(r)}catch(e){}}
+function askFix(i){
+  var sp=cur(),h=sp.hunks[i==null?sp.hi:i];if(!h||!h.note||h.note.resolved||h.note.busy)return;
+  h.note.busy=true;var agent=sp.agents.filter(function(a){return a.role===h.role})[0];if(agent){agent.status="working";agent.text="Fixing: "+h.note.text.split(".")[0]}render();
+  setTimeout(function(){
+    if(h.state==="accepted"||h.state==="edited"){var nh={id:h.id+"f",file:h.file,at:h.at,del:h.add.slice(),add:h.note.fix,role:h.role,tool:h.tool,why:"Fix from review: return 400 on a bad signature.",state:"pending"};sp.hunks.splice(sp.hunks.indexOf(h)+1,0,nh)}
+    else{h.add=h.note.fix;h.why="Updated after review: catch the bad signature and return 400."}
+    h.note.resolved=true;h.note.busy=false;sp.tests.pass=sp.tests.total;
+    if(agent){agent.status="done";agent.text="Fix ready, tests "+sp.tests.total+" of "+sp.tests.total}
+    sp.agents.forEach(function(a){if(a.role==="Tester"){a.status="done";a.text=sp.tests.total+" of "+sp.tests.total+" tests pass"}if(a.role==="Reviewer"){a.text="No blocking notes"}});
+    toast(h.tool+" updated the proposal");render()},1400);
+}
+function answer(yes){
+  var sp=cur();if(!sp.question)return;var q=sp.question;sp.question=null;
+  sp.agents.forEach(function(a){if(a.status==="waiting"){a.status="working";a.text=yes?"Keeping pg_trgm, adding it to the image init script":"Dropping pg_trgm and the fuzzy index"}});
+  toast("Sent to "+q.by.split(" · ")[1]);
+  setTimeout(function(){sp.hunks.push({id:"p3",file:"mig",at:yes?0:1,del:yes?[]:["CREATE EXTENSION IF NOT EXISTS pg_trgm;","CREATE INDEX customers_name_trgm ON customers USING gin (name gin_trgm_ops);"],add:yes?["-- requires pg_trgm, installed by infra/initdb/10_ext.sql"]:["-- pg_trgm dropped with Postgres 17, see chore/pg17"],role:"Developer",tool:"Crush",why:yes?"Document where the extension now comes from.":"Remove the extension and its index.",state:"pending"});
+    sp.agents.forEach(function(a){if(a.tool==="Crush"){a.status="done";a.text="1 new proposal"}});render()},1600);
+  render();
+}
+function openComposer(){S.overlay="composer";render()}
+function sendComposer(){
+  var ta=document.getElementById("cmp-in"),t=(ta&&ta.value||"").trim();if(!t){ta&&ta.focus();return}
+  var sp=cur(),role=S.role,tool=role==="Reviewer"?"Codex":role==="Tester"?"opencode":"Claude Code";
+  var wt=sp.repos[0].name+" · wt/"+sp.branch.split("/").pop()+"-"+role.toLowerCase();
+  var ag={role:role,tool:tool,wt:wt,status:"working",text:t};sp.agents.unshift(ag);S.overlay=null;toast(role+" started in "+wt);render();
+  setTimeout(function(){
+    var fid=Object.keys(sp.files)[0],f=sp.files[fid],ext=f.path.split(".").pop(),c=ext==="yml"?"#":ext==="sql"?"--":"//";
+    var at=Math.max(0,f.lines.length-1);
+    sp.hunks.push({id:"c"+Date.now(),file:fid,at:at,del:[],add:["  "+c+" "+t],role:role,tool:tool,why:"Draft for: "+t,state:"pending"});
+    ag.status="done";ag.text="1 proposal ready: "+t;sp.committed=false;render()},2200);
+}
+function openCommit(){
+  var sp=cur();if(!stagedFiles(sp).length){toast("Nothing staged yet. Accept a proposal with Y");return}
+  S.gate={checks:gateChecks(sp),done:0,reason:""};S.overlay="commit";render();
+  var step=function(){if(S.overlay!=="commit"||!S.gate)return;S.gate.done++;var m=document.getElementById("msg-in");if(m)cur().commitMsg=m.value;renderLayer();if(S.gate.done<5)setTimeout(step,220)};setTimeout(step,260);
+}
+function doCommit(){
+  if(!gateOk())return;var sp=cur(),m=document.getElementById("msg-in");if(m)sp.commitMsg=m.value;
+  var repos=uniq(stagedFiles(sp).map(function(f){return f.repo}));
+  sp.hunks=sp.hunks.filter(function(h){return h.state==="pending"});sp.baseStaged=[];sp.mine={};sp.committed=true;sp.hi=0;S.overlay=null;S.gate=null;
+  toast("Pushed "+repos.join(" and ")+" on "+sp.branch);render();
+}
+function createSpace(){
+  var n=(S.newSp.name||"").trim();if(!n){var el=document.getElementById("ns-name");el.focus();el.placeholder="Give the space a name first";return}
+  if(!S.newSp.repos.length){toast("Pick at least one repo");return}
+  var slug=n.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,24)||"task";
+  var pal=["#E8A14A","#7DB8F5","#C9A0F0","#4ADE80","#F0A3C0","#9BD0C8"];
+  var sp={id:slug,name:n,color:pal[spaces.length%pal.length],branch:"feat/"+slug,win:1,view:"agents",hi:0,
+    repos:S.newSp.repos.map(function(r){return {name:r,wt:"wt/"+slug}}),stack:[["mise","detecting","warn"]],tests:{pass:0,total:0},baseStaged:[],commitMsg:"feat: "+n.toLowerCase(),
+    files:{n0:{repo:S.newSp.repos[0],path:"README.md",from:1,lines:["# "+S.newSp.repos[0],""]}},file:"n0",hunks:[],agents:[{role:"Planner",tool:"Claude Code",wt:"read only",status:"working",text:"Reading the repos to split the task"}],question:null,mine:{}};
+  spaces.push(sp);S.sp=spaces.length-1;S.overlay=null;S.newSp={name:"",repos:["api"]};
+  toast("Created "+sp.repos.length+(sp.repos.length>1?" worktrees":" worktree")+" on "+sp.branch);render();
+  setTimeout(function(){sp.stack=[["node 22.11","mise","ok"]];sp.agents[0].status="done";sp.agents[0].text="Plan ready: 3 steps. Ask the Developer to start with @";render()},1800);
+}
+function toggleWindow(){var sp=cur();if(sp.win===1){sp.win=2;toast(sp.name+" moved to window 2")}else{sp.win=1;toast(sp.name+" is back in this window")}S.overlay=null;render()}
+
+/* ---------- Events ---------- */
+function bind(){
+  app.querySelectorAll("[data-sp]").forEach(function(b){b.addEventListener("click",function(){goSpace(+b.dataset.sp)})});
+  app.querySelectorAll("[data-view]").forEach(function(b){b.addEventListener("click",function(){setView(b.dataset.view)})});
+  app.querySelectorAll("[data-file]").forEach(function(b){b.addEventListener("click",function(){var sp=cur();sp.file=b.dataset.file;sp.view="code";render()})});
+  app.querySelectorAll("[data-h]").forEach(function(b){b.addEventListener("click",function(e){if(e.target.closest("button"))return;cur().hi=+b.dataset.h;render()})});
+  app.querySelectorAll("[data-fix]").forEach(function(b){b.addEventListener("click",function(){askFix(+b.dataset.fix)})});
+  app.querySelectorAll("[data-ans]").forEach(function(b){b.addEventListener("click",function(){answer(b.dataset.ans==="yes")})});
+  app.querySelectorAll("[data-role]").forEach(function(b){b.addEventListener("click",function(){S.role=b.dataset.role;app.querySelectorAll("[data-role]").forEach(function(x){x.setAttribute("aria-pressed",x.dataset.role===S.role)});document.getElementById("cmp-in").focus()})});
+  app.querySelectorAll("[data-act]").forEach(function(b){b.addEventListener("click",function(){var a=b.dataset.act;
+    if(a==="palette"){S.overlay="palette";S.pal={q:"",i:0};render()}
+    if(a==="newspace"){S.overlay="newspace";render()}
+    if(a==="next")upNext(cur()).act();
+    if(a==="composer")openComposer();
+    if(a==="stack"){S.stackOpen=!S.stackOpen;render()}
+    if(a==="window")toggleWindow();})});
+  app.querySelectorAll(".t[contenteditable]").forEach(function(el){el.addEventListener("input",function(){var sp=cur(),i=+el.dataset.line;sp.files[sp.file].lines[i]=el.textContent;sp.mine[sp.file]=sp.mine[sp.file]||{};var was=sp.mine[sp.file][i];sp.mine[sp.file][i]=true;if(!was){var ln=el.closest(".ln");ln.classList.add("mine");ln.querySelector(".s").textContent="•";sp.baseStaged=sp.baseStaged}})});
+}
+document.addEventListener("click",function(e){if(e.target.closest("[data-close-btn]")){e.preventDefault();S.overlay=null;S.gate=null;render()}});
+document.addEventListener("keydown",function(e){
+  var t=e.target,typing=t&&(t.isContentEditable||/^(INPUT|TEXTAREA)$/.test(t.tagName)),k=e.key,ctrl=e.ctrlKey||e.metaKey;
+  if(ctrl&&(k==="k"||k==="K")){e.preventDefault();S.overlay=S.overlay==="palette"?null:"palette";S.pal={q:"",i:0};render();return}
+  if(k==="Escape"){if(S.overlay||S.stackOpen){S.overlay=null;S.gate=null;S.stackOpen=false;render()}else if(typing){t.blur()}return}
+  if(S.overlay==="palette"){if(k==="ArrowDown"){e.preventDefault();S.pal.i=Math.min(palCache.length-1,S.pal.i+1);drawPal()}else if(k==="ArrowUp"){e.preventDefault();S.pal.i=Math.max(0,S.pal.i-1);drawPal()}else if(k==="Enter"){e.preventDefault();runPal(S.pal.i)}return}
+  if(S.overlay==="newspace"){if(k==="Enter"&&ctrl){e.preventDefault();createSpace()}return}
+  if(S.overlay==="commit"){if(k==="Enter"&&ctrl){e.preventDefault();doCommit()}return}
+  if(S.overlay==="composer"){if(k==="Tab"){e.preventDefault();var R=["Developer","Reviewer","Tester","Planner","Debugger"];S.role=R[(R.indexOf(S.role)+(e.shiftKey?R.length-1:1))%R.length];app.querySelectorAll("[data-role]").forEach(function(x){x.setAttribute("aria-pressed",x.dataset.role===S.role)})}else if(k==="Enter"&&!e.shiftKey){e.preventDefault();sendComposer()}return}
+  if(S.overlay==="help"){if(k==="?"){S.overlay=null;render()}return}
+  if(typing)return;
+  if(e.altKey&&/^[1-9]$/.test(k)){e.preventDefault();goSpace(+k-1);return}
+  if(e.altKey&&/^Digit[1-9]$/.test(e.code)){e.preventDefault();goSpace(+e.code.slice(5)-1);return}
+  if(ctrl||e.altKey)return;
+  var sp=cur(),handled=true;
+  switch(k){
+    case "Enter": if(e.shiftKey){var n=nextWaitingSpace();if(n!==null)goSpace(n);else toast("No other space is waiting for you")}else upNext(sp).act();break;
+    case "1": setView("code");break;
+    case "2": setView("review");break;
+    case "3": setView("agents");break;
+    case "[": goSpace((S.sp-1+spaces.length)%spaces.length);break;
+    case "]": goSpace((S.sp+1)%spaces.length);break;
+    case "j": case "J": case "ArrowDown": if(sp.view==="agents"){handled=false;break}move(1);break;
+    case "k": case "K": case "ArrowUp": if(sp.view==="agents"){handled=false;break}move(-1);break;
+    case "y": case "Y": if(sp.view==="agents"&&sp.question)answer(true);else decide("accept");break;
+    case "n": case "N": if(sp.view==="agents"&&sp.question)answer(false);else decide("reject");break;
+    case "e": case "E": decide("edit");break;
+    case "f": case "F": askFix();break;
+    case "u": case "U": undo();break;
+    case "b": case "B": S.changes=!S.changes;render();break;
+    case "s": case "S": S.stackOpen=!S.stackOpen;render();break;
+    case "c": case "C": openCommit();break;
+    case "w": case "W": toggleWindow();break;
+    case "@": openComposer();break;
+    case "?": S.overlay="help";render();break;
+    default: handled=false;
+  }
+  if(handled)e.preventDefault();
+});
+render();
+})();
+</script>
