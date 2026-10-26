@@ -1,7 +1,8 @@
 <script lang="ts">
   import AgentsView from "./components/AgentsView.svelte";
   import BottomHints from "./components/BottomHints.svelte";
-  import ChangesDrawer from "./components/ChangesDrawer.svelte";
+  import FilesDrawer from "./components/FilesDrawer.svelte";
+  import QuickOpen from "./components/QuickOpen.svelte";
   import CodeView from "./components/CodeView.svelte";
   import CommandBar from "./components/CommandBar.svelte";
   import CommitSheet from "./components/CommitSheet.svelte";
@@ -39,6 +40,8 @@
       stackOpen: app.stackOpen,
       view: app.view,
       hasQuestion: app.spaces.length > 0 && !!app.sd.question,
+      filesOpen: app.filesOpen,
+      inFiles: !!(e.target as HTMLElement | null)?.closest?.("[data-files]"),
     });
     if (action) {
       e.preventDefault();
@@ -76,7 +79,7 @@
     <div class="main">
       <TopBar />
       <div class="body">
-        {#if app.changes}<ChangesDrawer />{/if}
+        {#if app.filesOpen}<FilesDrawer />{/if}
         {#key surfaceKey}
           {#if app.elsewhere}
             <section class="surface enter">
@@ -101,6 +104,7 @@
     </div>
   </div>
   {#if app.overlay === "palette"}<CommandBar />{/if}
+  {#if app.overlay === "quickopen"}<QuickOpen />{/if}
   {#if app.overlay === "newspace"}<NewSpaceSheet />{/if}
   {#if app.overlay === "commit"}<CommitSheet />{/if}
   {#if app.overlay === "links"}<LinksSheet />{/if}

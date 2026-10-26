@@ -36,7 +36,8 @@ export function buildPaletteItems(src: PaletteSource): PaletteItem[] {
     ["Links of this space", "L", { type: "open-links" }],
     ["New space", "", { type: "open-newspace" }],
     ["Open this space in its own window", "W", { type: "toggle-window" }],
-    ["Toggle changes", "B", { type: "toggle-changes" }],
+    ["Toggle files", "B", { type: "toggle-files" }],
+    ["Go to file", "Ctrl P", { type: "quick-open" }],
     ["Show the stack", "S", { type: "open-stack" }],
     ["All shortcuts", "?", { type: "open-help" }],
   ];

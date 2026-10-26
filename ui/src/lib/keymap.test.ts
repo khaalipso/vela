@@ -42,8 +42,8 @@ describe("global shortcuts", () => {
 
   it("the other single keys", () => {
     const table: [string, Action][] = [
-      ["b", { type: "toggle-changes" }],
-      ["B", { type: "toggle-changes" }],
+      ["b", { type: "toggle-files" }],
+      ["B", { type: "toggle-files" }],
       ["s", { type: "toggle-stack" }],
       ["c", { type: "open-commit" }],
       ["l", { type: "open-links" }],
@@ -56,6 +56,14 @@ describe("global shortcuts", () => {
       ["u", { type: "undo" }],
     ];
     for (const [k, a] of table) expect(resolveKey(key(k), ctx())).toEqual(a);
+  });
+
+  it("Ctrl P opens quick open, / filters the open file tree, the tree keeps its own keys", () => {
+    expect(resolveKey(key("p", { ctrlKey: true }), ctx())).toEqual({ type: "quick-open" });
+    expect(resolveKey(key("/"), ctx())).toBeNull();
+    expect(resolveKey(key("/"), { ...ctx(), filesOpen: true })).toEqual({ type: "files-filter" });
+    expect(resolveKey(key("j"), { ...ctx(), inFiles: true })).toBeNull();
+    expect(resolveKey(key("2", { altKey: true }), { ...ctx(), inFiles: true })).toEqual({ type: "space-jump", index: 1 });
   });
 
   it("unknown keys are not ours", () => {
