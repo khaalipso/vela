@@ -87,6 +87,8 @@ export type Unsubscribe = () => void;
 
 export interface Backend {
   listRepos(): Promise<string[]>;
+  /** Declare a repo by folder path (~ allowed). Returns the updated repo list. */
+  declareRepo(path: string): Promise<string[]>;
   listSpaces(): Promise<Space[]>;
   createSpace(name: string, repos: string[]): Promise<Space>;
   /** Move a space to another window, or back to the main one with null. */
@@ -394,7 +396,16 @@ export class MockBackend implements Backend {
   // -- spaces ---------------------------------------------------------------
 
   async listRepos(): Promise<string[]> {
-    return [...REPOS];
+    return [...this.declared, ...REPOS.filter((r) => !this.declared.includes(r))];
+  }
+
+  private declared: string[] = [];
+
+  async declareRepo(path: string): Promise<string[]> {
+    const p = path.trim();
+    if (!p.startsWith("/") && !p.startsWith("~")) throw new Error(`folder not found: ${p}`);
+    this.declared = [p, ...this.declared.filter((x) => x !== p)];
+    return this.listRepos();
   }
 
   async listSpaces(): Promise<Space[]> {
@@ -887,6 +898,9 @@ export const CHANGED_EVENT = "vela://changed";
 export class TauriBackend implements Backend {
   listRepos() {
     return call<string[]>("list_repos");
+  }
+  declareRepo(path: string) {
+    return call<string[]>("declare_repo", { path });
   }
   listSpaces() {
     return call<Space[]>("list_spaces");

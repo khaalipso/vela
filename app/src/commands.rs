@@ -476,6 +476,62 @@ pub fn scan_repos(roots: &[PathBuf], vela_home: &Path) -> Vec<String> {
     out.into_iter().collect()
 }
 
+/// Repos the user declared by path, kept in `VELA_HOME/repos.json`.
+fn declared_path(vela: &Vela) -> PathBuf {
+    vela.home.join("repos.json")
+}
+
+pub fn declared_repos(vela: &Vela) -> Vec<String> {
+    fs::read_to_string(declared_path(vela))
+        .ok()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|p| Path::new(p).join(".git").exists())
+        .collect()
+}
+
+/// Declared repos first (most recent first), then the ones found under the repo roots.
 pub fn list_repos(vela: &Vela) -> AppResult<Vec<String>> {
-    Ok(scan_repos(&repo_roots_from_env(), &vela.home))
+    let mut out = declared_repos(vela);
+    for r in scan_repos(&repo_roots_from_env(), &vela.home) {
+        if !out.contains(&r) {
+            out.push(r);
+        }
+    }
+    Ok(out)
+}
+
+/// Declares a repo by path (`~` expanded). It must be a git clone, not a Vela worktree.
+pub fn declare_repo(vela: &Vela, path: &str) -> AppResult<Vec<String>> {
+    let raw = path.trim();
+    let expanded = match raw.strip_prefix("~") {
+        Some(rest) => {
+            let home = std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_default();
+            home.join(rest.trim_start_matches('/'))
+        }
+        None => PathBuf::from(raw),
+    };
+    let dir = fs::canonicalize(&expanded)
+        .map_err(|_| AppError::invalid(format!("folder not found: {raw}")))?;
+    if !dir.join(".git").exists() {
+        return Err(AppError::invalid(format!("not a git repo: {raw}")));
+    }
+    let own = fs::canonicalize(&vela.home).unwrap_or_else(|_| vela.home.clone());
+    if dir.starts_with(&own) {
+        return Err(AppError::invalid(
+            "this folder is a Vela worktree, pick the original clone",
+        ));
+    }
+    let dir = dir.to_string_lossy().into_owned();
+    let mut list = declared_repos(vela);
+    list.retain(|p| p != &dir);
+    list.insert(0, dir);
+    fs::create_dir_all(&vela.home).map_err(|e| AppError::new("io", e.to_string()))?;
+    let json =
+        serde_json::to_string_pretty(&list).map_err(|e| AppError::new("io", e.to_string()))?;
+    fs::write(declared_path(vela), json).map_err(|e| AppError::new("io", e.to_string()))?;
+    list_repos(vela)
 }

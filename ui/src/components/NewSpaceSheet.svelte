@@ -35,12 +35,26 @@
         />
       </div>
       <div class="grp">
-        <span class="lbl">Repos for this task</span>
+        <label class="lbl" for="ns-repo">Repos for this task</label>
+        <input
+          class="field small"
+          id="ns-repo"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Filter repos, or paste a folder path like ~/code/shop"
+          bind:value={app.repoFilter}
+          onkeydown={(e) => {
+            if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
+              e.preventDefault();
+              void app.repoFilterEnter();
+            }
+          }}
+        />
         <div class="repos">
-          {#each app.repos as r (r)}
+          {#each app.shownRepos as r (r)}
             <button type="button" class="rtog" aria-pressed={app.newSp.repos.includes(r)} title={r} onclick={() => app.toggleRepo(r)}>{r.split("/").pop()}</button>
           {:else}
-            <span class="none">No git repo found. Set VELA_REPO_ROOTS to the folders that hold your clones.</span>
+            <span class="none">{app.repoFilter.trim().startsWith("/") || app.repoFilter.trim().startsWith("~") ? "Press Enter to add this folder" : app.repos.length ? "No repo matches" : "No git repo found under ~/Work. Paste a folder path above to add one."}</span>
           {/each}
         </div>
       </div>
@@ -72,6 +86,12 @@
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+    max-height: 168px;
+    overflow: auto;
+  }
+  .field.small {
+    height: 36px;
+    font-size: 13px;
   }
   .rtog {
     height: 32px;

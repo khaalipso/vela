@@ -823,6 +823,39 @@ export class AppState {
     }
   }
 
+  /** Filter text of the repo picker; a path (starting with / or ~) can be declared. */
+  repoFilter = $state("");
+
+  /** Repos matching the filter, selected ones first. */
+  get shownRepos(): string[] {
+    const q = this.repoFilter.trim().toLowerCase();
+    const looksPath = q.startsWith("/") || q.startsWith("~");
+    const hit = (r: string) => !q || looksPath || r.toLowerCase().includes(q);
+    const sel = this.newSp.repos;
+    return [...sel.filter(hit), ...this.repos.filter((r) => !sel.includes(r) && hit(r))];
+  }
+
+  /** Enter in the repo filter: declare a path, or toggle the first match. */
+  async repoFilterEnter() {
+    const q = this.repoFilter.trim();
+    if (!q) return;
+    if (q.startsWith("/") || q.startsWith("~")) {
+      try {
+        this.repos = await this.backend.declareRepo(q);
+        const added = this.repos[0];
+        if (added && !this.newSp.repos.includes(added)) this.newSp.repos.push(added);
+        this.repoFilter = "";
+        this.toast(`Added ${added?.split("/").pop() ?? q}`);
+      } catch (e) {
+        this.toast(e instanceof Error ? e.message : String(e));
+      }
+      return;
+    }
+    const first = this.shownRepos.find((r) => !this.newSp.repos.includes(r));
+    if (first) this.toggleRepo(first);
+    this.repoFilter = "";
+  }
+
   toggleRepo(r: string) {
     const a = this.newSp.repos;
     const k = a.indexOf(r);

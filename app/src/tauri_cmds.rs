@@ -57,6 +57,11 @@ pub async fn list_repos(vela: State<'_, Vela>) -> AppResult<Vec<String>> {
 }
 
 #[tauri::command]
+pub async fn declare_repo(vela: State<'_, Vela>, path: String) -> AppResult<Vec<String>> {
+    blocking(&vela, move |v| commands::declare_repo(v, &path)).await
+}
+
+#[tauri::command]
 pub async fn list_spaces(vela: State<'_, Vela>) -> AppResult<Vec<Space>> {
     blocking(&vela, commands::list_spaces).await
 }

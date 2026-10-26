@@ -507,3 +507,26 @@ fn links_add_list_remove_and_open_rules() {
         assert!(commands::check_openable(u).is_err(), "{u}");
     }
 }
+
+#[test]
+fn declares_repos_by_path() {
+    let e = env();
+    let vela = Vela::new(e.root.join("home"));
+    let a = repo(&e.root.join("elsewhere"), "alpha", &[("f", "1")]);
+    let b = repo(&e.root.join("elsewhere"), "beta", &[("f", "2")]);
+    commands::declare_repo(&vela, a.to_str().unwrap()).unwrap();
+    let list = commands::declare_repo(&vela, b.to_str().unwrap()).unwrap();
+    let ca = fs::canonicalize(&a).unwrap().to_string_lossy().into_owned();
+    let cb = fs::canonicalize(&b).unwrap().to_string_lossy().into_owned();
+    assert_eq!(&list[..2], [cb.clone(), ca.clone()]);
+    // Declaring again moves it to the front without duplicating.
+    let list = commands::declare_repo(&vela, a.to_str().unwrap()).unwrap();
+    assert_eq!(list.iter().filter(|p| **p == ca).count(), 1);
+    assert_eq!(list[0], ca);
+    // Not a repo, missing folder, Vela worktree.
+    fs::create_dir_all(e.root.join("plain")).unwrap();
+    assert!(commands::declare_repo(&vela, e.root.join("plain").to_str().unwrap()).is_err());
+    assert!(commands::declare_repo(&vela, "/no/such/dir").is_err());
+    let inside = repo(&e.root.join("home/worktrees"), "x", &[("f", "3")]);
+    assert!(commands::declare_repo(&vela, inside.to_str().unwrap()).is_err());
+}

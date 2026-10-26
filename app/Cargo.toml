@@ -17,5 +17,9 @@ notify = "8"
 notify-debouncer-mini = "0.7"
 tauri-plugin-opener = "2.7.2"
 
+[features]
+# Serves the built UI from ui/dist instead of the dev server. Enabled by scripts/build.sh.
+custom-protocol = ["tauri/custom-protocol"]
+
 [dev-dependencies]
 tempfile.workspace = true
