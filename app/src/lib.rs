@@ -92,6 +92,7 @@ pub fn run() {
             c::remove_link,
             c::open_url,
             c::harnesses,
+            c::agent_defaults,
             c::agents,
             c::reasons,
             c::ask_agent,

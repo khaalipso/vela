@@ -27,6 +27,8 @@ export type Action =
   | { type: "links-remove" }
   | { type: "open-link"; id: string }
   | { type: "composer-role"; delta: 1 | -1 }
+  | { type: "composer-harness"; delta: 1 | -1 } // Shift Tab
+  | { type: "composer-tier"; delta: 1 | -1 } // Ctrl Up raises, Ctrl Down lowers
   | { type: "composer-send" }
   | { type: "up-next" }
   | { type: "next-waiting" }
@@ -193,7 +195,9 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
     return null;
   }
   if (c.overlay === "composer") {
-    if (k === "Tab") return { type: "composer-role", delta: shift ? -1 : 1 };
+    if (k === "Tab") return shift ? { type: "composer-harness", delta: 1 } : { type: "composer-role", delta: 1 };
+    if (ctrl && k === "ArrowUp") return { type: "composer-tier", delta: 1 };
+    if (ctrl && k === "ArrowDown") return { type: "composer-tier", delta: -1 };
     if (k === "Enter" && !shift) return { type: "composer-send" };
     return null;
   }

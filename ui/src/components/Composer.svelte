@@ -1,15 +1,22 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { app } from "../lib/app.svelte";
-  import { ROLES, roleLabel } from "../lib/format";
+  import { ROLES, roleLabel, toolLabel } from "../lib/format";
+  import type { Tier } from "../lib/types";
   import Kbd from "./Kbd.svelte";
 
   let ta: HTMLTextAreaElement | undefined = $state();
   onMount(() => ta?.focus());
+
+  const TIER_LIST: Tier[] = ["high", "medium", "low"];
+  const readOnly = $derived(app.role === "reviewer" || app.role === "planner");
 </script>
 
 <div class="composer" role="dialog" aria-label="Ask an agent">
-  <label for="cmp-in" class="psec">Ask in {app.space.name} · runs in a new worktree</label>
+  <label for="cmp-in" class="psec"
+    >Ask in {app.space.name} ·
+    {#if readOnly}reads your worktree, changes nothing{:else}runs in a new worktree from your last commit; uncommitted changes are not copied{/if}</label
+  >
   <textarea
     id="cmp-in"
     rows="2"
@@ -29,6 +36,34 @@
       >
     {/each}
     <span class="hint"><Kbd k="Tab" /> role · <Kbd k="Enter" /> send · <Kbd k="Esc" /> close</span>
+  </div>
+  <div class="row" aria-label="Harness and tier">
+    {#if app.installedHarnesses.length === 0}
+      <span class="none">No agent CLI found on this machine (claude, codex or opencode).</span>
+    {/if}
+    {#each app.installedHarnesses as h (h.name)}
+      <button
+        class="role harness"
+        aria-pressed={app.effectiveHarness === h.name}
+        title={h.version ?? h.name}
+        onclick={() => {
+          app.harness = h.name;
+          ta?.focus();
+        }}>{toolLabel(h.name)}</button
+      >
+    {/each}
+    <span class="sep"></span>
+    {#each TIER_LIST as t (t)}
+      <button
+        class="role tier"
+        aria-pressed={app.effectiveTier === t}
+        onclick={() => {
+          app.tier = t;
+          ta?.focus();
+        }}>{t}</button
+      >
+    {/each}
+    <span class="hint"><Kbd k="Shift Tab" /> harness · <Kbd k="Ctrl ↑" /> <Kbd k="Ctrl ↓" /> tier</span>
   </div>
 </div>
 
@@ -90,5 +125,14 @@
   }
   .hint {
     margin-left: auto;
+  }
+  .sep {
+    width: 1px;
+    height: 16px;
+    background: var(--line);
+    margin: 0 4px;
+  }
+  .none {
+    color: var(--warn);
   }
 </style>

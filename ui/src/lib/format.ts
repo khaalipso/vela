@@ -36,7 +36,15 @@ export const ROLE_COLORS: Record<AgentRole, string> = {
 };
 
 export function agentStatusColor(s: AgentStatus): string {
-  return s === "working" ? "var(--info)" : s === "waiting" ? "var(--space)" : s === "failed" ? "var(--del)" : "var(--add)";
+  return s === "working"
+    ? "var(--info)"
+    : s === "waiting"
+      ? "var(--space)"
+      : s === "failed"
+        ? "var(--del)"
+        : s === "interrupted"
+          ? "var(--warn)"
+          : "var(--add)";
 }
 
 export function stackColor(s: StackState): string {

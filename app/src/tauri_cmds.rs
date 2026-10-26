@@ -545,6 +545,20 @@ pub async fn harnesses(agents: State<'_, Arc<AgentManager>>) -> AppResult<Vec<Ha
         .map_err(|e| AppError::new("internal", e.to_string()))
 }
 
+/// Harness, tier and model each role gets by default in this space.
+#[tauri::command]
+pub async fn agent_defaults(
+    vela: State<'_, Vela>,
+    agents: State<'_, Arc<AgentManager>>,
+    space_id: String,
+) -> AppResult<Vec<commands::RoleDefault>> {
+    let agents = agents.inner().clone();
+    blocking(&vela, move |v| {
+        commands::agent_defaults(v, &agents, &space_id)
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn agents(
     vela: State<'_, Vela>,

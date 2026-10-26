@@ -586,6 +586,31 @@ pub fn harnesses(agents: &AgentManager) -> Vec<HarnessInfo> {
     agents.harnesses()
 }
 
+/// What a role gets when the request says nothing. Mirrors `RoleDefault` of the UI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleDefault {
+    pub role: AgentRole,
+    pub harness: String,
+    pub tier: Tier,
+    pub model: Option<String>,
+}
+
+/// Harness, tier and model of every role, from the layered config and what is installed.
+pub fn agent_defaults(vela: &Vela, agents: &AgentManager, id: &str) -> AppResult<Vec<RoleDefault>> {
+    let space = load(vela, id)?;
+    Ok(agents
+        .role_defaults(vela, &space)
+        .into_iter()
+        .map(|(role, r)| RoleDefault {
+            role,
+            harness: r.harness,
+            tier: r.tier,
+            model: r.model,
+        })
+        .collect())
+}
+
 /// The agents of the space, newest first. Runs cut short by a restart show as interrupted.
 pub fn agents(vela: &Vela, agents: &AgentManager, id: &str) -> AppResult<Vec<Agent>> {
     load(vela, id)?;

@@ -215,6 +215,31 @@ impl AgentManager {
         }
     }
 
+    /// Harness, tier and model each role gets when the request says nothing, for the composer.
+    pub fn role_defaults(
+        &self,
+        vela: &Vela,
+        space: &Space,
+    ) -> Vec<(AgentRole, crate::tiers::Resolved)> {
+        let cfg = self.agents_config(vela, space);
+        let installed: Vec<String> = self
+            .harnesses()
+            .into_iter()
+            .filter(|h| h.available)
+            .map(|h| h.name)
+            .collect();
+        [
+            AgentRole::Developer,
+            AgentRole::Reviewer,
+            AgentRole::Tester,
+            AgentRole::Planner,
+            AgentRole::Debugger,
+        ]
+        .into_iter()
+        .map(|r| (r, resolve(&cfg, r, &Overrides::default(), Some(&installed))))
+        .collect()
+    }
+
     /// The agents of a space, newest first. Agents that were running when Vela stopped are
     /// marked interrupted.
     pub fn list(&self, vela: &Vela, space_id: &str) -> Result<Vec<Agent>> {
