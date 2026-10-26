@@ -23,7 +23,7 @@ The types in `crates/vela-core/src/model.rs` are the contract. The UI mirrors th
 - **SpaceRepo**: source clone, worktree created by Vela, base ref.
 - **FileChange**: staged side and unstaged side, like VS Code.
 - **Hunk**: stable id (hash of repo, path, content), lines, origin (`You` or `Agent`), state.
-- **Agent**: role, tool (claude, codex, opencode, crush), its worktrees, status.
+- **Agent**: role, harness (`tool`: claude, codex, opencode), model, tier, session, its worktrees, status (working, waiting, done, failed, interrupted), summary, last message, plan, question, usage.
 - **StackItem**: runtimes from `mise.toml` / `.tool-versions`, containers from `compose.yml`.
 - **UpNext**: computed by the core.
 
@@ -32,12 +32,13 @@ The types in `crates/vela-core/src/model.rs` are the contract. The UI mirrors th
 - `VELA_HOME` (default `$XDG_DATA_HOME/vela`, else `~/.local/share/vela`).
 - `VELA_HOME/spaces/<id>.toml`: one file per space.
 - `VELA_HOME/worktrees/<space>/<repo>`: the user's worktree for that repo.
-- `VELA_HOME/worktrees/<space>/.agents/<agent>/<repo>`: an agent's worktree, on branch `<space-branch>--<agent>`.
+- `VELA_HOME/worktrees/<space>/.agents/<agent>/<repo>`: an agent's worktree, on branch `<space-branch>--<agent>`, created from the commit the space branch is on (your uncommitted changes are not copied).
+- `VELA_HOME/spaces/<id>.agents.json`: the agents of a space; `VELA_HOME/spaces/<id>.agents/<agent>.jsonl`: the event log of each agent.
 - Global AI config: `$XDG_CONFIG_HOME/vela/` (default `~/.config/vela/`).
 
 ## How proposals work
 
-An agent works in its own worktree. Its proposals are the diff between its worktree and the user's worktree for the same repo. Accepting a hunk applies that patch to the user's worktree (`git apply`), then stages it. Rejecting records the hunk id so it is not shown again. Editing accepts, then opens the lines in the editor.
+An agent works in its own worktree. Its proposals are what it changed since the commit it started from (committed or not) that is not already in the user's worktree; comparing the two worktrees directly would offer to undo the user's own uncommitted edits. Accepting a hunk applies that patch to the user's worktree (`git apply`), then stages it. Rejecting records the hunk id so it is not shown again. Editing accepts, then opens the lines in the editor.
 
 ## Review view and checks
 
@@ -87,7 +88,7 @@ Why not a VS Code fork: its workbench is built around one workspace folder, whic
 
 - **M0 core**: spaces (create with worktrees, list, archive), status, diff to hunks, stage and unstage a hunk, multi repo commit. CLI. Tests on temporary repos.
 - **M1 shell**: UI from the prototype on a mock backend; then the Tauri app wired to the core.
-- **M2 agents**: launch agent CLIs in a PTY in their own worktree, proposals, accept and reject.
+- **M2 agents**: drive Claude Code, Codex and opencode non interactively (`docs/HARNESS.md`), each in its own worktree; proposals, accept and reject; questions as Up next; usage and cost per space.
 - **M3 stack and config**: mise and compose detection, containers per worktree, AI config layers and writers.
 - **M4 gate**: commit gate with cache.
 

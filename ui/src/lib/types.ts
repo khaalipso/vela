@@ -85,19 +85,80 @@ export interface Hunk {
 
 export type AgentRole = "planner" | "developer" | "reviewer" | "tester" | "debugger";
 
-export type AgentStatus = "working" | "waiting" | "done" | "failed";
+export type AgentStatus = "working" | "waiting" | "done" | "failed" | "interrupted";
+
+/** What a request needs. Each harness maps a tier to a model in config. */
+export type Tier = "high" | "medium" | "low";
+
+/** Tokens and cost of an agent (or, summed, of a space). */
+export interface AgentUsage {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
 
 /** A coding agent CLI running for a space, in its own worktree. */
 export interface Agent {
   id: string;
   space: string;
   role: AgentRole;
-  /** "claude", "codex", "opencode", "crush", or any configured command. */
+  /** The harness: "claude", "codex" or "opencode". */
   tool: string;
   /** Repo name → agent worktree path. Reviewers get none (read only). */
   worktrees: [string, string][];
   status: AgentStatus;
+  /** One line: the latest message of the agent. */
   summary: string;
+  // The fields below come from the real backend; the mock may leave them out.
+  model?: string | null;
+  tier?: Tier | null;
+  session?: string | null;
+  /** What the user asked. */
+  prompt?: string;
+  /** Full text of the latest message (streams while the agent works). */
+  lastMessage?: string;
+  plan?: string[];
+  question?: string | null;
+  options?: string[];
+  usage?: AgentUsage;
+  started?: string;
+  finished?: string | null;
+}
+
+/** A harness Vela can drive, and whether it is installed. */
+export interface Harness {
+  name: string;
+  label: string;
+  available: boolean;
+  path: string | null;
+  version: string | null;
+}
+
+/** What a role gets when the request says nothing. */
+export interface RoleDefault {
+  role: AgentRole;
+  harness: string;
+  tier: Tier;
+  model: string | null;
+}
+
+/** The normalized events of an agent run (`vela://agent` carries them with the space and agent id). */
+export type AgentEvent =
+  | { type: "sessionStarted"; session: string }
+  | { type: "message"; text: string }
+  | { type: "plan"; steps: string[] }
+  | { type: "toolCall"; name: string; summary: string }
+  | { type: "fileChanged"; path: string }
+  | { type: "question"; text: string; options: string[] }
+  | { type: "usage"; inputTokens: number; outputTokens: number; costUsd: number | null; model: string }
+  | { type: "done"; summary: string }
+  | { type: "failed"; error: string }
+  | { type: "prompt"; text: string };
+
+/** One line of an agent's log. */
+export interface AgentLogEntry {
+  ts: string;
+  event: AgentEvent;
 }
 
 /** One tool or service of the space stack. */

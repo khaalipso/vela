@@ -4255,6 +4255,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vela-agents"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "vela-core",
+]
+
+[[package]]
 name = "vela-app"
 version = "0.1.0"
 dependencies = [
@@ -4268,6 +4278,7 @@ dependencies = [
  "tempfile",
  "toml 0.8.23",
  "trash",
+ "vela-agents",
  "vela-core",
 ]
 

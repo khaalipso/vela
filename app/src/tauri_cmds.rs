@@ -1,18 +1,21 @@
 //! Thin `#[tauri::command]` wrappers over `commands.rs`.
 //!
 //! Blocking git work runs on the blocking pool so the webview never waits on it.
-//! The commands for agents, notes, questions, stack and gate return empty values until
-//! their milestones; the UI renders them empty.
+//! The commands for notes, stack and gate return empty values until their milestones;
+//! the UI renders them empty.
 
 use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use vela_agents::registry::LogEntry;
+use vela_agents::{AgentManager, HarnessInfo, QuestionView};
 use vela_core::Vela;
 use vela_core::model::{
-    Agent, CommitGroup, CommitPlan, CommitRules, FileChange, Hunk, Link, Problem, RepoChecks,
-    RepoFiles, Space, StackItem,
+    Agent, AgentUsage, CommitGroup, CommitPlan, CommitRules, FileChange, Hunk, Link, Problem,
+    RepoChecks, RepoFiles, Space, StackItem,
 };
 
+use crate::agentrun::{self, Refresher};
 use crate::checkrun::{self, CheckEvent, CheckRunner, EmitCheck};
 use crate::commands::{self, CommitResult, FileRef};
 use crate::error::{AppError, AppResult};
@@ -516,48 +519,168 @@ pub async fn set_check_enabled(
     Ok(())
 }
 
+// -- agents -----------------------------------------------------------------
+
+/// Emitter for agent events: `vela://agent` to every window, plus a debounced refresh of the
+/// proposals when an agent writes files or ends a run.
+pub fn agent_emitter(app: &AppHandle) -> vela_agents::Emit {
+    let handle = app.clone();
+    let send: Arc<dyn Fn(&vela_agents::Notice) + Send + Sync> = Arc::new(move |n| {
+        let _ = handle.emit(agentrun::EVENT, n);
+    });
+    agentrun::sink(
+        send,
+        emitter(app),
+        app.state::<Arc<Refresher>>().inner().clone(),
+        agentrun::REFRESH_DEBOUNCE,
+    )
+}
+
+/// Which harnesses are installed (`claude`, `codex`, `opencode`) and their versions.
+#[tauri::command]
+pub async fn harnesses(agents: State<'_, Arc<AgentManager>>) -> AppResult<Vec<HarnessInfo>> {
+    let agents = agents.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || commands::harnesses(&agents))
+        .await
+        .map_err(|e| AppError::new("internal", e.to_string()))
+}
+
+/// Harness, tier and model each role gets by default in this space.
+#[tauri::command]
+pub async fn agent_defaults(
+    vela: State<'_, Vela>,
+    agents: State<'_, Arc<AgentManager>>,
+    space_id: String,
+) -> AppResult<Vec<commands::RoleDefault>> {
+    let agents = agents.inner().clone();
+    blocking(&vela, move |v| {
+        commands::agent_defaults(v, &agents, &space_id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn agents(
+    vela: State<'_, Vela>,
+    agents: State<'_, Arc<AgentManager>>,
+    space_id: String,
+) -> AppResult<Vec<Agent>> {
+    let agents = agents.inner().clone();
+    blocking(&vela, move |v| commands::agents(v, &agents, &space_id)).await
+}
+
+/// Why each proposed hunk exists, by hunk id.
+#[tauri::command]
+pub async fn reasons(
+    vela: State<'_, Vela>,
+    space_id: String,
+) -> AppResult<std::collections::HashMap<String, String>> {
+    blocking(&vela, move |v| commands::reasons(v, &space_id)).await
+}
+
+/// Start an agent. Progress arrives as `vela://agent` events.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn ask_agent(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    agents: State<'_, Arc<AgentManager>>,
+    space_id: String,
+    role: String,
+    prompt: String,
+    harness: Option<String>,
+    tier: Option<String>,
+) -> AppResult<Agent> {
+    let agents = agents.inner().clone();
+    let emit = agent_emitter(&app);
+    blocking(&vela, move |v| {
+        commands::ask_agent(
+            v,
+            &agents,
+            &space_id,
+            &role,
+            &prompt,
+            harness.as_deref(),
+            tier.as_deref(),
+            &emit,
+        )
+    })
+    .await
+}
+
+/// The question an agent of the space waits on.
+#[tauri::command]
+pub async fn question(
+    vela: State<'_, Vela>,
+    agents: State<'_, Arc<AgentManager>>,
+    space_id: String,
+) -> AppResult<Option<QuestionView>> {
+    let agents = agents.inner().clone();
+    blocking(&vela, move |v| commands::question(v, &agents, &space_id)).await
+}
+
+/// Answer an agent: a resumed run of its session.
+#[tauri::command]
+pub async fn answer_agent(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    agents: State<'_, Arc<AgentManager>>,
+    space_id: String,
+    agent: String,
+    text: String,
+) -> AppResult<Agent> {
+    let agents = agents.inner().clone();
+    let emit = agent_emitter(&app);
+    blocking(&vela, move |v| {
+        commands::answer_agent(v, &agents, &space_id, &agent, &text, &emit)
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn cancel_agent(agents: State<'_, Arc<AgentManager>>, space_id: String, agent: String) -> bool {
+    commands::cancel_agent(&agents, &space_id, &agent)
+}
+
+#[tauri::command]
+pub async fn agent_log(
+    vela: State<'_, Vela>,
+    agents: State<'_, Arc<AgentManager>>,
+    space_id: String,
+    agent: String,
+) -> AppResult<Vec<LogEntry>> {
+    let agents = agents.inner().clone();
+    blocking(&vela, move |v| {
+        commands::agent_log(v, &agents, &space_id, &agent)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn agent_usage(vela: State<'_, Vela>, space_id: String) -> AppResult<AgentUsage> {
+    blocking(&vela, move |v| commands::agent_usage(v, &space_id)).await
+}
+
+/// Apply a proposal of an agent to your worktree and stage it.
+#[tauri::command]
+pub async fn accept_proposal(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    hunk_id: String,
+) -> AppResult<Hunk> {
+    let sid = space_id.clone();
+    let h = blocking(&vela, move |v| commands::accept_proposal(v, &sid, &hunk_id)).await?;
+    notify_state(&app, &space_id);
+    Ok(h)
+}
+
 // -- later milestones: empty or neutral --------------------------------------
-
-/// TODO(M2): agents.
-#[tauri::command]
-pub fn agents(_space_id: String) -> Vec<Agent> {
-    Vec::new()
-}
-
-/// TODO(M2): reasons agents give for their proposals.
-#[tauri::command]
-pub fn reasons(_space_id: String) -> std::collections::HashMap<String, String> {
-    std::collections::HashMap::new()
-}
-
-/// TODO(M2): launch an agent CLI in its own worktree.
-#[tauri::command]
-pub fn ask_agent(_space_id: String, _role: String, _prompt: String) -> AppResult<Agent> {
-    Err(AppError::unsupported("agents arrive in a later milestone"))
-}
-
-/// TODO(M2): a question an agent waits on.
-#[tauri::command]
-pub fn question(_space_id: String) -> Option<serde_json::Value> {
-    None
-}
-
-/// TODO(M2): answer an agent.
-#[tauri::command]
-pub fn answer_agent(_space_id: String, _yes: bool) -> AppResult<()> {
-    Err(AppError::unsupported("no agent is waiting for an answer"))
-}
 
 /// TODO(M3): reviewer notes.
 #[tauri::command]
 pub fn notes(_space_id: String) -> Vec<serde_json::Value> {
     Vec::new()
-}
-
-/// TODO(M4): ask the author to fix a reviewer note.
-#[tauri::command]
-pub fn ask_fix(_space_id: String, _hunk_id: String) -> AppResult<()> {
-    Err(AppError::unsupported("there is no reviewer note to fix"))
 }
 
 /// TODO(M3): runtimes and containers of the space.

@@ -1,12 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { fileKey, toolForRole, toolLabel, uniq } from "./format";
+import { fileKey, ROLES, toolForRole, toolLabel, uniq } from "./format";
 import { composeMessage, planFromHunks, validateFor } from "./commitplan";
 import { isHttpUrl, makeLink, removable, sameLink } from "./links";
 import { fakeContent, repoPaths } from "./seedtree";
 import { REPOS, seedLinks, seedSpaces, type SeedSpace } from "./seed";
 import type {
   Agent,
+  AgentEvent,
+  AgentLogEntry,
   AgentRole,
   CommitGroup,
   CommitPlan,
@@ -15,6 +17,7 @@ import type {
   DiffLine,
   FileChange,
   GroupCommit,
+  Harness,
   Hunk,
   HunkState,
   Link,
@@ -25,8 +28,10 @@ import type {
   CheckStatus,
   RepoChecks,
   RepoFiles,
+  RoleDefault,
   Space,
   StackItem,
+  Tier,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -65,6 +70,22 @@ export interface AgentQuestion {
   text: string;
   yes: string;
   no: string;
+  /** Every choice the agent offers (the real backend); `yes` and `no` are the first two. */
+  options?: string[];
+}
+
+/** What a request may override about the role's defaults. */
+export interface AskOptions {
+  /** A harness name ("claude", "codex", "opencode"); null keeps the role's. */
+  harness?: string | null;
+  tier?: Tier | null;
+}
+
+/** `vela://agent`: one event of one agent. */
+export interface AgentNotice {
+  spaceId: string;
+  agentId: string;
+  event: AgentEvent;
 }
 
 export interface GateCheck {
@@ -144,10 +165,22 @@ export interface Backend {
   readFile(spaceId: string, repo: string, path: string): Promise<FileContent>;
   writeFile(spaceId: string, repo: string, path: string, content: string): Promise<void>;
 
+  /** The harnesses Vela can drive and which of them are installed. */
+  harnesses(): Promise<Harness[]>;
+  /** Harness, tier and model each role gets when the request says nothing. */
+  roleDefaults(spaceId: string): Promise<RoleDefault[]>;
   agents(spaceId: string): Promise<Agent[]>;
-  askAgent(spaceId: string, role: AgentRole, prompt: string): Promise<Agent>;
+  askAgent(spaceId: string, role: AgentRole, prompt: string, opts?: AskOptions): Promise<Agent>;
   question(spaceId: string): Promise<AgentQuestion | null>;
   answerAgent(spaceId: string, yes: boolean): Promise<void>;
+  /** Answer an agent in words (a resumed run of its session). */
+  answerAgentText(spaceId: string, agentId: string, text: string): Promise<void>;
+  /** Kill a running agent. */
+  cancelAgent(spaceId: string, agentId: string): Promise<void>;
+  /** Everything the agent did and said, oldest first. */
+  agentLog(spaceId: string, agentId: string): Promise<AgentLogEntry[]>;
+  /** Events of the agents, as they happen. */
+  onAgent(listener: (e: AgentNotice) => void): Unsubscribe;
   notes(spaceId: string): Promise<ReviewNote[]>;
   /** Ask the author of the hunk to fix the reviewer's blocking note. */
   askFix(spaceId: string, hunkId: string): Promise<void>;
@@ -748,6 +781,40 @@ export class MockBackend implements Backend {
     return structuredClone(this.sp(spaceId).stack);
   }
 
+  async harnesses(): Promise<Harness[]> {
+    return [
+      { name: "claude", label: "Claude Code", available: true, path: "/usr/bin/claude", version: "2.1.310 (Claude Code)" },
+      { name: "codex", label: "Codex", available: true, path: "/usr/bin/codex", version: "codex-cli 0.164.0" },
+      { name: "opencode", label: "opencode", available: false, path: null, version: null },
+    ];
+  }
+
+  async roleDefaults(): Promise<RoleDefault[]> {
+    const tier = (r: AgentRole): Tier => (r === "developer" ? "medium" : r === "tester" ? "low" : "high");
+    return ROLES.map((role) => ({ role, harness: toolForRole(role) === "opencode" ? "claude" : toolForRole(role), tier: tier(role), model: null }));
+  }
+
+  async answerAgentText(spaceId: string, _agentId: string, _text: string): Promise<void> {
+    return this.answerAgent(spaceId, true);
+  }
+
+  async cancelAgent(spaceId: string, agentId: string): Promise<void> {
+    const a = this.sp(spaceId).agents.find((x) => x.id === agentId);
+    if (a && a.status === "working") {
+      a.status = "failed";
+      a.summary = "Cancelled";
+      this.emit(spaceId);
+    }
+  }
+
+  async agentLog(): Promise<AgentLogEntry[]> {
+    return [];
+  }
+
+  onAgent(_listener?: (e: AgentNotice) => void): Unsubscribe {
+    return () => {};
+  }
+
   async question(spaceId: string): Promise<AgentQuestion | null> {
     const s = this.sp(spaceId);
     const q = s.question;
@@ -760,9 +827,9 @@ export class MockBackend implements Backend {
     return structuredClone([...this.sp(spaceId).notes.values()].map((n) => n.note));
   }
 
-  async askAgent(spaceId: string, role: AgentRole, prompt: string): Promise<Agent> {
+  async askAgent(spaceId: string, role: AgentRole, prompt: string, opts?: AskOptions): Promise<Agent> {
     const s = this.sp(spaceId);
-    const tool = toolForRole(role);
+    const tool = opts?.harness ?? toolForRole(role);
     const wt = `wt/${s.space.branch.split("/").pop()}-${role}`;
     const agent: Agent = {
       id: `${spaceId}-${role}-${s.agents.length + 1}`,
@@ -772,6 +839,7 @@ export class MockBackend implements Backend {
       worktrees: [[s.space.repos[0].name, wt]],
       status: "working",
       summary: prompt,
+      tier: opts?.tier ?? null,
     };
     s.agents.unshift(agent);
     this.emit(spaceId);
@@ -1534,10 +1602,12 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 export const CHANGED_EVENT = "vela://changed";
 /** Event the check runner of the app emits; the payload is a CheckEvent. */
 export const CHECK_EVENT = "vela://check";
+/** Event the agent runner of the app emits; the payload is an AgentNotice. */
+export const AGENT_EVENT = "vela://agent";
 
 /**
- * Talks to the Rust core. Agents, notes, questions, stack and gate come back empty until
- * their milestones (the Rust commands are marked TODO(M2/M3/M4)); nothing is faked here.
+ * Talks to the Rust core. Notes, stack and gate come back empty until their milestones
+ * (the Rust commands are marked TODO(M3/M4)); nothing is faked here.
  */
 export class TauriBackend implements Backend {
   listRepos() {
@@ -1610,23 +1680,61 @@ export class TauriBackend implements Backend {
   writeFile(spaceId: string, repo: string, path: string, content: string) {
     return call<void>("write_file", { spaceId, repo, path, content });
   }
+  harnesses() {
+    return call<Harness[]>("harnesses");
+  }
+  roleDefaults(spaceId: string) {
+    return call<RoleDefault[]>("agent_defaults", { spaceId });
+  }
   agents(spaceId: string) {
     return call<Agent[]>("agents", { spaceId });
   }
-  askAgent(spaceId: string, role: AgentRole, prompt: string) {
-    return call<Agent>("ask_agent", { spaceId, role, prompt });
+  askAgent(spaceId: string, role: AgentRole, prompt: string, opts?: AskOptions) {
+    return call<Agent>("ask_agent", {
+      spaceId,
+      role,
+      prompt,
+      harness: opts?.harness ?? null,
+      tier: opts?.tier ?? null,
+    });
   }
   question(spaceId: string) {
     return call<AgentQuestion | null>("question", { spaceId });
   }
-  answerAgent(spaceId: string, yes: boolean) {
-    return call<void>("answer_agent", { spaceId, yes });
+  /** Yes and no are the first two options the agent offered (Allow / Deny for a permission). */
+  async answerAgent(spaceId: string, yes: boolean) {
+    const q = await this.question(spaceId);
+    if (!q) return;
+    const text = yes ? (q.options?.[0] ?? q.yes) : (q.options?.[1] ?? q.no);
+    await call<Agent>("answer_agent", { spaceId, agent: q.agentId, text });
+  }
+  async answerAgentText(spaceId: string, agentId: string, text: string) {
+    await call<Agent>("answer_agent", { spaceId, agent: agentId, text });
+  }
+  async cancelAgent(spaceId: string, agentId: string) {
+    await call<boolean>("cancel_agent", { spaceId, agent: agentId });
+  }
+  agentLog(spaceId: string, agentId: string) {
+    return call<AgentLogEntry[]>("agent_log", { spaceId, agent: agentId });
+  }
+  onAgent(listener: (e: AgentNotice) => void): Unsubscribe {
+    return this.subscribe(AGENT_EVENT, listener);
   }
   notes(spaceId: string) {
     return call<ReviewNote[]>("notes", { spaceId });
   }
-  askFix(spaceId: string, hunkId: string) {
-    return call<void>("ask_fix", { spaceId, hunkId });
+  /** Send the proposal back to its author with the reviewer's note as the prompt. */
+  async askFix(spaceId: string, hunkId: string) {
+    const [hunks, notes, agents] = await Promise.all([this.hunks(spaceId), this.notes(spaceId), this.agents(spaceId)]);
+    const hunk = hunks.find((h) => h.id === hunkId);
+    if (!hunk || hunk.origin.type !== "agent") throw new Error("Only an agent's proposal can be sent back");
+    const note = notes.find((n) => n.hunkId === hunkId && !n.resolved);
+    if (!note) throw new Error("There is no reviewer note to fix");
+    const author = agents.find((a) => a.id === (hunk.origin as { agent: string }).agent);
+    if (!author) throw new Error("The author of this proposal is gone");
+    await this.askAgent(spaceId, author.role, `Fix the reviewer's note on ${hunk.path}:\n${note.text}`, {
+      harness: author.tool,
+    });
   }
   stack(spaceId: string) {
     return call<StackItem[]>("stack", { spaceId });

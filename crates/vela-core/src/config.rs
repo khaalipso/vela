@@ -19,7 +19,7 @@ use toml::{Table, Value};
 
 use crate::Vela;
 use crate::error::Result;
-use crate::model::{CheckKind, CheckWhen};
+use crate::model::{CheckKind, CheckWhen, Tier};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,6 +104,42 @@ impl Default for ChecksConfig {
     }
 }
 
+/// `[agents.tiers.<harness>]`: the model each tier maps to. A tier left out passes no model flag.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TierModels {
+    pub high: Option<String>,
+    pub medium: Option<String>,
+    pub low: Option<String>,
+}
+
+impl TierModels {
+    pub fn get(&self, tier: Tier) -> Option<&str> {
+        match tier {
+            Tier::High => self.high.as_deref(),
+            Tier::Medium => self.medium.as_deref(),
+            Tier::Low => self.low.as_deref(),
+        }
+        .filter(|m| !m.trim().is_empty())
+    }
+}
+
+/// `[agents.roles] <role> = { tier, harness }`: either key can be left out.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RoleConfig {
+    pub tier: Option<Tier>,
+    pub harness: Option<String>,
+}
+
+/// `[agents]`: tiers and roles. See `docs/HARNESS.md`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentsConfig {
+    pub tiers: BTreeMap<String, TierModels>,
+    pub roles: BTreeMap<String, RoleConfig>,
+}
+
 /// `[issues]`: tracker URL templates (read by `links`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -117,6 +153,7 @@ pub struct IssuesConfig {
 pub struct Config {
     pub checks: ChecksConfig,
     pub issues: IssuesConfig,
+    pub agents: AgentsConfig,
     /// Top level keys the schema does not know, kept as written.
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -184,6 +221,8 @@ fn is_known(path: &str) -> bool {
         ] | ["checks", "custom", _]
             | ["checks", "detected", _, "enabled"]
             | ["issues", "jira" | "linear"]
+            | ["agents", "tiers", _, "high" | "medium" | "low"]
+            | ["agents", "roles", _, "tier" | "harness"]
     )
 }
 
@@ -608,5 +647,58 @@ mod tests {
         assert!(!c.config.checks.auto);
         assert_eq!(c.config.checks.detected["cargo-test"].enabled, Some(false));
         assert!(c.config.extra.contains_key("mystery"));
+    }
+
+    #[test]
+    fn agents_tiers_and_roles_are_layered_and_known() {
+        let t = tmp();
+        let vela = Vela::new(t.path().join("home"));
+        let global = t.path().join("g");
+        let repo = t.path().join("repo");
+        write(
+            &global_file(&global),
+            "[agents.tiers.claude]\nhigh = \"opus\"\nmedium = \"sonnet\"\n\n[agents.roles]\nplanner = { tier = \"high\", harness = \"claude\" }\ntester = { harness = \"opencode\" }\n",
+        );
+        write(
+            &local_file(&vela, "api"),
+            "[agents.tiers.claude]\nmedium = \"sonnet-5\"\n[agents.roles.tester]\ntier = \"medium\"\n",
+        );
+        let c = load_repo_config_in(Some(&global), &vela, &repo, "api");
+        assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+        let a = &c.config.agents;
+        assert_eq!(a.tiers["claude"].get(Tier::High), Some("opus"));
+        assert_eq!(a.tiers["claude"].get(Tier::Medium), Some("sonnet-5"));
+        assert_eq!(a.tiers["claude"].get(Tier::Low), None);
+        assert_eq!(a.roles["planner"].tier, Some(Tier::High));
+        // Tables merge key by key across layers.
+        assert_eq!(a.roles["tester"].harness.as_deref(), Some("opencode"));
+        assert_eq!(a.roles["tester"].tier, Some(Tier::Medium));
+        assert_eq!(c.layer_of("agents.tiers.claude.medium"), Layer::Local);
+        assert_eq!(c.layer_of("agents.tiers.claude.high"), Layer::Global);
+    }
+
+    #[test]
+    fn unknown_agent_keys_warn_and_a_bad_tier_drops_the_layer() {
+        let t = tmp();
+        let vela = Vela::new(t.path().join("home"));
+        let repo = t.path().join("repo");
+        write(
+            &shared_file(&repo),
+            "[agents.tiers.claude]\nultra = \"x\"\n[agents.roles]\nplanner = { speed = 3 }\n",
+        );
+        let c = load_repo_config_in(None, &vela, &repo, "api");
+        let w = c.warnings.join("\n");
+        assert!(w.contains("unknown key `agents.tiers.claude.ultra`"), "{w}");
+        assert!(
+            w.contains("unknown key `agents.roles.planner.speed`"),
+            "{w}"
+        );
+        write(
+            &shared_file(&repo),
+            "[agents.roles]\nplanner = { tier = \"huge\" }\n",
+        );
+        let c = load_repo_config_in(None, &vela, &repo, "api");
+        assert!(c.config.agents.roles.is_empty());
+        assert_eq!(c.warnings.len(), 1, "{:?}", c.warnings);
     }
 }

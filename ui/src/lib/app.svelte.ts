@@ -3,6 +3,7 @@
 
 import { tick } from "svelte";
 import type {
+  AgentNotice,
   AgentQuestion,
   Backend,
   BackendEvent,
@@ -42,14 +43,27 @@ import type {
   CommitGroup,
   CommitRules,
   FileChange,
+  Harness,
   Hunk,
   Link,
   Problem,
   RepoChecks,
+  RoleDefault,
   Space,
   StackItem,
+  Tier,
 } from "./types";
 import { computeUpNext, readyToCommit, waitingCount, type UpNextInput, type UpNextView } from "./upnext";
+
+const TIERS: Tier[] = ["high", "medium", "low"];
+/** What the core picks for a role when the config says nothing (docs/HARNESS.md). */
+export const DEFAULT_TIERS: Record<AgentRole, Tier> = {
+  planner: "high",
+  reviewer: "high",
+  debugger: "high",
+  developer: "medium",
+  tester: "low",
+};
 
 export interface SpaceData {
   hunks: Hunk[];
@@ -157,6 +171,14 @@ export class AppState {
   stackOpen = $state(false);
   role = $state<AgentRole>("developer");
   composerText = $state("");
+  /** Harnesses Vela knows about and whether they are installed. */
+  harnesses = $state.raw<Harness[]>([]);
+  /** What each role gets by default, per space (the config can change it). */
+  roleDefaults = $state.raw<Record<string, RoleDefault[]>>({});
+  /** The harness picked in the composer; null keeps the role's default. */
+  harness = $state<string | null>(null);
+  /** The tier picked in the composer; null keeps the role's default. */
+  tier = $state<Tier | null>(null);
   pal = $state({ q: "", i: 0 });
   newSp = $state<{ name: string; repos: string[]; missingName: boolean }>({ name: "", repos: [], missingName: false });
   /** The repo sheet creates a space ("new") or adds repos to the current one ("add"). */
@@ -223,6 +245,8 @@ export class AppState {
 
   private off: Unsubscribe | null = null;
   private offCheck: Unsubscribe | null = null;
+  private offAgent: Unsubscribe | null = null;
+  private agentTimers: Record<string, ReturnType<typeof setTimeout>> = {};
   private toastSeq = 0;
   private gateSeq = 0;
   private focusSeq = 0;
@@ -237,6 +261,9 @@ export class AppState {
     this.off = backend.onChange((e) => void this.onEvent(e));
     this.offCheck?.();
     this.offCheck = backend.onCheck((e) => this.onCheckEvent(e));
+    this.offAgent?.();
+    this.offAgent = backend.onAgent((n) => this.onAgentEvent(n));
+    void this.loadHarnesses();
     this.repos = await backend.listRepos();
     this.newSp.repos = this.defaultRepos();
     this.spaces = this.forThisWindow(await backend.listSpaces());
@@ -257,6 +284,8 @@ export class AppState {
   destroy() {
     this.off?.();
     this.offCheck?.();
+    this.offAgent?.();
+    for (const t of Object.values(this.agentTimers)) clearTimeout(t);
   }
 
   /** A pinned window shows its one space only. */
@@ -936,6 +965,100 @@ export class AppState {
 
   openComposer() {
     this.overlay = "composer";
+    void this.loadHarnesses();
+    void this.loadRoleDefaults(this.space.id);
+  }
+
+  async loadHarnesses() {
+    try {
+      this.harnesses = await this.backend.harnesses();
+    } catch {
+      this.harnesses = [];
+    }
+  }
+
+  async loadRoleDefaults(id: string) {
+    try {
+      this.roleDefaults = { ...this.roleDefaults, [id]: await this.backend.roleDefaults(id) };
+    } catch {
+      /* the composer falls back to the first installed harness */
+    }
+  }
+
+  /** The harnesses that can be picked (installed ones only). */
+  get installedHarnesses(): Harness[] {
+    return this.harnesses.filter((h) => h.available);
+  }
+
+  /** The harness the next request uses: the pick, else the role's default, else the first installed. */
+  get effectiveHarness(): string {
+    const def = this.roleDefaults[this.space.id]?.find((d) => d.role === this.role)?.harness;
+    const installed = this.installedHarnesses.map((h) => h.name);
+    return this.harness ?? (def && (!installed.length || installed.includes(def)) ? def : (installed[0] ?? def ?? "claude"));
+  }
+
+  /** The tier the next request uses: the pick, else the role's default. */
+  get effectiveTier(): Tier {
+    return this.tier ?? this.roleDefaults[this.space.id]?.find((d) => d.role === this.role)?.tier ?? DEFAULT_TIERS[this.role];
+  }
+
+  cycleHarness(delta: 1 | -1) {
+    const names = this.installedHarnesses.map((h) => h.name);
+    if (!names.length) return;
+    const i = Math.max(0, names.indexOf(this.effectiveHarness));
+    this.harness = names[(i + (delta === 1 ? 1 : names.length - 1)) % names.length];
+  }
+
+  /** `delta` 1 raises the tier (towards high), -1 lowers it. */
+  bumpTier(delta: 1 | -1) {
+    const i = TIERS.indexOf(this.effectiveTier);
+    this.tier = TIERS[Math.min(TIERS.length - 1, Math.max(0, i - delta))];
+  }
+
+  private onAgentEvent(n: AgentNotice) {
+    if (!this.data[n.spaceId]) return;
+    clearTimeout(this.agentTimers[n.spaceId]);
+    this.agentTimers[n.spaceId] = setTimeout(() => void this.loadAgents(n.spaceId, n), 120);
+  }
+
+  /** Reload the agents, their question and the reasons of the proposals. */
+  async loadAgents(id: string, notice?: AgentNotice) {
+    const b = this.backend;
+    try {
+      const [agents, question, reasons] = await Promise.all([b.agents(id), b.question(id), b.reasons(id)]);
+      if (!this.data[id]) return;
+      this.data = { ...this.data, [id]: { ...this.data[id], agents, question, reasons } };
+      if (notice?.event.type === "failed" && notice.event.error !== "cancelled") this.toast(`Agent failed: ${notice.event.error}`);
+      if (notice?.event.type === "done") {
+        const a = agents.find((x) => x.id === notice.agentId);
+        if (a && a.status === "done") this.toast(`${roleLabel(a.role)} finished`);
+      }
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  /** Answer the waiting agent in words. */
+  async reply(text: string) {
+    const q = this.sd.question;
+    const t = text.trim();
+    if (!q || !t) return;
+    this.toast(`Sent to ${toolLabel(q.tool)}`);
+    try {
+      await this.backend.answerAgentText(this.space.id, q.agentId, t);
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.loadAgents(this.space.id);
+  }
+
+  async cancelAgent(agentId: string) {
+    try {
+      await this.backend.cancelAgent(this.space.id, agentId);
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.loadAgents(this.space.id);
   }
 
   async sendComposer() {
@@ -943,13 +1066,15 @@ export class AppState {
     if (!text) return false;
     const s = this.space;
     try {
-      const a = await this.backend.askAgent(s.id, this.role, text);
+      const a = await this.backend.askAgent(s.id, this.role, text, { harness: this.harness, tier: this.tier });
       const wt = a.worktrees[0] ? `${a.worktrees[0][0]} · ${a.worktrees[0][1]}` : "read only";
       this.toast(`${roleLabel(this.role)} started in ${wt}`);
     } catch (e) {
       this.fail(e);
     }
     this.composerText = "";
+    this.harness = null;
+    this.tier = null;
     this.overlay = null;
     await this.refresh(s.id);
     return true;
@@ -1406,6 +1531,10 @@ export class AppState {
         return this.doCommit();
       case "composer-role":
         return this.cycleRole(a.delta);
+      case "composer-harness":
+        return this.cycleHarness(a.delta);
+      case "composer-tier":
+        return this.bumpTier(a.delta);
       case "composer-send":
         return void (await this.sendComposer());
       case "up-next":

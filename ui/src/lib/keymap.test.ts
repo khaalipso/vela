@@ -203,10 +203,13 @@ describe("overlays", () => {
     expect(resolveKey(key("k", { ctrlKey: true }), typing)).toEqual({ type: "palette-toggle" });
   });
 
-  it("composer: Tab cycles the role, Enter sends, Shift Enter is a newline", () => {
+  it("composer: Tab cycles the role, Shift Tab the harness, Ctrl Up/Down the tier, Enter sends", () => {
     const c = ctx({ overlay: "composer", typing: true });
     expect(resolveKey(key("Tab"), c)).toEqual({ type: "composer-role", delta: 1 });
-    expect(resolveKey(key("Tab", { shiftKey: true }), c)).toEqual({ type: "composer-role", delta: -1 });
+    expect(resolveKey(key("Tab", { shiftKey: true }), c)).toEqual({ type: "composer-harness", delta: 1 });
+    expect(resolveKey(key("ArrowUp", { ctrlKey: true }), c)).toEqual({ type: "composer-tier", delta: 1 });
+    expect(resolveKey(key("ArrowDown", { ctrlKey: true }), c)).toEqual({ type: "composer-tier", delta: -1 });
+    expect(resolveKey(key("ArrowUp"), c)).toBeNull();
     expect(resolveKey(key("Enter"), c)).toEqual({ type: "composer-send" });
     expect(resolveKey(key("Enter", { shiftKey: true }), c)).toBeNull();
   });

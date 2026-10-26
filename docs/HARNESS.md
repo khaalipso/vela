@@ -31,6 +31,20 @@ Mapping to the UI:
 - `usage` feeds the cost and budget of the space.
 - `plan` shows on the agent card.
 
+## What is implemented (M2)
+
+Only the fallback transports exist for now (no ACP). `crates/vela-agents` has one driver per harness; each run is one non interactive process in its own process group (cancel kills the group). The prompt goes on stdin for Claude Code and Codex, last on the command line for opencode.
+
+| Harness | Start | Resume (answer a question) | Read only |
+| --- | --- | --- | --- |
+| Claude Code | `claude -p --output-format stream-json --verbose [--model M] --permission-mode acceptEdits` | adds `--resume <session>` (and `--allowed-tools <t,..>` after a yes to a permission) | `--permission-mode plan` |
+| Codex | `codex exec --json --skip-git-repo-check -C <dir> -s workspace-write [-m M] -` | `codex exec resume --json --skip-git-repo-check -c sandbox_mode="..." [-m M] <thread> -` | `-s read-only` |
+| opencode | `opencode run --format json [-m provider/model] --dir <dir> <prompt>` | adds `--session <id>` | `--agent plan` |
+
+None of them reads answers on stdin in this mode, so a question ends the run (the agent shows as waiting) and the answer is a resumed run of the same session. Claude Code's `AskUserQuestion` and its `permission_denials` become questions; Codex `exec` never asks (its sandbox just refuses) but approval events are mapped if a newer version sends them; opencode permission events likewise. Unknown event types and lines that do not parse are ignored.
+
+Roles that only read (reviewer, planner) run read only in the user's worktree and get no worktree of their own. The others get one from the last commit of the space branch.
+
 ## Tiers
 
 Agents are given a tier, not a model. A tier maps to a model per harness in config.

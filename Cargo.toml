@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/vela-core", "crates/vela-cli", "app"]
+members = ["crates/vela-core", "crates/vela-agents", "crates/vela-cli", "app"]
 
 [workspace.package]
 version = "0.1.0"

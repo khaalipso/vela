@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"sess-d","model":"claude-sonnet-4-5"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"rm -rf build"}}]},"session_id":"sess-d"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"b1","content":"Permission to use Bash has been denied.","is_error":true}]},"session_id":"sess-d"}
+{"type":"result","subtype":"success","is_error":false,"result":"I could not run the command.","session_id":"sess-d","total_cost_usd":0.002,"usage":{"input_tokens":20,"output_tokens":9},"permission_denials":[{"tool_name":"Bash","tool_use_id":"b1","tool_input":{"command":"rm -rf build"}}]}

@@ -139,24 +139,117 @@ pub enum AgentRole {
 #[serde(rename_all = "camelCase")]
 pub enum AgentStatus {
     Working,
+    /// Asked a question and waits for the answer.
     Waiting,
     Done,
     Failed,
+    /// Was running when Vela stopped: the process is gone, the worktree is kept.
+    Interrupted,
+}
+
+/// What a request needs, not which model: each harness maps a tier to a model in config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Tier {
+    High,
+    Medium,
+    Low,
+}
+
+impl Tier {
+    pub const ALL: [Tier; 3] = [Tier::High, Tier::Medium, Tier::Low];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Tier::High => "high",
+            Tier::Medium => "medium",
+            Tier::Low => "low",
+        }
+    }
+
+    /// One step up (`delta` 1) or down (-1), stopping at the ends.
+    pub fn shift(self, delta: i32) -> Tier {
+        let i = Tier::ALL.iter().position(|t| *t == self).unwrap_or(1) as i32;
+        Tier::ALL[(i - delta).clamp(0, 2) as usize]
+    }
+}
+
+impl AgentRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AgentRole::Planner => "planner",
+            AgentRole::Developer => "developer",
+            AgentRole::Reviewer => "reviewer",
+            AgentRole::Tester => "tester",
+            AgentRole::Debugger => "debugger",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<AgentRole> {
+        Some(match s {
+            "planner" => AgentRole::Planner,
+            "developer" => AgentRole::Developer,
+            "reviewer" => AgentRole::Reviewer,
+            "tester" => AgentRole::Tester,
+            "debugger" => AgentRole::Debugger,
+            _ => return None,
+        })
+    }
+}
+
+/// Tokens and cost an agent used, summed over its runs.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    /// Dollars, as reported by the harness (0 when it does not report one).
+    pub cost_usd: f64,
 }
 
 /// A coding agent CLI running for a space, in its own worktree.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Agent {
     pub id: String,
     pub space: String,
     pub role: AgentRole,
-    /// "claude", "codex", "opencode", "crush", or any configured command.
+    /// The harness: "claude", "codex" or "opencode".
     pub tool: String,
     /// Repo name → agent worktree path. Reviewers get none (read only).
     pub worktrees: Vec<(String, String)>,
     pub status: AgentStatus,
+    /// One line: the latest message of the agent, or the question it asks.
     pub summary: String,
+    /// Model passed to the harness, None when the harness default is used.
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub tier: Option<Tier>,
+    /// Session id of the harness, used to resume the conversation.
+    #[serde(default)]
+    pub session: Option<String>,
+    /// What the user asked.
+    #[serde(default)]
+    pub prompt: String,
+    /// Full text of the latest message (streams while the agent works).
+    #[serde(default)]
+    pub last_message: String,
+    /// Steps of the plan the agent announced, if any.
+    #[serde(default)]
+    pub plan: Vec<String>,
+    /// The question the agent waits on, and its options.
+    #[serde(default)]
+    pub question: Option<String>,
+    #[serde(default)]
+    pub options: Vec<String>,
+    #[serde(default)]
+    pub usage: AgentUsage,
+    /// RFC 3339.
+    #[serde(default)]
+    pub started: String,
+    #[serde(default)]
+    pub finished: Option<String>,
 }
 
 /// One tool or service of the space stack.

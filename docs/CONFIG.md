@@ -86,3 +86,29 @@ linear = "https://linear.app/acme/issue/{key}"
 ```
 
 Repo links (prod URL, runbook, dashboard) live next to it in `<repo>/.vela/links.toml`.
+
+## `[agents]`
+
+Which harness and model each role uses. See `docs/HARNESS.md`.
+
+```toml
+[agents.tiers.claude]
+high = "opus"
+medium = "sonnet"
+low = "haiku"
+
+[agents.tiers.codex]
+high = "<model>"
+
+[agents.roles]
+planner = { tier = "high", harness = "claude" }
+tester = { harness = "opencode" }        # either key can be left out
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `agents.tiers.<harness>.<high\|medium\|low>` | none | Model passed to that harness for the tier (`--model` / `-m`). Not set: no model flag, the harness picks its own default. opencode wants `provider/model`. |
+| `agents.roles.<role>.tier` | planner, reviewer, debugger `high`; developer `medium`; tester `low` | Tier of the role. |
+| `agents.roles.<role>.harness` | `claude` | Harness of the role. If it is not installed, the first installed one (claude, codex, opencode) is used. |
+
+A request can override both: the composer's harness picker (`Shift Tab`) and tier (`Ctrl ↑` / `Ctrl ↓`). An agent asks for the layers of the first repo of its space.
