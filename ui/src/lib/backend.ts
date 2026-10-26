@@ -181,6 +181,34 @@ export interface Backend {
 
   onChange(listener: (e: BackendEvent) => void): Unsubscribe;
 
+  // -- right-click menu operations ------------------------------------------
+  /** Create an empty file (and its folders). Fails when it exists. `path` is relative to the repo worktree. */
+  createFile(spaceId: string, repo: string, path: string): Promise<void>;
+  /** Create a folder. Git only lists it once it holds a file. */
+  createDir(spaceId: string, repo: string, path: string): Promise<void>;
+  renamePath(spaceId: string, repo: string, from: string, to: string): Promise<void>;
+  /**
+   * Delete a file or folder: system trash first. When there is no trash it fails with a
+   * `no_trash` error and nothing is deleted; call again with `permanent` to remove for good.
+   */
+  deletePath(spaceId: string, repo: string, path: string, permanent?: boolean): Promise<"trashed" | "deleted">;
+  /** Throw away the unstaged changes of a file (untracked files are deleted). */
+  discardFile(spaceId: string, repo: string, path: string): Promise<void>;
+  /** Show a file or folder in the file manager; an empty path is the worktree of the repo. */
+  revealPath(spaceId: string, repo: string, path: string): Promise<void>;
+  /** Absolute path on disk; an empty path is the worktree of the repo. */
+  absolutePath(spaceId: string, repo: string, path: string): Promise<string>;
+  /** Open a terminal in the folder (or the folder of the file). Returns the program used. */
+  openTerminal(spaceId: string, repo: string, path: string): Promise<string>;
+  renameSpace(spaceId: string, name: string): Promise<Space>;
+  /** `#RRGGBB`. */
+  setSpaceColor(spaceId: string, color: string): Promise<Space>;
+  /** Hide a space from the rail; its worktrees stay. */
+  archiveSpace(spaceId: string): Promise<Space>;
+  unarchiveSpace(spaceId: string): Promise<Space>;
+  listArchived(): Promise<Space[]>;
+  /** Remove the worktrees; branches with unmerged commits are kept. */
+  removeSpace(spaceId: string): Promise<void>;
 
   /** Checks of every repo of the space with the status for the current staged set. */
   checks(spaceId: string): Promise<RepoChecks[]>;
@@ -223,6 +251,8 @@ export function languageOf(path: string): FileContent["language"] {
 interface MFile extends FileRef {
   firstLine: number;
   lines: string[];
+  /** Content before the first edit by hand, to discard back to it. */
+  orig?: string[];
   /** Indices of the lines you typed. */
   mine: Set<number>;
 }
@@ -248,6 +278,8 @@ interface MSpace {
   stack: StackItem[];
   tests: { pass: number; total: number };
   baseStaged: FileRef[];
+  /** Paths of the generated tree that were deleted or renamed away (`repo/path`). */
+  removed: Set<string>;
   /** Files staged or unstaged by hand from the file tree. */
   fileStage: Map<string, { staged: ChangeKind | null; unstaged: ChangeKind | null }>;
   commitMsg: string;
@@ -283,6 +315,8 @@ interface MCheckState {
 export interface MockOptions {
   /** Multiplier for the simulated delays. 1 matches the prototype, 0 makes them instant. */
   speed?: number;
+  /** False simulates a machine without a system trash (deleting asks for confirmation). */
+  trash?: boolean;
 }
 
 export interface CommitRecord {
@@ -304,9 +338,15 @@ export class MockBackend implements Backend {
   readonly commits: CommitRecord[] = [];
   /** URLs passed to `openUrl`. */
   readonly opened: string[] = [];
+  /** Paths passed to `revealPath`, `openTerminal`, and moved to the trash (`repo/path`). */
+  readonly revealed: string[] = [];
+  readonly terminals: string[] = [];
+  readonly trashed: string[] = [];
+  private hasTrash: boolean;
 
   constructor(opts: MockOptions = {}) {
     this.speed = opts.speed ?? 1;
+    this.hasTrash = opts.trash ?? true;
     const links = seedLinks();
     for (const s of seedSpaces()) {
       this.spaces.set(s.space.id, {
@@ -319,6 +359,7 @@ export class MockBackend implements Backend {
         tests: s.tests,
         baseStaged: s.baseStaged,
         fileStage: new Map(),
+        removed: new Set(),
         commitMsg: s.commitMsg,
         question: s.question,
         notes: new Map(
@@ -341,7 +382,8 @@ export class MockBackend implements Backend {
 
   private file(s: MSpace, repo: string, path: string): MFile {
     let f = s.files.find((x) => x.repo === repo && x.path === path);
-    if (!f && s.space.repos.some((r) => r.name === repo) && repoPaths(repo).includes(path)) {
+    if (s.removed.has(fileKey(repo, path))) f = undefined;
+    else if (!f && s.space.repos.some((r) => r.name === repo) && repoPaths(repo).includes(path)) {
       // A generated file of the tree: it gets content the first time it is opened.
       f = { repo, path, firstLine: 1, lines: fakeContent(path), mine: new Set<number>() };
       s.files.push(f);
@@ -509,7 +551,7 @@ export class MockBackend implements Backend {
   }
 
   async listSpaces(): Promise<Space[]> {
-    return structuredClone([...this.spaces.values()].map((s) => s.space));
+    return structuredClone([...this.spaces.values()].map((s) => s.space).filter((x) => !x.archived));
   }
 
   async addRepoToSpace(spaceId: string, path: string): Promise<Space> {
@@ -561,6 +603,7 @@ export class MockBackend implements Backend {
       tests: { pass: 0, total: 0 },
       baseStaged: [],
       fileStage: new Map(),
+      removed: new Set(),
       links: [],
       commitMsg: `feat: ${name.toLowerCase()}`,
       question: null,
@@ -608,8 +651,8 @@ export class MockBackend implements Backend {
     const s = this.sp(spaceId);
     const st = new Map((await this.status(spaceId)).map((c) => [fileKey(c.repo, c.path), c]));
     return s.space.repos.map((r) => {
-      const paths = new Set(repoPaths(r.name));
-      for (const f of s.files) if (f.repo === r.name) paths.add(f.path);
+      const paths = new Set(repoPaths(r.name).filter((p) => !s.removed.has(fileKey(r.name, p))));
+      for (const f of s.files) if (f.repo === r.name && !s.removed.has(fileKey(f.repo, f.path))) paths.add(f.path);
       for (const c of st.values()) if (c.repo === r.name) paths.add(c.path);
       const files = [...paths].sort().map((path) => {
         const c = st.get(fileKey(r.name, path));
@@ -667,7 +710,8 @@ export class MockBackend implements Backend {
   // -- files ----------------------------------------------------------------
 
   async listFiles(spaceId: string): Promise<FileRef[]> {
-    return this.sp(spaceId).files.map((f) => ({ repo: f.repo, path: f.path }));
+    const s = this.sp(spaceId);
+    return s.files.filter((f) => !s.removed.has(fileKey(f.repo, f.path))).map((f) => ({ repo: f.repo, path: f.path }));
   }
 
   async readFile(spaceId: string, repo: string, path: string): Promise<FileContent> {
@@ -680,6 +724,7 @@ export class MockBackend implements Backend {
     const f = this.file(s, repo, path);
     const a = f.lines;
     const b = content.split("\n");
+    if (!f.orig && !f.mine.size) f.orig = a.slice();
     let p = 0;
     while (p < a.length && p < b.length && a[p] === b[p]) p++;
     let q = 0;
@@ -998,6 +1043,13 @@ export class MockBackend implements Backend {
   async stageFile(spaceId: string, repo: string, path: string): Promise<void> {
     const s = this.sp(spaceId);
     const bk = `${spaceId}:${fileKey(repo, path)}`;
+    const fs = s.fileStage.get(fileKey(repo, path));
+    if (fs?.unstaged) {
+      // Created, deleted or moved from the tree: the whole file goes to the index.
+      s.fileStage.set(fileKey(repo, path), { staged: fs.unstaged === "untracked" ? "added" : fs.unstaged, unstaged: null });
+      this.emit(spaceId);
+      return;
+    }
     if (this.unstagedBase.delete(bk)) {
       // Staged before the session and unstaged since: stage it back.
       if (!s.baseStaged.some((x) => x.repo === repo && x.path === path)) s.baseStaged.push({ repo, path });
@@ -1015,6 +1067,12 @@ export class MockBackend implements Backend {
 
   async unstageFile(spaceId: string, repo: string, path: string): Promise<void> {
     const s = this.sp(spaceId);
+    const fs = s.fileStage.get(fileKey(repo, path));
+    if (fs?.staged && !fs.unstaged) {
+      s.fileStage.set(fileKey(repo, path), { staged: null, unstaged: fs.staged === "added" ? "untracked" : fs.staged });
+      this.emit(spaceId);
+      return;
+    }
     const f = this.file(s, repo, path);
     for (const h of s.hunks) {
       if (h.repo === repo && h.path === path && h.state === "staged") {
@@ -1032,6 +1090,190 @@ export class MockBackend implements Backend {
     } else if (i >= 0) {
       this.unstagedBase.add(key);
     }
+    this.emit(spaceId);
+  }
+
+
+  // -- right-click menu operations -------------------------------------------
+
+  private exists(s: MSpace, repo: string, path: string): boolean {
+    const k = fileKey(repo, path);
+    if (s.removed.has(k)) return false;
+    return s.files.some((f) => f.repo === repo && f.path === path) || repoPaths(repo).includes(path);
+  }
+
+  private isDir(s: MSpace, repo: string, path: string): boolean {
+    const prefix = `${path}/`;
+    return (
+      repoPaths(repo).some((p) => p.startsWith(prefix) && !s.removed.has(fileKey(repo, p))) ||
+      s.files.some((f) => f.repo === repo && f.path.startsWith(prefix) && !s.removed.has(fileKey(repo, f.path)))
+    );
+  }
+
+  /** Same guard as the real `resolve_path`: relative, no `..`, nothing under `.git`. */
+  private guard(s: MSpace, repo: string, path: string, allowRoot = false): string {
+    if (!s.space.repos.some((r) => r.name === repo)) throw new Error(`repo not found in space: ${repo}`);
+    if (path === "" && allowRoot) return path;
+    const parts = path.split("/");
+    if (!path || path.startsWith("/") || parts.some((p) => p === ".." || p === "") || parts[0] === ".git") {
+      throw new BackendError("forbidden_path", `path is outside the space worktree: ${path}`);
+    }
+    return path;
+  }
+
+  private filesUnder(s: MSpace, repo: string, path: string): string[] {
+    const prefix = `${path}/`;
+    const all = new Set<string>();
+    for (const p of repoPaths(repo)) if (!s.removed.has(fileKey(repo, p))) all.add(p);
+    for (const f of s.files) if (f.repo === repo && !s.removed.has(fileKey(repo, f.path))) all.add(f.path);
+    return [...all].filter((p) => p === path || p.startsWith(prefix));
+  }
+
+  async createFile(spaceId: string, repo: string, path: string): Promise<void> {
+    const s = this.sp(spaceId);
+    this.guard(s, repo, path);
+    if (this.exists(s, repo, path) || this.isDir(s, repo, path)) throw new BackendError("invalid_input", `${path} already exists`);
+    s.removed.delete(fileKey(repo, path));
+    s.files.push({ repo, path, firstLine: 1, lines: [""], mine: new Set() });
+    s.fileStage.set(fileKey(repo, path), { staged: null, unstaged: "untracked" });
+    this.emit(spaceId);
+  }
+
+  /** Folders created by hand (`space:repo/path`). They show in the tree once they hold a file. */
+  readonly dirs: string[] = [];
+
+  async createDir(spaceId: string, repo: string, path: string): Promise<void> {
+    const s = this.sp(spaceId);
+    this.guard(s, repo, path);
+    if (this.exists(s, repo, path) || this.isDir(s, repo, path)) throw new BackendError("invalid_input", `${path} already exists`);
+    this.dirs.push(`${spaceId}:${fileKey(repo, path)}`);
+    this.emit(spaceId);
+  }
+
+  async renamePath(spaceId: string, repo: string, from: string, to: string): Promise<void> {
+    const s = this.sp(spaceId);
+    this.guard(s, repo, from);
+    this.guard(s, repo, to);
+    const isDir = this.isDir(s, repo, from);
+    if (!isDir && !this.exists(s, repo, from)) throw new BackendError("invalid_input", `${from} does not exist`);
+    if (this.exists(s, repo, to) || this.isDir(s, repo, to)) throw new BackendError("invalid_input", `${to} already exists`);
+    if (to.startsWith(`${from}/`)) throw new BackendError("invalid_input", "cannot move a folder into itself");
+    for (const old of this.filesUnder(s, repo, from)) {
+      const next = to + old.slice(from.length);
+      const src = this.file(s, repo, old);
+      s.files.push({ repo, path: next, firstLine: src.firstLine, lines: src.lines.slice(), mine: new Set() });
+      this.dropFile(s, repo, old);
+      s.removed.delete(fileKey(repo, next));
+      s.fileStage.set(fileKey(repo, next), { staged: null, unstaged: "untracked" });
+    }
+    this.emit(spaceId);
+  }
+
+  /** Remove a file from the tree: untracked ones vanish, tracked ones show as deleted. */
+  private dropFile(s: MSpace, repo: string, path: string) {
+    const k = fileKey(repo, path);
+    const st = s.fileStage.get(k);
+    const created = st?.unstaged === "untracked" || st?.staged === "added";
+    s.files = s.files.filter((f) => !(f.repo === repo && f.path === path));
+    s.hunks = s.hunks.filter((h) => !(h.repo === repo && h.path === path && h.state === "pending"));
+    s.baseStaged = s.baseStaged.filter((f) => !(f.repo === repo && f.path === path));
+    s.removed.add(k);
+    if (created) s.fileStage.delete(k);
+    else s.fileStage.set(k, { staged: null, unstaged: "deleted" });
+  }
+
+  async deletePath(spaceId: string, repo: string, path: string, permanent = false): Promise<"trashed" | "deleted"> {
+    const s = this.sp(spaceId);
+    this.guard(s, repo, path);
+    const under = this.filesUnder(s, repo, path);
+    if (!under.length) throw new BackendError("invalid_input", `${path} does not exist`);
+    if (!permanent && !this.hasTrash) throw new BackendError("no_trash", "no system trash: this machine has none");
+    for (const p of under) this.dropFile(s, repo, p);
+    if (!permanent) this.trashed.push(fileKey(repo, path));
+    this.emit(spaceId);
+    return permanent ? "deleted" : "trashed";
+  }
+
+  async discardFile(spaceId: string, repo: string, path: string): Promise<void> {
+    const s = this.sp(spaceId);
+    this.guard(s, repo, path);
+    const k = fileKey(repo, path);
+    const st = (await this.status(spaceId)).find((c) => c.repo === repo && c.path === path);
+    if (!st?.unstaged) throw new BackendError("invalid_input", `${path} has no unstaged changes`);
+    if (st.unstaged === "untracked") {
+      this.dropFile(s, repo, path);
+      if (this.hasTrash) this.trashed.push(k);
+    } else if (st.unstaged === "deleted") {
+      s.removed.delete(k);
+      s.fileStage.delete(k);
+    } else {
+      const f = this.file(s, repo, path);
+      if (f.orig) f.lines = f.orig;
+      f.orig = undefined;
+      f.mine = new Set();
+      this.parked.delete(`${spaceId}:${k}`);
+    }
+    this.emit(spaceId);
+  }
+
+  async revealPath(spaceId: string, repo: string, path: string): Promise<void> {
+    this.guard(this.sp(spaceId), repo, path, true);
+    this.revealed.push(path ? fileKey(repo, path) : repo);
+  }
+
+  async absolutePath(spaceId: string, repo: string, path: string): Promise<string> {
+    const s = this.sp(spaceId);
+    this.guard(s, repo, path, true);
+    const r = s.space.repos.find((x) => x.name === repo)!;
+    return path ? `/home/you/.local/share/vela/${r.worktree}/${path}` : `/home/you/.local/share/vela/${r.worktree}`;
+  }
+
+  async openTerminal(spaceId: string, repo: string, path: string): Promise<string> {
+    const s = this.sp(spaceId);
+    this.guard(s, repo, path, true);
+    const dir = !path || this.isDir(s, repo, path) ? path : path.split("/").slice(0, -1).join("/");
+    this.terminals.push(dir ? fileKey(repo, dir) : repo);
+    return "xterm";
+  }
+
+  async renameSpace(spaceId: string, name: string): Promise<Space> {
+    const s = this.sp(spaceId);
+    const n = name.trim();
+    if (!n) throw new BackendError("invalid_input", `invalid space name: ${n}`);
+    s.space.name = n;
+    this.emit(spaceId);
+    return structuredClone(s.space);
+  }
+
+  async setSpaceColor(spaceId: string, color: string): Promise<Space> {
+    const s = this.sp(spaceId);
+    if (!/^#[0-9a-fA-F]{6}$/.test(color.trim())) throw new BackendError("invalid_input", `not a #RRGGBB color: ${color}`);
+    s.space.color = color.trim().toUpperCase();
+    this.emit(spaceId);
+    return structuredClone(s.space);
+  }
+
+  async archiveSpace(spaceId: string): Promise<Space> {
+    const s = this.sp(spaceId);
+    s.space.archived = true;
+    this.emit(spaceId);
+    return structuredClone(s.space);
+  }
+
+  async unarchiveSpace(spaceId: string): Promise<Space> {
+    const s = this.sp(spaceId);
+    s.space.archived = false;
+    this.emit(spaceId);
+    return structuredClone(s.space);
+  }
+
+  async listArchived(): Promise<Space[]> {
+    return structuredClone([...this.spaces.values()].map((s) => s.space).filter((x) => x.archived));
+  }
+
+  async removeSpace(spaceId: string): Promise<void> {
+    this.sp(spaceId);
+    this.spaces.delete(spaceId);
     this.emit(spaceId);
   }
 
@@ -1445,6 +1687,48 @@ export class TauriBackend implements Backend {
   }
   setChecksAuto(spaceId: string, repo: string, auto: boolean) {
     return call<void>("set_checks_auto", { spaceId, repo, auto });
+  }
+  createFile(spaceId: string, repo: string, path: string) {
+    return call<void>("create_file", { spaceId, repo, path });
+  }
+  createDir(spaceId: string, repo: string, path: string) {
+    return call<void>("create_dir", { spaceId, repo, path });
+  }
+  renamePath(spaceId: string, repo: string, from: string, to: string) {
+    return call<void>("rename_path", { spaceId, repo, from, to });
+  }
+  deletePath(spaceId: string, repo: string, path: string, permanent = false) {
+    return call<"trashed" | "deleted">("delete_path", { spaceId, repo, path, permanent });
+  }
+  discardFile(spaceId: string, repo: string, path: string) {
+    return call<void>("discard_file", { spaceId, repo, path });
+  }
+  revealPath(spaceId: string, repo: string, path: string) {
+    return call<void>("reveal_path", { spaceId, repo, path });
+  }
+  absolutePath(spaceId: string, repo: string, path: string) {
+    return call<string>("absolute_path", { spaceId, repo, path });
+  }
+  openTerminal(spaceId: string, repo: string, path: string) {
+    return call<string>("open_terminal", { spaceId, repo, path });
+  }
+  renameSpace(spaceId: string, name: string) {
+    return call<Space>("rename_space", { spaceId, name });
+  }
+  setSpaceColor(spaceId: string, color: string) {
+    return call<Space>("set_space_color", { spaceId, color });
+  }
+  archiveSpace(spaceId: string) {
+    return call<Space>("archive_space", { spaceId });
+  }
+  unarchiveSpace(spaceId: string) {
+    return call<Space>("unarchive_space", { spaceId });
+  }
+  listArchived() {
+    return call<Space[]>("list_archived");
+  }
+  removeSpace(spaceId: string) {
+    return call<void>("remove_space", { spaceId });
   }
   onCheck(listener: (e: CheckEvent) => void): Unsubscribe {
     return this.subscribe(CHECK_EVENT, listener);
