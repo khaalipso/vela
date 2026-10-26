@@ -312,3 +312,127 @@ describe("commit gate", () => {
     expect(await b.draftCommit("mm")).toMatch(/^fix\(verify\)/);
   });
 });
+
+describe("links", () => {
+  it("seeds the example spaces with their context", async () => {
+    const stripe = await b.links("stripe");
+    expect(stripe.map((l) => [l.kind, l.provider, l.title, l.source])).toEqual([
+      ["issue", "jira", "PAY-412", "branch"],
+      ["doc", "url", "Stripe webhooks", "manual"],
+      ["environment", "url", "Staging acme.dev", "manual"],
+      ["dashboard", "grafana", "Payments latency", "repo"],
+    ]);
+    expect(stripe[0]).toMatchObject({ key: "PAY-412", url: "https://acme.atlassian.net/browse/PAY-412" });
+    const pg = await b.links("pg");
+    expect(pg.map((l) => [l.kind, l.provider])).toEqual([
+      ["issue", "linear"],
+      ["doc", "notion"],
+    ]);
+    expect(await b.links("mm")).toEqual([]);
+  });
+
+  it("adds a link, classifies it, dedupes it and tells listeners", async () => {
+    const seen: string[] = [];
+    b.onChange((e) => seen.push(e.spaceId));
+    const l = await b.addLink("mm", "https://linear.app/acme/issue/ENG-9/x");
+    expect(l).toMatchObject({ kind: "issue", provider: "linear", key: "ENG-9", source: "manual" });
+    expect((await b.addLink("mm", "https://linear.app/acme/issue/ENG-9/x", "again")).id).toBe(l.id);
+    const p = await b.addLink("mm", "https://acme.dev/doc", "Doc", "paste");
+    expect(p).toMatchObject({ title: "Doc", source: "paste" });
+    expect((await b.links("mm")).map((x) => x.id)).toEqual([l.id, p.id]);
+    expect(seen.length).toBeGreaterThan(0);
+    await expect(b.addLink("mm", "javascript:alert(1)")).rejects.toThrow(/http/);
+    await expect(b.addLink("mm", "ftp://x.dev/y")).rejects.toThrow(/http/);
+  });
+
+  it("removes links you added, not the ones found in the branch or the repo", async () => {
+    const [issue, , , dash] = await b.links("stripe");
+    await expect(b.removeLink("stripe", issue.id)).rejects.toThrow(/added/);
+    await expect(b.removeLink("stripe", dash.id)).rejects.toThrow(/added/);
+    const l = await b.addLink("stripe", "https://acme.dev/mine");
+    await b.removeLink("stripe", l.id);
+    expect((await b.links("stripe")).some((x) => x.id === l.id)).toBe(false);
+    await expect(b.removeLink("stripe", l.id)).rejects.toThrow(/not found/);
+  });
+
+  it("opens only http and https URLs", async () => {
+    await b.openUrl(" https://acme.dev/x ");
+    expect(b.opened).toEqual(["https://acme.dev/x"]);
+    await expect(b.openUrl("file:///etc/passwd")).rejects.toThrow(/http/);
+    expect(b.opened).toHaveLength(1);
+  });
+});
+
+describe("commit composer", () => {
+  it("plans one commit per repo and kind from the staged hunks, with the ticket footer", async () => {
+    const early = await b.commitPlan("stripe");
+    expect(early.conventional).toBe(true);
+    expect(early.rules.headerMax).toBe(72);
+    expect(early.groups).toHaveLength(1);
+    expect(early.groups[0]).toMatchObject({
+      repo: "api",
+      kind: "fix",
+      scope: "billing",
+      subject: "update checkout",
+      footers: ["Refs: PAY-412"],
+      hunks: ["base:api/src/billing/checkout.ts"],
+    });
+    await b.stageHunk("stripe", "s1");
+    await b.stageHunk("stripe", "s2");
+    const p = await b.commitPlan("stripe");
+    expect(p.groups.map((g) => [g.repo, g.kind, g.scope, g.subject])).toEqual([
+      ["api", "fix", "billing", "update webhook and checkout"],
+      ["web", "fix", "lib", "update stripe"],
+    ]);
+    expect(p.groups[0].hunks).toEqual(["s1", "base:api/src/billing/checkout.ts"]);
+  });
+
+  it("splits tests from code in a space with a test file staged", async () => {
+    const p = await b.commitPlan("mm");
+    expect(p.groups.map((g) => [g.kind, g.scope, g.subject])).toEqual([
+      ["fix", "verify", "update frame"],
+      ["test", "ac", "cover ac"],
+    ]);
+  });
+
+  it("validates like the core", async () => {
+    const rules = (await b.commitPlan("mm")).rules;
+    expect(await b.validateMessage("feat(api): ok", rules, true)).toEqual([]);
+    expect((await b.validateMessage("nope", rules, true)).map((p) => p.field)).toEqual(["header"]);
+    expect(await b.validateMessage("nope", rules, false)).toEqual([]);
+  });
+
+  it("commits each group as its own commit and keeps what no group takes", async () => {
+    const plan = await b.commitPlan("mm");
+    const [code, test] = plan.groups;
+    const r = await b.commitGroups("mm", [{ ...code, subject: "reject $d with identical variables" }], true);
+    expect(r.repos).toEqual(["research-engine"]);
+    expect(r.commits).toHaveLength(1);
+    expect(b.commits.at(-1)).toMatchObject({
+      spaceId: "mm",
+      message: "fix(verify): reject $d with identical variables",
+      group: code.id,
+    });
+    // The test hunk is still staged.
+    expect((await b.commitPlan("mm")).groups.map((g) => g.hunks)).toEqual([test.hunks]);
+    await b.commitGroups("mm", [test], false);
+    expect(b.commits.at(-1)!.message).toBe("cover ac");
+    expect((await b.status("mm")).filter((c) => c.staged)).toHaveLength(0);
+  });
+
+  it("refuses empty subjects, unknown hunks and an empty list", async () => {
+    const [g] = (await b.commitPlan("mm")).groups;
+    await expect(b.commitGroups("mm", [], true)).rejects.toThrow(/Nothing/);
+    await expect(b.commitGroups("mm", [{ ...g, subject: " " }], true)).rejects.toThrow(/no subject/);
+    await expect(b.commitGroups("mm", [{ ...g, hunks: ["nope"] }], true)).rejects.toThrow(/Hunk not found/);
+    expect(b.commits).toHaveLength(0);
+  });
+
+  it("is blocked when the gate fails, unless a reason is given, and the reason becomes a footer", async () => {
+    const plan = await b.commitPlan("stripe");
+    await expect(b.commitGroups("stripe", plan.groups, true)).rejects.toThrow(/Blocked/);
+    await b.commitGroups("stripe", plan.groups, true, "Hotfix, tests are flaky on CI");
+    expect(b.commits[0]).toMatchObject({ override: "Hotfix, tests are flaky on CI" });
+    expect(b.commits[0].message).toContain("Vela-Override: Hotfix, tests are flaky on CI");
+  });
+});

@@ -75,6 +75,60 @@ describe("TauriBackend", () => {
     expect(invoke).toHaveBeenLastCalledWith("commit", { spaceId: "s", message: "msg", overrideReason: "hotfix" });
   });
 
+  it("calls the composer and link commands with their argument names", async () => {
+    const plan = { conventional: true, rules: { types: ["feat"], scopes: [], headerMax: 72 }, groups: [] };
+    invoke.mockResolvedValue(plan);
+    expect(await b.commitPlan("s")).toBe(plan);
+    expect(invoke).toHaveBeenLastCalledWith("commit_plan", { spaceId: "s" });
+
+    invoke.mockResolvedValue([{ field: "header", message: "bad" }]);
+    const rules = { types: ["feat"], scopes: [], headerMax: 72 };
+    expect(await b.validateMessage("nope", rules, true)).toEqual([{ field: "header", message: "bad" }]);
+    expect(invoke).toHaveBeenLastCalledWith("validate_message", { message: "nope", rules, conventional: true });
+
+    const groups = [
+      { id: "g1", repo: "api", kind: "feat" as const, scope: "billing", subject: "add refunds", hunks: ["h1"] },
+    ];
+    invoke.mockResolvedValue({ repos: ["api"], branch: "feat/x", commits: [{ group: "g1", repo: "api", sha: "abc" }] });
+    expect(await b.commitGroups("s", groups, true)).toEqual({
+      repos: ["api"],
+      branch: "feat/x",
+      commits: [{ group: "g1", repo: "api", sha: "abc" }],
+      pushed: false,
+    });
+    expect(invoke).toHaveBeenLastCalledWith("commit_groups", {
+      spaceId: "s",
+      groups,
+      conventional: true,
+      overrideReason: null,
+    });
+    await b.commitGroups("s", groups, false, "hotfix");
+    expect(invoke).toHaveBeenLastCalledWith("commit_groups", {
+      spaceId: "s",
+      groups,
+      conventional: false,
+      overrideReason: "hotfix",
+    });
+  });
+
+  it("lists, adds, removes and opens links", async () => {
+    invoke.mockResolvedValue([]);
+    await b.links("s");
+    expect(invoke).toHaveBeenLastCalledWith("links", { spaceId: "s" });
+    invoke.mockResolvedValue({ id: "l1", title: "Doc" });
+    await b.addLink("s", "https://acme.dev/doc");
+    expect(invoke).toHaveBeenLastCalledWith("add_link", { spaceId: "s", url: "https://acme.dev/doc", title: null, source: null });
+    await b.addLink("s", "https://acme.dev/doc", "Doc", "paste");
+    expect(invoke).toHaveBeenLastCalledWith("add_link", { spaceId: "s", url: "https://acme.dev/doc", title: "Doc", source: "paste" });
+    await b.removeLink("s", "l1");
+    expect(invoke).toHaveBeenLastCalledWith("remove_link", { spaceId: "s", linkId: "l1" });
+    await b.openUrl("https://acme.dev/doc");
+    expect(invoke).toHaveBeenLastCalledWith("open_url", { url: "https://acme.dev/doc" });
+    invoke.mockRejectedValue({ kind: "invalid_input", message: "only http and https links can be opened: file:///x" });
+    const err = await b.openUrl("file:///x").catch((e) => e);
+    expect(err.kind).toBe("invalid_input");
+  });
+
   it("opens a window for a number and closes it for null", async () => {
     invoke.mockResolvedValue(undefined);
     await b.setWindow("s", 2);

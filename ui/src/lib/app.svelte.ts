@@ -10,10 +10,23 @@ import type {
   ReviewNote,
   Unsubscribe,
 } from "./backend";
+import { composeMessage, cycleType, mergeAll, moveHunk, splitHunk } from "./commitplan";
 import { GATE_NAMES, fileKey, plural, roleLabel, ROLES, toolLabel, uniq } from "./format";
 import type { Action, Overlay, View } from "./keymap";
+import { groupLinks, isHttpUrl, makeLink, removable, topBarChips, type Chips } from "./links";
 import { buildPaletteItems, filterPalette, type PaletteItem } from "./palette";
-import type { Agent, AgentRole, FileChange, Hunk, Space, StackItem } from "./types";
+import type {
+  Agent,
+  AgentRole,
+  CommitGroup,
+  CommitRules,
+  FileChange,
+  Hunk,
+  Link,
+  Problem,
+  Space,
+  StackItem,
+} from "./types";
 import { computeUpNext, readyToCommit, waitingCount, type UpNextInput, type UpNextView } from "./upnext";
 
 export interface SpaceData {
@@ -25,6 +38,7 @@ export interface SpaceData {
   question: AgentQuestion | null;
   notes: ReviewNote[];
   files: FileRef[];
+  links: Link[];
 }
 
 export interface SpaceUi {
@@ -45,12 +59,26 @@ export interface Proposal {
   edited: boolean;
 }
 
+/** The commit composer: the plan the user edits before committing. */
+export interface ComposerState {
+  conventional: boolean;
+  rules: CommitRules;
+  groups: CommitGroup[];
+  /** Focused commit and focused hunk inside it. */
+  gi: number;
+  hi: number;
+  /** Validation problems by group id. */
+  problems: Record<string, Problem[]>;
+  /** Staged hunks by id, to show what each commit takes. */
+  hunks: Record<string, Hunk>;
+}
+
 export interface GateState {
   checks: GateCheck[];
   /** The backend finished running the gate (it may have run no checks at all). */
   done: boolean;
-  message: string;
   reason: string;
+  composer: ComposerState;
 }
 
 const GATE_TOTAL = GATE_NAMES.length;
@@ -74,6 +102,8 @@ export class AppState {
   /** Id of the space this window is pinned to (`#space-<id>`), null in the main window. */
   pinned = $state<string | null>(null);
   gate = $state<GateState | null>(null);
+  /** The links sheet: text in the URL field and the selected row. */
+  linksUi = $state({ q: "", i: 0 });
   toastState = $state<{ id: number; text: string } | null>(null);
   /** Hunks accepted with E, to label them "edited by you". */
   edited = $state<Record<string, true>>({});
@@ -86,6 +116,7 @@ export class AppState {
   private toastSeq = 0;
   private gateSeq = 0;
   private focusSeq = 0;
+  private valSeq: Record<string, number> = {};
 
   // -- boot -----------------------------------------------------------------
 
@@ -134,7 +165,7 @@ export class AppState {
   /** Reload everything the backend knows about a space. */
   async load(id: string, light = false) {
     const b = this.backend;
-    const [hunks, reasons, agents, stack, status, question, notes, files] = await Promise.all([
+    const [hunks, reasons, agents, stack, status, question, notes, files, links] = await Promise.all([
       b.hunks(id),
       b.reasons(id),
       b.agents(id),
@@ -143,8 +174,9 @@ export class AppState {
       b.question(id),
       b.notes(id),
       b.listFiles(id),
+      b.links(id).catch((): Link[] => []),
     ]);
-    this.data = { ...this.data, [id]: { hunks, reasons, agents, stack, status, question, notes, files } };
+    this.data = { ...this.data, [id]: { hunks, reasons, agents, stack, status, question, notes, files, links } };
     if (!light || !this.ui[id]) this.ensureUi(id);
   }
 
@@ -273,6 +305,7 @@ export class AppState {
   get paletteItems(): PaletteItem[] {
     const items = buildPaletteItems({
       upNextTitle: this.upNext.title,
+      links: this.sd.links,
       spaces: this.spaces.map((s) => ({
         name: s.name,
         branch: s.branch,
@@ -281,6 +314,32 @@ export class AppState {
       })),
     });
     return filterPalette(items, this.pal.q);
+  }
+
+  get links(): Link[] {
+    return this.sd.links;
+  }
+  /** Links in the order of the sheet (grouped by kind). */
+  get orderedLinks(): Link[] {
+    return groupLinks(this.sd.links);
+  }
+  get chips(): Chips {
+    return topBarChips(groupLinks(this.sd.links));
+  }
+  /** What the URL field would add, for the live preview. */
+  get linkPreview(): Link | null {
+    const q = this.linksUi.q.trim();
+    return q && isHttpUrl(q) && !/\s/.test(q) ? makeLink(q, undefined, "manual") : null;
+  }
+
+  get cc(): ComposerState | null {
+    return this.gate?.composer ?? null;
+  }
+  /** Every commit has a subject and no validation problem. */
+  get composerOk(): boolean {
+    const c = this.cc;
+    if (!c || !c.groups.length) return false;
+    return c.groups.every((g) => g.subject.trim() !== "" && !c.problems[g.id]?.length);
   }
 
   get gateOk(): boolean {
@@ -477,9 +536,27 @@ export class AppState {
     }
     const sid = this.space.id;
     const token = ++this.gateSeq;
-    const message = await this.backend.draftCommit(sid);
-    this.gate = { checks: [], done: false, message, reason: "" };
+    let plan;
+    try {
+      plan = await this.backend.commitPlan(sid);
+    } catch (e) {
+      this.fail(e);
+      return;
+    }
+    if (!plan.groups.length) {
+      this.toast("Nothing staged yet. Accept a proposal with Y");
+      return;
+    }
+    if (token !== this.gateSeq) return;
+    const hunks = Object.fromEntries(this.sd.hunks.filter((h) => h.state === "staged").map((h) => [h.id, h]));
+    this.gate = {
+      checks: [],
+      done: false,
+      reason: "",
+      composer: { ...plan, gi: 0, hi: 0, problems: {}, hunks },
+    };
     this.overlay = "commit";
+    void this.revalidate();
     try {
       await this.backend.runGate(sid, (i, c) => {
         if (token !== this.gateSeq || !this.gate || this.overlay !== "commit") return;
@@ -493,6 +570,199 @@ export class AppState {
     }
   }
 
+  // -- commit composer ------------------------------------------------------
+
+  /** Validate the message of one commit (or all of them) against the repo rules. */
+  async revalidate(groupId?: string) {
+    const c = this.cc;
+    if (!c) return;
+    for (const g of c.groups) {
+      if (groupId && g.id !== groupId) continue;
+      const token = (this.valSeq[g.id] = (this.valSeq[g.id] ?? 0) + 1);
+      try {
+        const msg = composeMessage($state.snapshot(g), c.conventional);
+        const p = await this.backend.validateMessage(msg, $state.snapshot(c.rules), c.conventional);
+        if (this.valSeq[g.id] === token && this.cc === c) c.problems[g.id] = p;
+      } catch (e) {
+        this.fail(e);
+      }
+    }
+    for (const id of Object.keys(c.problems)) if (!c.groups.some((g) => g.id === id)) delete c.problems[id];
+  }
+
+  /** Put the focus back in range after the list of commits changed. */
+  private clampFocus(c: ComposerState) {
+    c.gi = Math.max(0, Math.min(c.gi, c.groups.length - 1));
+    c.hi = Math.max(0, Math.min(c.hi, (c.groups[c.gi]?.hunks.length ?? 1) - 1));
+  }
+
+  ccFocus(gi: number) {
+    const c = this.cc;
+    if (!c || gi === c.gi || gi < 0 || gi >= c.groups.length) return;
+    c.gi = gi;
+    c.hi = 0;
+  }
+  ccGroup(delta: 1 | -1) {
+    const c = this.cc;
+    if (c) this.ccFocus(Math.max(0, Math.min(c.groups.length - 1, c.gi + delta)));
+  }
+  ccHunk(delta: 1 | -1) {
+    const c = this.cc;
+    if (!c) return;
+    c.hi = Math.max(0, Math.min((c.groups[c.gi]?.hunks.length ?? 1) - 1, c.hi + delta));
+  }
+  ccType() {
+    const c = this.cc;
+    const g = c?.groups[c.gi];
+    if (!c || !g) return;
+    g.kind = cycleType(g.kind, c.rules);
+    void this.revalidate(g.id);
+  }
+  ccBreaking() {
+    const c = this.cc;
+    const g = c?.groups[c.gi];
+    if (!g) return;
+    g.breaking = !g.breaking;
+    void this.revalidate(g.id);
+  }
+  ccConventional() {
+    const c = this.cc;
+    if (!c) return;
+    c.conventional = !c.conventional;
+    this.toast(c.conventional ? "Conventional commits on" : "Conventional commits off");
+    void this.revalidate();
+  }
+  /** Move the selected hunk to commit number `n` (1 based). */
+  ccMove(n: number) {
+    const c = this.cc;
+    const g = c?.groups[c.gi];
+    const id = g?.hunks[c?.hi ?? 0];
+    if (!c || !g || !id) return;
+    const target = c.groups[n - 1];
+    if (!target) return this.toast(`There is no commit ${n}`);
+    if (target.id === g.id) return;
+    if (target.repo !== g.repo) return this.toast(`Commit ${n} is in ${target.repo}, this hunk is in ${g.repo}`);
+    const next = moveHunk($state.snapshot(c.groups), id, n - 1);
+    c.groups = next;
+    const at = next.findIndex((x) => x.id === g.id);
+    c.gi = at >= 0 ? at : Math.min(c.gi, next.length - 1);
+    this.clampFocus(c);
+    void this.revalidate();
+  }
+  /** The selected hunk becomes a commit of its own. */
+  ccSplit() {
+    const c = this.cc;
+    const g = c?.groups[c.gi];
+    const id = g?.hunks[c?.hi ?? 0];
+    if (!c || !g || !id) return;
+    if (g.hunks.length < 2) return this.toast("This commit has only one hunk");
+    const r = splitHunk($state.snapshot(c.groups), id, c.hunks[id]);
+    c.groups = r.groups;
+    c.gi = r.index;
+    c.hi = 0;
+    void this.revalidate();
+  }
+  ccMerge() {
+    const c = this.cc;
+    if (!c) return;
+    const next = mergeAll($state.snapshot(c.groups));
+    if (next.length === c.groups.length) return this.toast("Already one commit per repo");
+    c.groups = next;
+    c.gi = 0;
+    c.hi = 0;
+    void this.revalidate();
+    this.toast(next.length === 1 ? "Merged into one commit" : `Merged into ${plural(next.length, "commit", "commits")}, one per repo`);
+  }
+  ccEdit() {
+    const c = this.cc;
+    const g = c?.groups[c.gi];
+    if (g) document.querySelector<HTMLElement>(`[data-group="${g.id}"] [data-field="subject"]`)?.focus();
+  }
+
+  // -- links ----------------------------------------------------------------
+
+  openLinks() {
+    this.linksUi = { q: "", i: 0 };
+    this.overlay = "links";
+  }
+
+  private async reloadLinks(id: string) {
+    const links = await this.backend.links(id);
+    const d = this.data[id];
+    if (d) this.data = { ...this.data, [id]: { ...d, links } };
+    return links;
+  }
+
+  linksMove(delta: 1 | -1) {
+    const n = this.orderedLinks.length;
+    if (n) this.linksUi.i = Math.max(0, Math.min(n - 1, this.linksUi.i + delta));
+  }
+
+  /** Open a link in the browser; a key without a tracker URL says how to get one. */
+  async openLink(id?: string) {
+    const l = id ? this.links.find((x) => x.id === id) : this.orderedLinks[this.linksUi.i];
+    if (!l) return;
+    if (!l.url) {
+      this.toast(`${l.key ?? l.title} has no URL yet. Set [issues] in ~/.config/vela/config.toml`);
+      return;
+    }
+    try {
+      await this.backend.openUrl(l.url);
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  /** Enter in the URL field: add the URL, or open the selected link when the field is empty. */
+  async linksSubmit() {
+    const q = this.linksUi.q.trim();
+    if (!q) return this.openLink();
+    if (!this.linkPreview) return this.toast("Paste a full http or https URL");
+    const sid = this.space.id;
+    try {
+      const l = await this.backend.addLink(sid, q, undefined, "manual");
+      await this.reloadLinks(sid);
+      this.linksUi.q = "";
+      this.linksUi.i = Math.max(0, this.orderedLinks.findIndex((x) => x.id === l.id));
+      this.toast(`Linked ${l.title}`);
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  async removeLink() {
+    const l = this.orderedLinks[this.linksUi.i];
+    if (!l) return;
+    if (!removable(l)) {
+      this.toast(l.source === "repo" ? "Repo links live in .vela/links.toml" : "Found in the history, it cannot be removed here");
+      return;
+    }
+    const sid = this.space.id;
+    try {
+      await this.backend.removeLink(sid, l.id);
+      await this.reloadLinks(sid);
+      this.linksUi.i = Math.max(0, Math.min(this.linksUi.i, this.orderedLinks.length - 1));
+      this.toast(`Removed ${l.title}`);
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  /** A URL pasted outside any field is linked to the current space. */
+  async addLinkFromPaste(text: string): Promise<boolean> {
+    const t = text.trim();
+    if (!this.ready || !this.spaces.length || !isHttpUrl(t) || /\s/.test(t)) return false;
+    const sid = this.space.id;
+    try {
+      const l = await this.backend.addLink(sid, t, undefined, "paste");
+      await this.reloadLinks(sid);
+      this.toast(`Linked ${l.title}`);
+    } catch (e) {
+      this.fail(e);
+    }
+    return true;
+  }
+
   closeOverlay() {
     this.overlay = null;
     this.gate = null;
@@ -502,16 +772,27 @@ export class AppState {
 
   async doCommit() {
     const g = this.gate;
-    if (!g || !this.gateOk) return;
+    const c = g?.composer;
+    if (!g || !c || !this.gateOk) return;
+    if (!this.composerOk) {
+      this.toast("Fix the highlighted messages first");
+      return;
+    }
     const s = this.space;
-    const failing = !g.checks.every((c) => c.pass);
+    const failing = !g.checks.every((x) => x.pass);
     try {
-      const r = await this.backend.commit(s.id, g.message, failing ? g.reason.trim() : undefined);
+      const r = await this.backend.commitGroups(
+        s.id,
+        $state.snapshot(c.groups),
+        c.conventional,
+        failing ? g.reason.trim() : undefined,
+      );
       this.overlay = null;
       this.gate = null;
       this.gateSeq++;
       this.cui.hi = null;
-      this.toast(`${r.pushed === false ? "Committed" : "Pushed"} ${r.repos.join(" and ")} on ${r.branch}`);
+      const n = r.commits?.length ?? r.repos.length;
+      this.toast(`${r.pushed === false ? "Committed" : "Pushed"} ${plural(n, "commit", "commits")} on ${r.branch}`);
       await this.refresh(s.id);
     } catch (e) {
       this.fail(e);
@@ -659,6 +940,36 @@ export class AppState {
         return;
       case "open-commit":
         return this.openCommit();
+      case "open-links":
+        return this.openLinks();
+      case "open-link":
+        return this.openLink(a.id);
+      case "links-move":
+        return this.linksMove(a.delta);
+      case "links-open":
+        return this.openLink();
+      case "links-submit":
+        return this.linksSubmit();
+      case "links-remove":
+        return this.removeLink();
+      case "cc-type":
+        return this.ccType();
+      case "cc-breaking":
+        return this.ccBreaking();
+      case "cc-hunk":
+        return this.ccHunk(a.delta);
+      case "cc-group":
+        return this.ccGroup(a.delta);
+      case "cc-move":
+        return this.ccMove(a.to);
+      case "cc-split":
+        return this.ccSplit();
+      case "cc-merge":
+        return this.ccMerge();
+      case "cc-edit":
+        return this.ccEdit();
+      case "cc-conventional":
+        return this.ccConventional();
       case "toggle-window":
         return this.toggleWindow();
       case "open-composer":

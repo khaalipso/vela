@@ -1,5 +1,5 @@
 export type View = "code" | "review" | "agents";
-export type Overlay = "palette" | "newspace" | "commit" | "composer" | "help" | null;
+export type Overlay = "palette" | "newspace" | "commit" | "composer" | "links" | "help" | null;
 
 /** Everything that can happen in the shell. Keys, buttons and the command bar all produce these. */
 export type Action =
@@ -10,6 +10,22 @@ export type Action =
   | { type: "blur" } // leave the text field or editor
   | { type: "newspace-submit" }
   | { type: "commit-submit" }
+  // commit composer (overlay "commit")
+  | { type: "cc-type" } // cycle the type of the focused commit
+  | { type: "cc-breaking" } // toggle breaking
+  | { type: "cc-hunk"; delta: 1 | -1 } // select a hunk of the focused commit
+  | { type: "cc-group"; delta: 1 | -1 } // focus the next / previous commit
+  | { type: "cc-move"; to: number } // move the selected hunk to commit number `to` (1 based)
+  | { type: "cc-split" } // selected hunk becomes a new commit
+  | { type: "cc-merge" } // everything in one commit per repo
+  | { type: "cc-edit" } // jump into the subject field
+  | { type: "cc-conventional" } // conventional commits on / off
+  // links sheet (overlay "links")
+  | { type: "links-move"; delta: 1 | -1 }
+  | { type: "links-open" }
+  | { type: "links-submit" } // Enter in the URL field: add it, or open the selected link when empty
+  | { type: "links-remove" }
+  | { type: "open-link"; id: string }
   | { type: "composer-role"; delta: 1 | -1 }
   | { type: "composer-send" }
   | { type: "up-next" }
@@ -29,6 +45,7 @@ export type Action =
   | { type: "toggle-stack" }
   | { type: "open-stack" }
   | { type: "open-commit" }
+  | { type: "open-links" }
   | { type: "toggle-window" }
   | { type: "open-composer" }
   | { type: "open-newspace" }
@@ -87,6 +104,8 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
   if (ctrl && (k === "k" || k === "K")) return { type: "palette-toggle" };
 
   if (k === "Escape") {
+    // Sheets with fields: the first Esc leaves the field, the next one closes the sheet.
+    if (c.typing && (c.overlay === "commit" || c.overlay === "links")) return { type: "blur" };
     if (c.overlay || c.stackOpen) return { type: "close" };
     if (c.typing) return { type: "blur" };
     return null;
@@ -99,7 +118,53 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
     return null;
   }
   if (c.overlay === "newspace") return k === "Enter" && ctrl ? { type: "newspace-submit" } : null;
-  if (c.overlay === "commit") return k === "Enter" && ctrl ? { type: "commit-submit" } : null;
+  if (c.overlay === "commit") {
+    if (k === "Enter" && ctrl) return { type: "commit-submit" };
+    if (c.typing || ctrl || alt) return null;
+    if (/^[1-9]$/.test(k)) return { type: "cc-move", to: Number(k) };
+    switch (k) {
+      case "j":
+      case "J":
+      case "ArrowDown":
+        return { type: "cc-hunk", delta: 1 };
+      case "k":
+      case "K":
+      case "ArrowUp":
+        return { type: "cc-hunk", delta: -1 };
+      case "[":
+        return { type: "cc-group", delta: -1 };
+      case "]":
+        return { type: "cc-group", delta: 1 };
+      case "t":
+      case "T":
+        return { type: "cc-type" };
+      case "!":
+        return { type: "cc-breaking" };
+      case "g":
+      case "G":
+        return { type: "cc-split" };
+      case "m":
+      case "M":
+        return { type: "cc-merge" };
+      case "o":
+      case "O":
+        return { type: "cc-conventional" };
+      case "Enter":
+        return { type: "cc-edit" };
+      default:
+        return null;
+    }
+  }
+  if (c.overlay === "links") {
+    if (k === "ArrowDown") return { type: "links-move", delta: 1 };
+    if (k === "ArrowUp") return { type: "links-move", delta: -1 };
+    if (k === "Enter") return c.typing ? { type: "links-submit" } : { type: "links-open" };
+    if (c.typing || ctrl || alt) return null;
+    if (k === "j" || k === "J") return { type: "links-move", delta: 1 };
+    if (k === "k" || k === "K") return { type: "links-move", delta: -1 };
+    if (k === "Backspace" || k === "Delete") return { type: "links-remove" };
+    return null;
+  }
   if (c.overlay === "composer") {
     if (k === "Tab") return { type: "composer-role", delta: shift ? -1 : 1 };
     if (k === "Enter" && !shift) return { type: "composer-send" };
@@ -160,6 +225,9 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
     case "c":
     case "C":
       return { type: "open-commit" };
+    case "l":
+    case "L":
+      return { type: "open-links" };
     case "w":
     case "W":
       return { type: "toggle-window" };

@@ -1,6 +1,7 @@
 // Example data for the mock backend: the three spaces of ui/reference/prototype.html.
 
-import type { Agent, Space, StackItem } from "./types";
+import { makeLink } from "./links";
+import type { Agent, Link, Space, StackItem } from "./types";
 
 /** A file the mock holds. `lines` is a snippet that starts at line `firstLine`. */
 export interface SeedFile {
@@ -381,3 +382,18 @@ const mm: SeedSpace = {
 };
 
 export const seedSpaces = (): SeedSpace[] => structuredClone([stripe, pg, mm]);
+
+/** Links each seeded space starts with: what the branch, the repo and the user attached. */
+export const seedLinks = (): Record<string, Link[]> => ({
+  stripe: [
+    makeLink("https://acme.atlassian.net/browse/PAY-412", undefined, "branch"),
+    makeLink("https://docs.stripe.com/webhooks", "Stripe webhooks", "manual"),
+    makeLink("https://staging.acme.dev/billing", undefined, "manual"),
+    makeLink("https://grafana.acme.io/d/pay/payments-latency", "Payments latency", "repo"),
+  ].map((l) => (l.url.includes("docs.stripe.com") ? { ...l, kind: "doc" as const } : l)),
+  pg: [
+    makeLink("https://linear.app/acme/issue/ENG-77/move-to-postgres-17", undefined, "branch"),
+    makeLink("https://www.notion.so/acme/Postgres-17-migration-plan-0123456789abcdef0123456789abcdef", undefined, "manual"),
+  ],
+  mm: [],
+});

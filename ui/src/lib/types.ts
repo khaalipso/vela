@@ -17,6 +17,8 @@ export interface Space {
   /** Window the space is shown in, null/absent when it lives in the main window. */
   window?: number | null;
   archived?: boolean;
+  /** Links added by hand or pasted. Detected and repo links come from `Backend.links`. */
+  links?: Link[];
 }
 
 export interface SpaceRepo {
@@ -120,3 +122,115 @@ export type UpNext =
   | { type: "review"; count: number }
   | { type: "commit"; repos: number; files: number }
   | { type: "nothing" };
+
+// ---------------------------------------------------------------------------
+// Links: the context of a space
+// ---------------------------------------------------------------------------
+
+export type LinkKind =
+  | "issue"
+  | "pullRequest"
+  | "doc"
+  | "design"
+  | "error"
+  | "dashboard"
+  | "chat"
+  | "environment"
+  | "other";
+
+export type Provider =
+  | "jira"
+  | "linear"
+  | "github"
+  | "gitlab"
+  | "sentry"
+  | "figma"
+  | "notion"
+  | "confluence"
+  | "googleDocs"
+  | "grafana"
+  | "datadog"
+  | "slack"
+  | "url";
+
+/** Where a link came from. */
+export type LinkSource = "manual" | "branch" | "commit" | "paste" | "repo";
+
+export interface Link {
+  /** Stable id: hash of the url, or of the key when there is no url. */
+  id: string;
+  kind: LinkKind;
+  provider: Provider;
+  /** Empty for an issue key found without a configured tracker URL. */
+  url: string;
+  title: string;
+  /** Issue key such as "PAY-412" or "acme/api#12". */
+  key?: string | null;
+  source: LinkSource;
+  /** Summary fetched through MCP. TODO(M2). */
+  summary?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Commit composer
+// ---------------------------------------------------------------------------
+
+export type CommitType =
+  | "feat"
+  | "fix"
+  | "refactor"
+  | "perf"
+  | "test"
+  | "docs"
+  | "style"
+  | "build"
+  | "ci"
+  | "chore"
+  | "revert";
+
+/** What a repo asks of its commit messages. */
+export interface CommitRules {
+  /** Allowed types (`type-enum`). */
+  types: string[];
+  /** Allowed scopes (`scope-enum`); empty means any scope. */
+  scopes: string[];
+  /** `header-max-length`. */
+  headerMax: number;
+}
+
+/** One commit proposed by the composer: the hunks it takes and its message. */
+export interface CommitGroup {
+  id: string;
+  repo: string;
+  kind: CommitType;
+  scope?: string | null;
+  breaking?: boolean;
+  breakingReason?: string | null;
+  subject: string;
+  body?: string;
+  /** Trailer lines such as `Refs: PAY-412`. */
+  footers?: string[];
+  /** Ids of the staged hunks this commit takes (`f:...` for a file without hunks, e.g. a pure rename). */
+  hunks: string[];
+}
+
+export interface CommitPlan {
+  /** Whether the repo uses conventional commits (history or commitlint). */
+  conventional: boolean;
+  rules: CommitRules;
+  groups: CommitGroup[];
+}
+
+/** A problem found when validating a message. */
+export interface Problem {
+  /** "header", "type", "scope", "subject" or "body". */
+  field: string;
+  message: string;
+}
+
+/** One commit made by `commitGroups`. */
+export interface GroupCommit {
+  group: string;
+  repo: string;
+  sha: string;
+}

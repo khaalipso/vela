@@ -46,6 +46,8 @@ describe("global shortcuts", () => {
       ["B", { type: "toggle-changes" }],
       ["s", { type: "toggle-stack" }],
       ["c", { type: "open-commit" }],
+      ["l", { type: "open-links" }],
+      ["L", { type: "open-links" }],
       ["w", { type: "toggle-window" }],
       ["@", { type: "open-composer" }],
       ["?", { type: "open-help" }],
@@ -119,8 +121,11 @@ describe("modifiers", () => {
 
 describe("overlays", () => {
   it("Escape closes an overlay or the stack popover", () => {
-    for (const overlay of ["palette", "newspace", "commit", "composer", "help"] as const) {
+    for (const overlay of ["palette", "newspace", "composer", "help"] as const) {
       expect(resolveKey(key("Escape"), ctx({ overlay, typing: true }))).toEqual({ type: "close" });
+    }
+    for (const overlay of ["commit", "links"] as const) {
+      expect(resolveKey(key("Escape"), ctx({ overlay }))).toEqual({ type: "close" });
     }
     expect(resolveKey(key("Escape"), ctx({ stackOpen: true }))).toEqual({ type: "close" });
   });
@@ -136,8 +141,58 @@ describe("overlays", () => {
   it("new space and commit: Ctrl Enter submits", () => {
     expect(resolveKey(key("Enter", { ctrlKey: true }), ctx({ overlay: "newspace" }))).toEqual({ type: "newspace-submit" });
     expect(resolveKey(key("Enter", { metaKey: true }), ctx({ overlay: "commit" }))).toEqual({ type: "commit-submit" });
-    expect(resolveKey(key("Enter"), ctx({ overlay: "commit" }))).toBeNull();
+    expect(resolveKey(key("Enter", { ctrlKey: true }), ctx({ overlay: "commit", typing: true }))).toEqual({ type: "commit-submit" });
     expect(resolveKey(key("y"), ctx({ overlay: "commit" }))).toBeNull();
+  });
+
+  it("commit composer: Esc leaves the field first, then closes", () => {
+    expect(resolveKey(key("Escape"), ctx({ overlay: "commit", typing: true }))).toEqual({ type: "blur" });
+    expect(resolveKey(key("Escape"), ctx({ overlay: "commit", typing: false }))).toEqual({ type: "close" });
+  });
+
+  it("commit composer: single keys act only outside fields", () => {
+    const c = ctx({ overlay: "commit" });
+    const cases: [string, Action][] = [
+      ["t", { type: "cc-type" }],
+      ["T", { type: "cc-type" }],
+      ["!", { type: "cc-breaking" }],
+      ["j", { type: "cc-hunk", delta: 1 }],
+      ["ArrowDown", { type: "cc-hunk", delta: 1 }],
+      ["k", { type: "cc-hunk", delta: -1 }],
+      ["K", { type: "cc-hunk", delta: -1 }],
+      ["1", { type: "cc-move", to: 1 }],
+      ["9", { type: "cc-move", to: 9 }],
+      ["g", { type: "cc-split" }],
+      ["m", { type: "cc-merge" }],
+      ["o", { type: "cc-conventional" }],
+      ["[", { type: "cc-group", delta: -1 }],
+      ["]", { type: "cc-group", delta: 1 }],
+      ["Enter", { type: "cc-edit" }],
+    ];
+    for (const [k, a] of cases) {
+      expect(resolveKey(key(k), c)).toEqual(a);
+      expect(resolveKey(key(k), ctx({ overlay: "commit", typing: true }))).toBeNull();
+    }
+    expect(resolveKey(key("0"), c)).toBeNull();
+    expect(resolveKey(key("y"), c)).toBeNull();
+    expect(resolveKey(key("t", { ctrlKey: true }), c)).toBeNull();
+  });
+
+  it("links sheet: arrows work in the field, letters and Backspace only outside it", () => {
+    const typing = ctx({ overlay: "links", typing: true });
+    const idle = ctx({ overlay: "links" });
+    expect(resolveKey(key("ArrowDown"), typing)).toEqual({ type: "links-move", delta: 1 });
+    expect(resolveKey(key("ArrowUp"), typing)).toEqual({ type: "links-move", delta: -1 });
+    expect(resolveKey(key("Enter"), typing)).toEqual({ type: "links-submit" });
+    expect(resolveKey(key("j"), typing)).toBeNull();
+    expect(resolveKey(key("Backspace"), typing)).toBeNull();
+    expect(resolveKey(key("j"), idle)).toEqual({ type: "links-move", delta: 1 });
+    expect(resolveKey(key("K"), idle)).toEqual({ type: "links-move", delta: -1 });
+    expect(resolveKey(key("Enter"), idle)).toEqual({ type: "links-open" });
+    expect(resolveKey(key("Backspace"), idle)).toEqual({ type: "links-remove" });
+    expect(resolveKey(key("Delete"), idle)).toEqual({ type: "links-remove" });
+    expect(resolveKey(key("y"), idle)).toBeNull();
+    expect(resolveKey(key("k", { ctrlKey: true }), typing)).toEqual({ type: "palette-toggle" });
   });
 
   it("composer: Tab cycles the role, Enter sends, Shift Enter is a newline", () => {

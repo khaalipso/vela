@@ -1,14 +1,23 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { fileKey, toolForRole, toolLabel, uniq } from "./format";
-import { REPOS, seedSpaces, type SeedSpace } from "./seed";
+import { composeMessage, planFromHunks, validateFor } from "./commitplan";
+import { isHttpUrl, makeLink, removable, sameLink } from "./links";
+import { REPOS, seedLinks, seedSpaces, type SeedSpace } from "./seed";
 import type {
   Agent,
   AgentRole,
+  CommitGroup,
+  CommitPlan,
+  CommitRules,
   DiffLine,
   FileChange,
+  GroupCommit,
   Hunk,
   HunkState,
+  Link,
+  LinkSource,
+  Problem,
   Space,
   StackItem,
 } from "./types";
@@ -62,6 +71,8 @@ export interface CommitResult {
   branch: string;
   /** False when the commits stay local (the real backend does not push yet). */
   pushed?: boolean;
+  /** One entry per commit made by `commitGroups`. */
+  commits?: GroupCommit[];
 }
 
 export interface BackendEvent {
@@ -113,6 +124,25 @@ export interface Backend {
   runGate(spaceId: string, onCheck?: (index: number, check: GateCheck) => void): Promise<GateCheck[]>;
   /** One commit per repo. Fails when the gate fails and no override reason is given. */
   commit(spaceId: string, message: string, overrideReason?: string): Promise<CommitResult>;
+
+  /** Propose commits for the staged hunks: grouped, typed, scoped, with ticket footers. */
+  commitPlan(spaceId: string): Promise<CommitPlan>;
+  validateMessage(message: string, rules: CommitRules, conventional: boolean): Promise<Problem[]>;
+  /** Commit the groups in order. Fails when the gate fails and no override reason is given. */
+  commitGroups(
+    spaceId: string,
+    groups: CommitGroup[],
+    conventional: boolean,
+    overrideReason?: string,
+  ): Promise<CommitResult>;
+
+  /** Stored, detected and repo links of the space. */
+  links(spaceId: string): Promise<Link[]>;
+  addLink(spaceId: string, url: string, title?: string, source?: LinkSource): Promise<Link>;
+  /** Only links the user added can be removed. */
+  removeLink(spaceId: string, linkId: string): Promise<void>;
+  /** Open in the default browser. Only http and https. */
+  openUrl(url: string): Promise<void>;
 
   onChange(listener: (e: BackendEvent) => void): Unsubscribe;
 }
@@ -174,6 +204,7 @@ interface MSpace {
   tests: { pass: number; total: number };
   baseStaged: FileRef[];
   commitMsg: string;
+  links: Link[];
   question: SeedSpace["question"];
   notes: Map<string, { note: ReviewNote; fix: string[] }>;
 }
@@ -188,6 +219,8 @@ export interface CommitRecord {
   message: string;
   repos: string[];
   override?: string;
+  /** The composer group this commit came from. */
+  group?: string;
 }
 
 const PALETTE = ["#E8A14A", "#7DB8F5", "#C9A0F0", "#4ADE80", "#F0A3C0", "#9BD0C8"];
@@ -198,11 +231,15 @@ export class MockBackend implements Backend {
   private speed: number;
   /** Commits made so far, for tests and for the curious. */
   readonly commits: CommitRecord[] = [];
+  /** URLs passed to `openUrl`. */
+  readonly opened: string[] = [];
 
   constructor(opts: MockOptions = {}) {
     this.speed = opts.speed ?? 1;
+    const links = seedLinks();
     for (const s of seedSpaces()) {
       this.spaces.set(s.space.id, {
+        links: links[s.space.id] ?? [],
         space: s.space,
         files: s.files.map((f) => ({ ...f, mine: new Set<number>() })),
         hunks: s.hunks.map((h) => ({ ...h, section: h.section ?? "", state: "pending" as const })),
@@ -394,6 +431,7 @@ export class MockBackend implements Backend {
       stack: [{ name: "mise", version: null, source: "mise.toml", kind: "runtime", state: "starting" }],
       tests: { pass: 0, total: 0 },
       baseStaged: [],
+      links: [],
       commitMsg: `feat: ${name.toLowerCase()}`,
       question: null,
       notes: new Map(),
@@ -695,6 +733,112 @@ export class MockBackend implements Backend {
     return { repos, branch: s.space.branch };
   }
 
+  // -- commit composer ------------------------------------------------------
+
+  /** Staged hunks: accepted proposals, plus a stand in hunk for each file that was staged before. */
+  private stagedHunks(s: MSpace): Hunk[] {
+    const accepted = s.hunks.filter((h) => h.state === "staged").map((h) => this.toHunk(s, h));
+    const early = s.baseStaged
+      .filter((f) => !accepted.some((h) => h.repo === f.repo && h.path === f.path))
+      .map((f): Hunk => {
+        const lines = (s.files.find((x) => x.repo === f.repo && x.path === f.path)?.lines ?? []).slice(0, 1);
+        return {
+          id: `base:${f.repo}/${f.path}`,
+          repo: f.repo,
+          path: f.path,
+          oldStart: 1,
+          oldLines: lines.length,
+          newStart: 1,
+          newLines: lines.length,
+          section: "",
+          lines: lines.map((text, i) => ({ kind: "add" as const, text, old: null, new: i + 1 })),
+          origin: { type: "you" },
+          state: "staged",
+        };
+      });
+    return [...accepted, ...early];
+  }
+
+  async commitPlan(spaceId: string): Promise<CommitPlan> {
+    const s = this.sp(spaceId);
+    const keys = s.links.filter((l) => l.kind === "issue" && l.key).map((l) => l.key as string);
+    return planFromHunks(this.stagedHunks(s), { repos: s.space.repos.map((r) => r.name), keys });
+  }
+
+  async validateMessage(message: string, rules: CommitRules, conventional: boolean): Promise<Problem[]> {
+    return validateFor(message, rules, conventional);
+  }
+
+  async commitGroups(
+    spaceId: string,
+    groups: CommitGroup[],
+    conventional: boolean,
+    overrideReason?: string,
+  ): Promise<CommitResult> {
+    const s = this.sp(spaceId);
+    if (!groups.length) throw new Error("Nothing to commit");
+    const staged = this.stagedHunks(s);
+    const known = new Set(staged.map((h) => h.id));
+    for (const g of groups) {
+      if (!g.subject.trim()) throw new Error(`Commit ${g.id} has no subject`);
+      if (!g.hunks.length) throw new Error(`Commit ${g.id} has no hunks`);
+      for (const id of g.hunks) if (!known.has(id)) throw new Error(`Hunk not found: ${id}`);
+    }
+    const passes = this.gateChecks(s).every((c) => c.pass);
+    const reason = (overrideReason ?? "").trim();
+    if (!passes && reason.length <= 3) {
+      throw new Error("Blocked by the commit gate: fix the notes or give a reason to override");
+    }
+    const taken = new Set(groups.flatMap((g) => g.hunks));
+    s.hunks = s.hunks.filter((h) => !(h.state !== "pending" && taken.has(h.id)));
+    s.baseStaged = s.baseStaged.filter((f) => !taken.has(`base:${f.repo}/${f.path}`));
+    const commits: GroupCommit[] = [];
+    for (const g of groups) {
+      const footers = reason && !passes ? [...(g.footers ?? []), `Vela-Override: ${reason}`] : g.footers;
+      this.commits.push({
+        spaceId,
+        message: composeMessage({ ...g, footers }, conventional),
+        repos: [g.repo],
+        override: passes ? undefined : reason,
+        group: g.id,
+      });
+      commits.push({ group: g.id, repo: g.repo, sha: (this.commits.length * 4099).toString(16).padStart(7, "0") });
+    }
+    this.emit(spaceId);
+    return { repos: uniq(groups.map((g) => g.repo)), branch: s.space.branch, commits };
+  }
+
+  // -- links ----------------------------------------------------------------
+
+  async links(spaceId: string): Promise<Link[]> {
+    return structuredClone(this.sp(spaceId).links);
+  }
+
+  async addLink(spaceId: string, url: string, title?: string, source: LinkSource = "manual"): Promise<Link> {
+    const s = this.sp(spaceId);
+    if (!isHttpUrl(url)) throw new Error(`Not an http(s) URL: ${url.trim()}`);
+    const link = makeLink(url, title, source === "paste" ? "paste" : "manual");
+    const dup = s.links.find((l) => sameLink(l, link));
+    if (dup) return structuredClone(dup);
+    s.links.push(link);
+    this.emit(spaceId);
+    return structuredClone(link);
+  }
+
+  async removeLink(spaceId: string, linkId: string): Promise<void> {
+    const s = this.sp(spaceId);
+    const l = s.links.find((x) => x.id === linkId);
+    if (!l) throw new Error(`Link not found: ${linkId}`);
+    if (!removable(l)) throw new Error("Only links you added can be removed");
+    s.links = s.links.filter((x) => x.id !== linkId);
+    this.emit(spaceId);
+  }
+
+  async openUrl(url: string): Promise<void> {
+    if (!isHttpUrl(url)) throw new Error(`Only http and https links can be opened: ${url.trim()}`);
+    this.opened.push(url.trim());
+  }
+
   onChange(listener: (e: BackendEvent) => void): Unsubscribe {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -819,6 +963,38 @@ export class TauriBackend implements Backend {
   async commit(spaceId: string, message: string, overrideReason?: string): Promise<CommitResult> {
     const r = await call<CommitResult>("commit", { spaceId, message, overrideReason: overrideReason ?? null });
     return { ...r, pushed: false };
+  }
+  commitPlan(spaceId: string) {
+    return call<CommitPlan>("commit_plan", { spaceId });
+  }
+  validateMessage(message: string, rules: CommitRules, conventional: boolean) {
+    return call<Problem[]>("validate_message", { message, rules, conventional });
+  }
+  async commitGroups(
+    spaceId: string,
+    groups: CommitGroup[],
+    conventional: boolean,
+    overrideReason?: string,
+  ): Promise<CommitResult> {
+    const r = await call<CommitResult>("commit_groups", {
+      spaceId,
+      groups,
+      conventional,
+      overrideReason: overrideReason ?? null,
+    });
+    return { ...r, pushed: false };
+  }
+  links(spaceId: string) {
+    return call<Link[]>("links", { spaceId });
+  }
+  addLink(spaceId: string, url: string, title?: string, source?: LinkSource) {
+    return call<Link>("add_link", { spaceId, url, title: title ?? null, source: source ?? null });
+  }
+  removeLink(spaceId: string, linkId: string) {
+    return call<void>("remove_link", { spaceId, linkId });
+  }
+  openUrl(url: string) {
+    return call<void>("open_url", { url });
   }
   onChange(listener: (e: BackendEvent) => void): Unsubscribe {
     let off: (() => void) | null = null;

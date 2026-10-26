@@ -1,7 +1,8 @@
 import type { Action } from "./keymap";
+import type { Link } from "./types";
 
 export interface PaletteItem {
-  sec: "Actions" | "Spaces" | "Files";
+  sec: "Actions" | "Links" | "Spaces" | "Files";
   title: string;
   sub?: string;
   /** Color of the dot (a space color). */
@@ -14,6 +15,8 @@ export interface PaletteItem {
 export interface PaletteSource {
   /** Title of the current "Up next" island. */
   upNextTitle: string;
+  /** Links of the current space; the ones with a URL can be opened from here. */
+  links?: Link[];
   spaces: {
     name: string;
     branch: string;
@@ -30,6 +33,7 @@ export function buildPaletteItems(src: PaletteSource): PaletteItem[] {
     ["Go to agents", "3", { type: "view", view: "agents" }],
     ["Ask an agent", "@", { type: "open-composer" }],
     ["Commit and push", "C", { type: "open-commit" }],
+    ["Links of this space", "L", { type: "open-links" }],
     ["New space", "", { type: "open-newspace" }],
     ["Open this space in its own window", "W", { type: "toggle-window" }],
     ["Toggle changes", "B", { type: "toggle-changes" }],
@@ -37,6 +41,15 @@ export function buildPaletteItems(src: PaletteSource): PaletteItem[] {
     ["All shortcuts", "?", { type: "open-help" }],
   ];
   const items: PaletteItem[] = actions.map(([title, key, action]) => ({ sec: "Actions", title, key, action }));
+  for (const l of src.links ?? []) {
+    if (!l.url) continue;
+    items.push({
+      sec: "Links",
+      title: `Open ${l.key && l.title === l.key ? l.key : l.title}`,
+      sub: l.key && l.title !== l.key ? l.key : undefined,
+      action: { type: "open-link", id: l.id },
+    });
+  }
   src.spaces.forEach((s, i) =>
     items.push({
       sec: "Spaces",

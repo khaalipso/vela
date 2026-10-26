@@ -9,7 +9,7 @@
     code: [["Click", "type anywhere"], ["J K", "proposals"], ["Y N", "accept, reject"], ["B", "changes"]],
     agents: [["@", "ask"], ["Y N", "answer"]],
   };
-  const hints = $derived([...HINTS[app.view], ["C", "commit"], ["Ctrl K", "everything"]]);
+  const hints = $derived([...HINTS[app.view], ["C", "commit"], ["L", "links"], ["Ctrl K", "everything"]]);
   const stack = $derived(app.sd.stack);
   const starting = $derived(stack.filter((s) => s.state === "starting").length);
   const label = (s: { name: string; version: string | null }) => (s.version ? `${s.name} ${s.version}` : s.name);

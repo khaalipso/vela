@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildPaletteItems, filterPalette, type PaletteSource } from "./palette";
+import type { Link } from "./types";
 
 const src: PaletteSource = {
   upNextTitle: "Review 3 proposals",
@@ -27,7 +28,7 @@ const titles = (q: string) => filterPalette(items, q).map((i) => i.title);
 describe("command bar", () => {
   it("lists actions, then spaces, then files", () => {
     expect(items.map((i) => i.sec)).toEqual([
-      ...Array(11).fill("Actions"),
+      ...Array(12).fill("Actions"),
       "Spaces",
       "Spaces",
       "Files",
@@ -71,5 +72,47 @@ describe("command bar", () => {
   it("file items open the file in their space", () => {
     const f = filterPalette(items, "compose")[0];
     expect(f.action).toEqual({ type: "open-file", space: 1, file: "infra/compose.yml" });
+  });
+});
+
+describe("links in the command bar", () => {
+  const link = (o: Partial<Link>): Link => ({
+    id: "l1",
+    kind: "issue",
+    provider: "jira",
+    url: "https://acme.atlassian.net/browse/PAY-412",
+    title: "PAY-412",
+    key: "PAY-412",
+    source: "branch",
+    ...o,
+  });
+  const withLinks = buildPaletteItems({
+    ...src,
+    links: [
+      link({}),
+      link({ id: "l2", kind: "environment", provider: "url", url: "https://staging.acme.dev/x", title: "Staging acme.dev", key: null }),
+      link({ id: "l3", url: "", title: "ENG-1 (no tracker URL configured)", key: "ENG-1" }),
+      link({ id: "l4", kind: "pullRequest", provider: "github", url: "https://github.com/a/b/pull/3", title: "Add refunds", key: "a/b#3" }),
+    ],
+  });
+
+  it("lists the links with a URL between the actions and the spaces", () => {
+    const sec = withLinks.map((i) => i.sec);
+    expect(sec.indexOf("Links")).toBe(12);
+    expect(sec.lastIndexOf("Links")).toBe(14);
+    const l = withLinks.filter((i) => i.sec === "Links");
+    expect(l.map((x) => x.title)).toEqual(["Open PAY-412", "Open Staging acme.dev", "Open Add refunds"]);
+    expect(l[0].action).toEqual({ type: "open-link", id: "l1" });
+    expect(l[2].sub).toBe("a/b#3");
+  });
+
+  it("finds a link by key, by word or by its kind of place", () => {
+    expect(filterPalette(withLinks, "PAY-412").map((i) => i.title)).toEqual(["Open PAY-412"]);
+    expect(filterPalette(withLinks, "staging").map((i) => i.title)).toEqual(["Open Staging acme.dev"]);
+    expect(filterPalette(withLinks, "links")[0].action).toEqual({ type: "open-links" });
+  });
+
+  it("has no links section without links", () => {
+    expect(items.some((i) => i.sec === "Links")).toBe(false);
   });
 });
