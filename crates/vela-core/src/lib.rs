@@ -6,9 +6,11 @@
 use std::path::{Path, PathBuf};
 
 pub mod commit;
+pub mod commitplan;
 pub mod diff;
 pub mod error;
 pub mod git;
+pub mod links;
 pub mod model;
 pub mod paths;
 pub mod space;

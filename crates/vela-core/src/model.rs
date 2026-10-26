@@ -24,6 +24,10 @@ pub struct Space {
     pub window: Option<u32>,
     #[serde(default)]
     pub archived: bool,
+    /// Links added by hand or pasted. Detected and repo links are computed by
+    /// [`crate::links::list_links`], never stored here.
+    #[serde(default)]
+    pub links: Vec<Link>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,4 +199,148 @@ pub enum UpNext {
     Review { count: u32 },
     Commit { repos: u32, files: u32 },
     Nothing,
+}
+
+// ---------------------------------------------------------------------------
+// Links: the context of a space
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LinkKind {
+    Issue,
+    PullRequest,
+    Doc,
+    Design,
+    Error,
+    Dashboard,
+    Chat,
+    Environment,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Provider {
+    Jira,
+    Linear,
+    Github,
+    Gitlab,
+    Sentry,
+    Figma,
+    Notion,
+    Confluence,
+    GoogleDocs,
+    Grafana,
+    Datadog,
+    Slack,
+    Url,
+}
+
+/// Where a link came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LinkSource {
+    /// Typed in the links sheet.
+    Manual,
+    /// Issue key found in the branch name.
+    Branch,
+    /// Issue key or `#123` found in a commit subject.
+    Commit,
+    /// A URL pasted in the app.
+    Paste,
+    /// Listed in `<repo>/.vela/links.toml`.
+    Repo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Link {
+    /// Stable id: hash of the url, or of the key when there is no url.
+    pub id: String,
+    pub kind: LinkKind,
+    pub provider: Provider,
+    /// Empty for an issue key found without a configured tracker URL.
+    pub url: String,
+    pub title: String,
+    /// Issue key such as "PAY-412" or "acme/api#12".
+    #[serde(default)]
+    pub key: Option<String>,
+    pub source: LinkSource,
+    /// Summary fetched through MCP. TODO(M2).
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Commit composer
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CommitType {
+    Feat,
+    Fix,
+    Refactor,
+    Perf,
+    Test,
+    Docs,
+    Style,
+    Build,
+    Ci,
+    Chore,
+    Revert,
+}
+
+/// What a repo asks of its commit messages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitRules {
+    /// Allowed types (`type-enum`).
+    pub types: Vec<String>,
+    /// Allowed scopes (`scope-enum`); empty means any scope.
+    pub scopes: Vec<String>,
+    /// `header-max-length`.
+    pub header_max: u32,
+}
+
+/// One commit proposed by the composer: the hunks it takes and its message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitGroup {
+    pub id: String,
+    pub repo: String,
+    pub kind: CommitType,
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(default)]
+    pub breaking: bool,
+    #[serde(default)]
+    pub breaking_reason: Option<String>,
+    pub subject: String,
+    #[serde(default)]
+    pub body: String,
+    /// Trailer lines such as `Refs: PAY-412`.
+    #[serde(default)]
+    pub footers: Vec<String>,
+    /// Ids of the staged hunks this commit takes.
+    pub hunks: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitPlan {
+    /// Whether the repo uses conventional commits (history or commitlint).
+    pub conventional: bool,
+    pub rules: CommitRules,
+    pub groups: Vec<CommitGroup>,
+}
+
+/// A problem found by `commitplan::validate`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Problem {
+    /// "header", "type", "scope", "subject" or "body".
+    pub field: String,
+    pub message: String,
 }

@@ -160,6 +160,7 @@ pub fn create<P: AsRef<Path>>(
         created_at: rfc3339(SystemTime::now()),
         window: None,
         archived: false,
+        links: Vec::new(),
     };
     if let Err(e) = store::save(vela, &space) {
         rollback(&created, &root);

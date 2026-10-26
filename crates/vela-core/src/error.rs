@@ -36,4 +36,8 @@ pub enum Error {
     NoHome,
     #[error("cannot parse git output: {0}")]
     Parse(String),
+    #[error("{0}")]
+    Invalid(String),
+    #[error("link not found: {0}")]
+    LinkNotFound(String),
 }

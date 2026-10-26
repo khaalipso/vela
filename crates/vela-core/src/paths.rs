@@ -58,3 +58,23 @@ pub fn agent_worktree(home: &Path, space: &str, agent: &str, repo: &str) -> Path
         .join(agent)
         .join(repo)
 }
+
+/// Pure resolution of the global config directory: `$XDG_CONFIG_HOME/vela`, else `~/.config/vela`.
+pub fn resolve_config_dir(
+    xdg_config_home: Option<OsString>,
+    home: Option<OsString>,
+) -> Option<PathBuf> {
+    let non_empty = |v: Option<OsString>| v.filter(|s| !s.is_empty());
+    if let Some(x) = non_empty(xdg_config_home) {
+        return Some(PathBuf::from(x).join("vela"));
+    }
+    non_empty(home).map(|h| PathBuf::from(h).join(".config/vela"))
+}
+
+/// Global config directory from the environment.
+pub fn config_dir_from_env() -> Option<PathBuf> {
+    resolve_config_dir(
+        std::env::var_os("XDG_CONFIG_HOME"),
+        std::env::var_os("HOME"),
+    )
+}
