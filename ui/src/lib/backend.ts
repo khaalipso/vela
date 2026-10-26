@@ -1,0 +1,799 @@
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { fileKey, toolForRole, toolLabel, uniq } from "./format";
+import { REPOS, seedSpaces, type SeedSpace } from "./seed";
+import type {
+  Agent,
+  AgentRole,
+  DiffLine,
+  FileChange,
+  Hunk,
+  HunkState,
+  Space,
+  StackItem,
+} from "./types";
+
+// ---------------------------------------------------------------------------
+// UI-side types that are not part of model.rs
+// ---------------------------------------------------------------------------
+
+export interface FileRef {
+  repo: string;
+  path: string;
+}
+
+/** File content. For big files the mock only holds a snippet that starts at `firstLine`. */
+export interface FileContent extends FileRef {
+  content: string;
+  /** Number of the first line of `content` in the real file (1 for a whole file). */
+  firstLine: number;
+  language: "typescript" | "javascript" | "rust" | "yaml" | "sql" | "markdown" | "plain";
+}
+
+/** A blocking note from the reviewer, attached to a hunk. */
+export interface ReviewNote {
+  hunkId: string;
+  /** e.g. "Reviewer · Codex". */
+  by: string;
+  text: string;
+  resolved: boolean;
+  /** The author is working on the fix. */
+  busy: boolean;
+}
+
+/** A question an agent is waiting on. */
+export interface AgentQuestion {
+  agentId: string;
+  role: AgentRole;
+  tool: string;
+  text: string;
+  yes: string;
+  no: string;
+}
+
+export interface GateCheck {
+  name: string;
+  detail: string;
+  pass: boolean;
+}
+
+export interface CommitResult {
+  repos: string[];
+  branch: string;
+}
+
+export interface BackendEvent {
+  spaceId: string;
+  /** "file" when the content of a file was written by the user, "state" otherwise. */
+  kind: "file" | "state";
+  /** Message to show in a toast, if any. */
+  toast?: string;
+}
+
+export type Unsubscribe = () => void;
+
+export interface Backend {
+  listRepos(): Promise<string[]>;
+  listSpaces(): Promise<Space[]>;
+  createSpace(name: string, repos: string[]): Promise<Space>;
+  /** Move a space to another window, or back to the main one with null. */
+  setWindow(spaceId: string, window: number | null): Promise<void>;
+
+  status(spaceId: string): Promise<FileChange[]>;
+  /** Agent proposals (any state) and the lines you typed (origin "you"). */
+  hunks(spaceId: string): Promise<Hunk[]>;
+  /** One-line reason each agent gives for its proposals, by hunk id. Not in model.rs yet. */
+  reasons(spaceId: string): Promise<Record<string, string>>;
+  /** Accept: apply the proposal to your worktree and stage it. */
+  stageHunk(spaceId: string, hunkId: string): Promise<Hunk>;
+  /** Undo an accepted or rejected hunk: back to pending. */
+  unstageHunk(spaceId: string, hunkId: string): Promise<Hunk>;
+  rejectHunk(spaceId: string, hunkId: string): Promise<Hunk>;
+  /** Accept, then the caller opens the lines in the editor. */
+  editHunk(spaceId: string, hunkId: string): Promise<Hunk>;
+
+  listFiles(spaceId: string): Promise<FileRef[]>;
+  readFile(spaceId: string, repo: string, path: string): Promise<FileContent>;
+  writeFile(spaceId: string, repo: string, path: string, content: string): Promise<void>;
+
+  agents(spaceId: string): Promise<Agent[]>;
+  askAgent(spaceId: string, role: AgentRole, prompt: string): Promise<Agent>;
+  question(spaceId: string): Promise<AgentQuestion | null>;
+  answerAgent(spaceId: string, yes: boolean): Promise<void>;
+  notes(spaceId: string): Promise<ReviewNote[]>;
+  /** Ask the author of the hunk to fix the reviewer's blocking note. */
+  askFix(spaceId: string, hunkId: string): Promise<void>;
+
+  stack(spaceId: string): Promise<StackItem[]>;
+
+  draftCommit(spaceId: string): Promise<string>;
+  /** Runs the gate on the staged diff. `onCheck` fires as each check finishes. */
+  runGate(spaceId: string, onCheck?: (index: number, check: GateCheck) => void): Promise<GateCheck[]>;
+  /** One commit per repo. Fails when the gate fails and no override reason is given. */
+  commit(spaceId: string, message: string, overrideReason?: string): Promise<CommitResult>;
+
+  onChange(listener: (e: BackendEvent) => void): Unsubscribe;
+}
+
+export function languageOf(path: string): FileContent["language"] {
+  const ext = path.split(".").pop() ?? "";
+  switch (ext) {
+    case "ts":
+    case "tsx":
+      return "typescript";
+    case "js":
+    case "jsx":
+    case "mjs":
+      return "javascript";
+    case "rs":
+      return "rust";
+    case "yml":
+    case "yaml":
+      return "yaml";
+    case "sql":
+      return "sql";
+    case "md":
+      return "markdown";
+    default:
+      return "plain";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Mock backend
+// ---------------------------------------------------------------------------
+
+interface MFile extends FileRef {
+  firstLine: number;
+  lines: string[];
+  /** Indices of the lines you typed. */
+  mine: Set<number>;
+}
+
+interface MHunk {
+  id: string;
+  repo: string;
+  path: string;
+  at: number;
+  del: string[];
+  add: string[];
+  agent: string;
+  why: string;
+  section: string;
+  state: HunkState;
+}
+
+interface MSpace {
+  space: Space;
+  files: MFile[];
+  hunks: MHunk[];
+  agents: Agent[];
+  stack: StackItem[];
+  tests: { pass: number; total: number };
+  baseStaged: FileRef[];
+  commitMsg: string;
+  question: SeedSpace["question"];
+  notes: Map<string, { note: ReviewNote; fix: string[] }>;
+}
+
+export interface MockOptions {
+  /** Multiplier for the simulated delays. 1 matches the prototype, 0 makes them instant. */
+  speed?: number;
+}
+
+export interface CommitRecord {
+  spaceId: string;
+  message: string;
+  repos: string[];
+  override?: string;
+}
+
+const PALETTE = ["#E8A14A", "#7DB8F5", "#C9A0F0", "#4ADE80", "#F0A3C0", "#9BD0C8"];
+
+export class MockBackend implements Backend {
+  private spaces = new Map<string, MSpace>();
+  private listeners = new Set<(e: BackendEvent) => void>();
+  private speed: number;
+  /** Commits made so far, for tests and for the curious. */
+  readonly commits: CommitRecord[] = [];
+
+  constructor(opts: MockOptions = {}) {
+    this.speed = opts.speed ?? 1;
+    for (const s of seedSpaces()) {
+      this.spaces.set(s.space.id, {
+        space: s.space,
+        files: s.files.map((f) => ({ ...f, mine: new Set<number>() })),
+        hunks: s.hunks.map((h) => ({ ...h, section: h.section ?? "", state: "pending" as const })),
+        agents: s.agents,
+        stack: s.stack,
+        tests: s.tests,
+        baseStaged: s.baseStaged,
+        commitMsg: s.commitMsg,
+        question: s.question,
+        notes: new Map(
+          s.notes.map((n) => [
+            n.hunkId,
+            { note: { hunkId: n.hunkId, by: n.by, text: n.text, resolved: false, busy: false }, fix: n.fix },
+          ]),
+        ),
+      });
+    }
+  }
+
+  // -- helpers --------------------------------------------------------------
+
+  private sp(id: string): MSpace {
+    const s = this.spaces.get(id);
+    if (!s) throw new Error(`Unknown space: ${id}`);
+    return s;
+  }
+
+  private file(s: MSpace, repo: string, path: string): MFile {
+    const f = s.files.find((x) => x.repo === repo && x.path === path);
+    if (!f) throw new Error(`Unknown file: ${repo}/${path}`);
+    return f;
+  }
+
+  private emit(spaceId: string, kind: BackendEvent["kind"] = "state", toast?: string) {
+    for (const l of [...this.listeners]) l({ spaceId, kind, toast });
+  }
+
+  private later(ms: number, fn: () => void) {
+    setTimeout(fn, ms * this.speed);
+  }
+
+  private find(s: MSpace, hunkId: string): MHunk {
+    const h = s.hunks.find((x) => x.id === hunkId);
+    if (!h) throw new Error(`Unknown hunk: ${hunkId}`);
+    return h;
+  }
+
+  private toHunk(s: MSpace, h: MHunk): Hunk {
+    const f = this.file(s, h.repo, h.path);
+    const n = f.firstLine + h.at;
+    const lines: DiffLine[] = [
+      ...h.del.map((text, i) => ({ kind: "del" as const, text, old: n + i, new: null })),
+      ...h.add.map((text, i) => ({ kind: "add" as const, text, old: null, new: n + i })),
+    ];
+    return {
+      id: h.id,
+      repo: h.repo,
+      path: h.path,
+      oldStart: n,
+      oldLines: h.del.length,
+      newStart: n,
+      newLines: h.add.length,
+      section: h.section,
+      lines,
+      origin: { type: "agent", agent: h.agent },
+      state: h.state,
+    };
+  }
+
+  /** Lines you typed, grouped in runs. */
+  private youHunks(s: MSpace): Hunk[] {
+    const out: Hunk[] = [];
+    for (const f of s.files) {
+      const idx = [...f.mine].sort((a, b) => a - b);
+      let i = 0;
+      while (i < idx.length) {
+        let j = i;
+        while (j + 1 < idx.length && idx[j + 1] === idx[j] + 1) j++;
+        const start = idx[i];
+        const lines: DiffLine[] = [];
+        for (let k = i; k <= j; k++) {
+          lines.push({ kind: "add", text: f.lines[idx[k]] ?? "", old: null, new: f.firstLine + idx[k] });
+        }
+        out.push({
+          id: `you:${fileKey(f.repo, f.path)}#${start}`,
+          repo: f.repo,
+          path: f.path,
+          oldStart: f.firstLine + start,
+          oldLines: 0,
+          newStart: f.firstLine + start,
+          newLines: lines.length,
+          section: "",
+          lines,
+          origin: { type: "you" },
+          state: "pending",
+        });
+        i = j + 1;
+      }
+    }
+    return out;
+  }
+
+  /** Replace `removed` lines at `start` by `inserted` lines in the bookkeeping (marks and other hunks). */
+  private remap(s: MSpace, f: MFile, start: number, removed: number, inserted: number, except?: string) {
+    const delta = inserted - removed;
+    const next = new Set<number>();
+    for (const i of f.mine) {
+      if (i < start) next.add(i);
+      else if (i >= start + removed) next.add(i + delta);
+    }
+    f.mine = next;
+    for (const o of s.hunks) {
+      if (o.id !== except && o.repo === f.repo && o.path === f.path && o.at > start && o.at >= start + removed) {
+        o.at += delta;
+      }
+    }
+  }
+
+  private apply(s: MSpace, h: MHunk) {
+    const f = this.file(s, h.repo, h.path);
+    f.lines.splice(h.at, h.del.length, ...h.add);
+    this.remap(s, f, h.at, h.del.length, h.add.length, h.id);
+  }
+
+  private unapply(s: MSpace, h: MHunk) {
+    const f = this.file(s, h.repo, h.path);
+    f.lines.splice(h.at, h.add.length, ...h.del);
+    this.remap(s, f, h.at, h.add.length, h.del.length, h.id);
+  }
+
+  private stagedFiles(s: MSpace): FileRef[] {
+    const m = new Map<string, FileRef>();
+    for (const f of s.baseStaged) m.set(fileKey(f.repo, f.path), f);
+    for (const h of s.hunks) if (h.state === "staged") m.set(fileKey(h.repo, h.path), { repo: h.repo, path: h.path });
+    return [...m.values()];
+  }
+
+  private gateChecks(s: MSpace): GateCheck[] {
+    const blocking = [...s.notes.values()].filter(
+      (n) => !n.note.resolved && s.hunks.find((h) => h.id === n.note.hunkId)?.state !== "rejected",
+    ).length;
+    const t = s.tests;
+    return [
+      { name: "Reviewer", detail: blocking ? `${blocking} blocking` : "no blocking notes", pass: !blocking },
+      { name: "Tests touched by the diff", detail: `${t.pass} of ${t.total}`, pass: t.pass === t.total },
+      { name: "Lint and types", detail: "clean", pass: true },
+      { name: "Secrets and .env", detail: "clean", pass: true },
+      { name: "Repo rules", detail: "AGENTS.md", pass: true },
+    ];
+  }
+
+  // -- spaces ---------------------------------------------------------------
+
+  async listRepos(): Promise<string[]> {
+    return [...REPOS];
+  }
+
+  async listSpaces(): Promise<Space[]> {
+    return structuredClone([...this.spaces.values()].map((s) => s.space));
+  }
+
+  async createSpace(name: string, repos: string[]): Promise<Space> {
+    const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "task";
+    let slug = base;
+    for (let n = 2; this.spaces.has(slug); n++) slug = `${base}-${n}`;
+    const space: Space = {
+      id: slug,
+      name,
+      color: PALETTE[this.spaces.size % PALETTE.length],
+      branch: `feat/${slug}`,
+      repos: repos.map((r) => ({ name: r, source: `~/Work/${r}`, worktree: `wt/${slug}`, base: "main" })),
+      createdAt: new Date().toISOString(),
+      window: null,
+    };
+    const planner: Agent = {
+      id: `${slug}-planner`,
+      space: slug,
+      role: "planner",
+      tool: "claude",
+      worktrees: [],
+      status: "working",
+      summary: "Reading the repos to split the task",
+    };
+    const s: MSpace = {
+      space,
+      files: [{ repo: repos[0], path: "README.md", firstLine: 1, lines: [`# ${repos[0]}`, ""], mine: new Set() }],
+      hunks: [],
+      agents: [planner],
+      stack: [{ name: "mise", version: null, source: "mise.toml", kind: "runtime", state: "starting" }],
+      tests: { pass: 0, total: 0 },
+      baseStaged: [],
+      commitMsg: `feat: ${name.toLowerCase()}`,
+      question: null,
+      notes: new Map(),
+    };
+    this.spaces.set(slug, s);
+    this.later(1800, () => {
+      s.stack = [{ name: "node", version: "22.11", source: "mise.toml", kind: "runtime", state: "ok" }];
+      planner.status = "done";
+      planner.summary = "Plan ready: 3 steps. Ask the Developer to start with @";
+      this.emit(slug);
+    });
+    this.emit(slug);
+    return structuredClone(space);
+  }
+
+  async setWindow(spaceId: string, window: number | null): Promise<void> {
+    this.sp(spaceId).space.window = window;
+    this.emit(spaceId);
+  }
+
+  // -- status and hunks -----------------------------------------------------
+
+  async status(spaceId: string): Promise<FileChange[]> {
+    const s = this.sp(spaceId);
+    const m = new Map<string, FileChange>();
+    const get = (r: FileRef) => {
+      const k = fileKey(r.repo, r.path);
+      let c = m.get(k);
+      if (!c) m.set(k, (c = { repo: r.repo, path: r.path, staged: null, unstaged: null }));
+      return c;
+    };
+    for (const f of this.stagedFiles(s)) get(f).staged = "modified";
+    for (const f of s.files) if (f.mine.size) get(f).unstaged = "modified";
+    return [...m.values()];
+  }
+
+  async hunks(spaceId: string): Promise<Hunk[]> {
+    const s = this.sp(spaceId);
+    return [...s.hunks.map((h) => this.toHunk(s, h)), ...this.youHunks(s)];
+  }
+
+  async reasons(spaceId: string): Promise<Record<string, string>> {
+    return Object.fromEntries(this.sp(spaceId).hunks.map((h) => [h.id, h.why]));
+  }
+
+  async stageHunk(spaceId: string, hunkId: string): Promise<Hunk> {
+    const s = this.sp(spaceId);
+    const h = this.find(s, hunkId);
+    if (h.state === "pending") {
+      this.apply(s, h);
+      h.state = "staged";
+      this.emit(spaceId);
+    }
+    return this.toHunk(s, h);
+  }
+
+  async editHunk(spaceId: string, hunkId: string): Promise<Hunk> {
+    return this.stageHunk(spaceId, hunkId);
+  }
+
+  async rejectHunk(spaceId: string, hunkId: string): Promise<Hunk> {
+    const s = this.sp(spaceId);
+    const h = this.find(s, hunkId);
+    if (h.state === "pending") {
+      h.state = "rejected";
+      this.emit(spaceId);
+    }
+    return this.toHunk(s, h);
+  }
+
+  async unstageHunk(spaceId: string, hunkId: string): Promise<Hunk> {
+    const s = this.sp(spaceId);
+    const h = this.find(s, hunkId);
+    if (h.state === "staged") this.unapply(s, h);
+    if (h.state !== "pending") {
+      h.state = "pending";
+      this.emit(spaceId);
+    }
+    return this.toHunk(s, h);
+  }
+
+  // -- files ----------------------------------------------------------------
+
+  async listFiles(spaceId: string): Promise<FileRef[]> {
+    return this.sp(spaceId).files.map((f) => ({ repo: f.repo, path: f.path }));
+  }
+
+  async readFile(spaceId: string, repo: string, path: string): Promise<FileContent> {
+    const f = this.file(this.sp(spaceId), repo, path);
+    return { repo, path, content: f.lines.join("\n"), firstLine: f.firstLine, language: languageOf(path) };
+  }
+
+  async writeFile(spaceId: string, repo: string, path: string, content: string): Promise<void> {
+    const s = this.sp(spaceId);
+    const f = this.file(s, repo, path);
+    const a = f.lines;
+    const b = content.split("\n");
+    let p = 0;
+    while (p < a.length && p < b.length && a[p] === b[p]) p++;
+    let q = 0;
+    while (q < a.length - p && q < b.length - p && a[a.length - 1 - q] === b[b.length - 1 - q]) q++;
+    const removed = a.length - q - p;
+    const inserted = b.length - q - p;
+    if (removed === 0 && inserted === 0) return;
+    f.lines = b;
+    this.remap(s, f, p, removed, inserted);
+    for (let i = p; i < p + inserted; i++) f.mine.add(i);
+    this.emit(spaceId, "file");
+  }
+
+  // -- agents ---------------------------------------------------------------
+
+  async agents(spaceId: string): Promise<Agent[]> {
+    return structuredClone(this.sp(spaceId).agents);
+  }
+
+  async stack(spaceId: string): Promise<StackItem[]> {
+    return structuredClone(this.sp(spaceId).stack);
+  }
+
+  async question(spaceId: string): Promise<AgentQuestion | null> {
+    const s = this.sp(spaceId);
+    const q = s.question;
+    if (!q) return null;
+    const a = s.agents.find((x) => x.id === q.agentId);
+    return { agentId: q.agentId, role: a?.role ?? "developer", tool: a?.tool ?? "claude", text: q.text, yes: q.yes, no: q.no };
+  }
+
+  async notes(spaceId: string): Promise<ReviewNote[]> {
+    return structuredClone([...this.sp(spaceId).notes.values()].map((n) => n.note));
+  }
+
+  async askAgent(spaceId: string, role: AgentRole, prompt: string): Promise<Agent> {
+    const s = this.sp(spaceId);
+    const tool = toolForRole(role);
+    const wt = `wt/${s.space.branch.split("/").pop()}-${role}`;
+    const agent: Agent = {
+      id: `${spaceId}-${role}-${s.agents.length + 1}`,
+      space: spaceId,
+      role,
+      tool,
+      worktrees: [[s.space.repos[0].name, wt]],
+      status: "working",
+      summary: prompt,
+    };
+    s.agents.unshift(agent);
+    this.emit(spaceId);
+    this.later(2200, () => {
+      const f = s.files[0];
+      const ext = f.path.split(".").pop();
+      const c = ext === "yml" ? "#" : ext === "sql" ? "--" : "//";
+      s.hunks.push({
+        id: `c${s.hunks.length + 1}-${agent.id}`,
+        repo: f.repo,
+        path: f.path,
+        at: Math.max(0, f.lines.length - 1),
+        del: [],
+        add: [`  ${c} ${prompt}`],
+        agent: agent.id,
+        why: `Draft for: ${prompt}`,
+        section: "",
+        state: "pending",
+      });
+      agent.status = "done";
+      agent.summary = `1 proposal ready: ${prompt}`;
+      this.emit(spaceId);
+    });
+    return structuredClone(agent);
+  }
+
+  async answerAgent(spaceId: string, yes: boolean): Promise<void> {
+    const s = this.sp(spaceId);
+    const q = s.question;
+    if (!q) return;
+    s.question = null;
+    const author = s.agents.find((a) => a.id === q.agentId);
+    for (const a of s.agents) {
+      if (a.status === "waiting") {
+        a.status = "working";
+        a.summary = yes ? "Keeping pg_trgm, adding it to the image init script" : "Dropping pg_trgm and the fuzzy index";
+      }
+    }
+    this.emit(spaceId);
+    this.later(1600, () => {
+      const f = s.files.find((x) => x.path.endsWith(".sql")) ?? s.files[0];
+      s.hunks.push({
+        id: "p3",
+        repo: f.repo,
+        path: f.path,
+        at: yes ? 0 : 1,
+        del: yes
+          ? []
+          : [
+              "CREATE EXTENSION IF NOT EXISTS pg_trgm;",
+              "CREATE INDEX customers_name_trgm ON customers USING gin (name gin_trgm_ops);",
+            ],
+        add: yes
+          ? ["-- requires pg_trgm, installed by infra/initdb/10_ext.sql"]
+          : ["-- pg_trgm dropped with Postgres 17, see chore/pg17"],
+        agent: author?.id ?? q.agentId,
+        why: yes ? "Document where the extension now comes from." : "Remove the extension and its index.",
+        section: "",
+        state: "pending",
+      });
+      for (const a of s.agents) {
+        if (a.tool === (author?.tool ?? "crush")) {
+          a.status = "done";
+          a.summary = "1 new proposal";
+        }
+      }
+      this.emit(spaceId);
+    });
+  }
+
+  async askFix(spaceId: string, hunkId: string): Promise<void> {
+    const s = this.sp(spaceId);
+    const h = this.find(s, hunkId);
+    const entry = s.notes.get(hunkId);
+    if (!entry || entry.note.resolved || entry.note.busy) return;
+    const { note, fix } = entry;
+    note.busy = true;
+    const author = s.agents.find((a) => a.id === h.agent);
+    const role = author?.role;
+    const fixer = s.agents.find((a) => a.role === role);
+    if (fixer) {
+      fixer.status = "working";
+      fixer.summary = `Fixing: ${note.text.split(".")[0]}`;
+    }
+    this.emit(spaceId);
+    this.later(1400, () => {
+      if (h.state === "staged") {
+        const nh: MHunk = {
+          ...h,
+          id: `${h.id}f`,
+          del: h.add.slice(),
+          add: fix,
+          why: "Fix from review: return 400 on a bad signature.",
+          state: "pending",
+        };
+        s.hunks.splice(s.hunks.indexOf(h) + 1, 0, nh);
+      } else {
+        h.add = fix;
+        h.why = "Updated after review: catch the bad signature and return 400.";
+      }
+      note.resolved = true;
+      note.busy = false;
+      s.tests.pass = s.tests.total;
+      if (fixer) {
+        fixer.status = "done";
+        fixer.summary = `Fix ready, tests ${s.tests.total} of ${s.tests.total}`;
+      }
+      for (const a of s.agents) {
+        if (a.role === "tester") {
+          a.status = "done";
+          a.summary = `${s.tests.total} of ${s.tests.total} tests pass`;
+        }
+        if (a.role === "reviewer") a.summary = "No blocking notes";
+      }
+      this.emit(spaceId, "state", `${toolLabel(author?.tool ?? "agent")} updated the proposal`);
+    });
+  }
+
+  // -- commit gate ----------------------------------------------------------
+
+  async draftCommit(spaceId: string): Promise<string> {
+    return this.sp(spaceId).commitMsg;
+  }
+
+  async runGate(spaceId: string, onCheck?: (index: number, check: GateCheck) => void): Promise<GateCheck[]> {
+    const checks = this.gateChecks(this.sp(spaceId));
+    return new Promise((resolve) => {
+      let i = 0;
+      const step = () => {
+        onCheck?.(i, checks[i]);
+        i++;
+        if (i < checks.length) this.later(220, step);
+        else resolve(checks);
+      };
+      this.later(260, step);
+    });
+  }
+
+  async commit(spaceId: string, message: string, overrideReason?: string): Promise<CommitResult> {
+    const s = this.sp(spaceId);
+    const files = this.stagedFiles(s);
+    if (!files.length) throw new Error("Nothing is staged");
+    const passes = this.gateChecks(s).every((c) => c.pass);
+    const reason = (overrideReason ?? "").trim();
+    if (!passes && reason.length <= 3) {
+      throw new Error("Blocked by the commit gate: fix the notes or give a reason to override");
+    }
+    const repos = uniq(files.map((f) => f.repo));
+    s.commitMsg = message;
+    s.hunks = s.hunks.filter((h) => h.state === "pending");
+    s.baseStaged = [];
+    for (const f of s.files) f.mine = new Set();
+    this.commits.push({ spaceId, message, repos, override: passes ? undefined : reason });
+    this.emit(spaceId);
+    return { repos, branch: s.space.branch };
+  }
+
+  onChange(listener: (e: BackendEvent) => void): Unsubscribe {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tauri backend (typed stubs, not wired yet: the commands do not exist in app/ yet)
+// ---------------------------------------------------------------------------
+
+export class TauriBackend implements Backend {
+  listRepos() {
+    return invoke<string[]>("list_repos");
+  }
+  listSpaces() {
+    return invoke<Space[]>("list_spaces");
+  }
+  createSpace(name: string, repos: string[]) {
+    return invoke<Space>("create_space", { name, repos });
+  }
+  setWindow(spaceId: string, window: number | null) {
+    return invoke<void>("set_window", { spaceId, window });
+  }
+  status(spaceId: string) {
+    return invoke<FileChange[]>("status", { spaceId });
+  }
+  hunks(spaceId: string) {
+    return invoke<Hunk[]>("hunks", { spaceId });
+  }
+  reasons(spaceId: string) {
+    return invoke<Record<string, string>>("reasons", { spaceId });
+  }
+  stageHunk(spaceId: string, hunkId: string) {
+    return invoke<Hunk>("stage_hunk", { spaceId, hunkId });
+  }
+  unstageHunk(spaceId: string, hunkId: string) {
+    return invoke<Hunk>("unstage_hunk", { spaceId, hunkId });
+  }
+  rejectHunk(spaceId: string, hunkId: string) {
+    return invoke<Hunk>("reject_hunk", { spaceId, hunkId });
+  }
+  editHunk(spaceId: string, hunkId: string) {
+    return invoke<Hunk>("edit_hunk", { spaceId, hunkId });
+  }
+  listFiles(spaceId: string) {
+    return invoke<FileRef[]>("list_files", { spaceId });
+  }
+  readFile(spaceId: string, repo: string, path: string) {
+    return invoke<FileContent>("read_file", { spaceId, repo, path });
+  }
+  writeFile(spaceId: string, repo: string, path: string, content: string) {
+    return invoke<void>("write_file", { spaceId, repo, path, content });
+  }
+  agents(spaceId: string) {
+    return invoke<Agent[]>("agents", { spaceId });
+  }
+  askAgent(spaceId: string, role: AgentRole, prompt: string) {
+    return invoke<Agent>("ask_agent", { spaceId, role, prompt });
+  }
+  question(spaceId: string) {
+    return invoke<AgentQuestion | null>("question", { spaceId });
+  }
+  answerAgent(spaceId: string, yes: boolean) {
+    return invoke<void>("answer_agent", { spaceId, yes });
+  }
+  notes(spaceId: string) {
+    return invoke<ReviewNote[]>("notes", { spaceId });
+  }
+  askFix(spaceId: string, hunkId: string) {
+    return invoke<void>("ask_fix", { spaceId, hunkId });
+  }
+  stack(spaceId: string) {
+    return invoke<StackItem[]>("stack", { spaceId });
+  }
+  draftCommit(spaceId: string) {
+    return invoke<string>("draft_commit", { spaceId });
+  }
+  async runGate(spaceId: string, onCheck?: (index: number, check: GateCheck) => void) {
+    const checks = await invoke<GateCheck[]>("run_gate", { spaceId });
+    checks.forEach((c, i) => onCheck?.(i, c));
+    return checks;
+  }
+  commit(spaceId: string, message: string, overrideReason?: string) {
+    return invoke<CommitResult>("commit", { spaceId, message, overrideReason: overrideReason ?? null });
+  }
+  onChange(listener: (e: BackendEvent) => void): Unsubscribe {
+    let off: (() => void) | null = null;
+    let cancelled = false;
+    void listen<BackendEvent>("vela://change", (ev) => listener(ev.payload)).then((u) => {
+      if (cancelled) u();
+      else off = u;
+    });
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }
+}
+
+/** Tauri inside the desktop app, the in-memory mock in a plain browser. */
+export function createBackend(): Backend {
+  if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) return new TauriBackend();
+  return new MockBackend();
+}
