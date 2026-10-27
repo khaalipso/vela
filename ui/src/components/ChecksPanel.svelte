@@ -19,7 +19,7 @@
   const any = $derived(flatChecks(app.checkRepos).length > 0);
   const summary = $derived(summaryLine(app.checkRepos));
   const v = $derived(verdict(app.checkRepos));
-  const stagedCount = $derived(app.sections.counts.staged);
+  const stagedCount = $derived(app.sections.counts.done);
   const open = $derived(app.rvs.open);
   const warnings = $derived(app.checkRepos.flatMap((r) => r.warnings ?? []));
   let logEl: HTMLElement | undefined = $state();

@@ -4,8 +4,7 @@
   import { openAtEvent } from "../lib/contextmenu.svelte";
   import { hunkMenu } from "../lib/menus";
   import { ROLE_COLORS, roleLabel, toolLabel } from "../lib/format";
-  import { SECTION_TITLES } from "../lib/review";
-  import type { ReviewComment, ReviewNote } from "../lib/backend";
+  import type { ReviewNote } from "../lib/backend";
   import type { Hunk } from "../lib/types";
   import CommentThread from "./CommentThread.svelte";
   import DiffBlock from "./DiffBlock.svelte";
@@ -19,13 +18,23 @@
   const done = $derived(app.accepted.length + app.rejected.length);
   let root: HTMLElement | undefined = $state();
 
+  // A new file starts at its top (what the agent says first); moving between hunks follows the cursor.
+  let shownRow: string | null = null;
   $effect(() => {
+    const id = row?.id ?? null;
     cursor;
-    row?.id;
-    void tick().then(() => root?.querySelector<HTMLElement>("[data-focus='true']")?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
+    void tick().then(() => {
+      if (id !== shownRow) {
+        shownRow = id;
+        if (root) root.scrollTop = 0;
+        return;
+      }
+      root?.querySelector<HTMLElement>("[data-focus='true']")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
   });
 
   const proposalOf = (id: string) => app.proposals.find((p) => p.hunk.id === id);
+  const authorOf = (h: Hunk) => (h.origin.type === "agent" ? (app.sd.agents.find((a) => a.id === (h.origin as { agent: string }).agent)?.role ?? null) : null);
   const notes = $derived(row ? app.notesOf(row.repo, row.path) : []);
   const comments = $derived(row ? app.commentsOf(row.repo, row.path) : []);
   const hunkIds = $derived(new Set(hunks.map((h) => h.id)));
@@ -40,6 +49,17 @@
   const dirOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/") + 1) : "");
   const nameOf = (p: string) => p.slice(p.lastIndexOf("/") + 1);
   const pendingIn = $derived(hunks.filter((h) => h.state === "pending").length);
+  const reviewList = $derived(app.sections.review.flatMap((g) => g.files));
+  const place = $derived(row ? reviewList.findIndex((r) => r.id === row.id) : -1);
+  /** What each agent with changes in this file said it did. */
+  const why = $derived.by(() => {
+    if (!row) return [];
+    return row.agents.map((id) => {
+      const a = app.sd.agents.find((x) => x.id === id);
+      return { id, role: a?.role ?? null, text: a?.summary || a?.lastMessage || "" };
+    });
+  });
+  const lineSpan = (h: Hunk) => (h.newLines > 1 ? `Lines ${h.newStart}–${h.newStart + h.newLines - 1}` : `Line ${h.newStart}`);
 
   function act(i: number, f: () => unknown) {
     return (e: MouseEvent) => {
@@ -57,36 +77,44 @@
 <section class="diff" bind:this={root} class:focused={app.rvs.focus === "diff"} aria-label="Diff">
   {#if !row}
     <div class="allclear">
-      <h3>{app.sections.counts.staged ? "Everything is reviewed" : "Nothing to review"}</h3>
+      <h3>{app.sections.counts.done ? "Everything is reviewed" : "Nothing to review"}</h3>
       <span>
-        {#if app.sections.counts.staged}Press <Kbd k="C" /> to commit{:else}Pick a file on the left with <Kbd k="J" /> and <Kbd k="K" />{/if}
+        {#if app.sections.counts.done}Press <Kbd k="C" /> to commit{:else}Pick a file on the left with <Kbd k="J" /> and <Kbd k="K" />{/if}
       </span>
     </div>
   {:else}
     <header class="dh">
       <div class="title">
-        <span class="repo">{row.repo}</span>
-        <b class="path"><em>{dirOf(row.path)}</em>{nameOf(row.path)}</b>
+        <b class="path"><em>{row.repo !== app.space.repos[0]?.name || app.space.repos.length > 1 ? `${row.repo} / ` : ""}{dirOf(row.path)}</em>{nameOf(row.path)}</b>
         <span class="grow"></span>
-        {#if row.section === "staged"}
-          <button class="btn" onclick={() => void app.rvStageRow(row)}>Unstage file <Kbd k="Space" /></button>
+        {#if row.section === "done"}
+          <span class="accepted">✓ Accepted</span>
+          <button class="btn" onclick={() => void app.rvStageRow(row)}>Back to review <Kbd k="Space" /></button>
         {:else}
-          <button class="btn p" onclick={() => void app.rvStageRow(row)}>
-            ✓ {row.section === "proposed" ? "Accept file" : "Stage file"}
-            <Kbd k="Space" />
-          </button>
+          {#if row.agents.length}
+            <button class="btn" onclick={() => void app.rvRejectRow(row)} title="Throw away what the agents propose in this file">Reject</button>
+          {/if}
+          <button class="btn p" onclick={() => void app.rvStageRow(row)}>✓ Accept file <Kbd k="Space" /></button>
         {/if}
       </div>
       <div class="meta">
-        <span class="badge" data-kind={row.section}>{SECTION_TITLES[row.section]}</span>
+        {#if place >= 0}<span>File {place + 1} of {reviewList.length} to review</span>{/if}
         {#if row.add || row.del}<span class="sz"><i class="a">+{row.add}</i> <i class="d">−{row.del}</i></span>{/if}
-        {#if total}<span class="prog">{done} of {total} proposals reviewed</span>{/if}
+        {#if hunks.length > 1}<span>{hunks.length} changes{pendingIn && pendingIn < hunks.length ? `, ${pendingIn} waiting` : ""}</span>{/if}
         <span class="grow"></span>
         <button class="mode" onclick={() => app.dispatch({ type: "rv-split" })} title="Before and after side by side, or one column">
           {app.rvSplit ? "Side by side" : "Unified"} <Kbd k="V" />
         </button>
       </div>
     </header>
+    {#each why as w (w.id)}
+      {#if w.text}
+        <div class="why" style:--c={w.role ? ROLE_COLORS[w.role] : "var(--warn)"}>
+          <b>{w.role ? roleLabel(w.role) : w.id} says</b>
+          <p>{w.text}</p>
+        </div>
+      {/if}
+    {/each}
     {#each fileNotes as n (n.id)}
       {@render note(n)}
     {/each}
@@ -95,12 +123,13 @@
     {/each}
     {#if !hunks.length}
       <div class="allclear">
-        <h3>No hunks to show</h3>
-        <span>This file was staged before, as a whole. Unstage it with <Kbd k="Space" />.</span>
+        <h3>{row.section === "done" ? "Accepted as a whole" : "No line to show"}</h3>
+        <span>A new empty file, a binary file or a mode change. {row.section === "done" ? "" : "Accept it with Space."}</span>
       </div>
     {/if}
     {#each hunks as h, i (h.id)}
       {@const p = proposalOf(h.id)}
+      {@const role = authorOf(h)}
       {@const foc = i === cursor}
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
       <article
@@ -116,35 +145,26 @@
         }}
       >
         <div class="hh">
-          {#if p}
-            <span class="dot" style:--c={ROLE_COLORS[p.role]}></span>
-            <b>{roleLabel(p.role)}</b>
-            <span>{toolLabel(p.tool)}</span>
+          <span class="loc">{lineSpan(h)}{h.section ? ` · ${h.section}` : ""}</span>
+          {#if h.origin.type === "agent"}
+            <span class="by" style:--c={role ? ROLE_COLORS[role] : "var(--warn)"}>{role ? roleLabel(role) : "Agent"}{p ? ` · ${toolLabel(p.tool)}` : ""}</span>
           {:else}
-            <span class="dot" style:--c="var(--info)"></span>
-            <b>You</b>
+            <span class="by" style:--c="var(--muted)">You</span>
           {/if}
-          <span class="loc">line {h.newStart}{h.section ? ` · ${h.section}` : ""}</span>
           <span class="acts">
-            <button class="ghost" onclick={act(i, () => comment(h, i))} title="Comment: an agent answers">
-              Comment {#if foc}<Kbd k="M" />{/if}
-            </button>
+            <button class="ghost" onclick={act(i, () => comment(h, i))} title="Comment this change: an agent answers (M)">Comment</button>
             {#if h.state === "staged"}
-              <span class="state">{p?.edited ? "edited by you" : "staged"}</span>
-              <button class="ghost" onclick={act(i, () => app.rvHunkUnstage())}>Unstage {#if foc}<Kbd k="U" />{/if}</button>
+              <span class="state">✓ {p?.edited ? "Accepted, edited" : "Accepted"}</span>
+              <button class="ghost" onclick={act(i, () => app.rvHunkUnstage())} title="Back to review (U)">Undo</button>
             {:else}
-              {#if p}
-                <button class="ghost" onclick={act(i, () => app.rvHunkReject())}>Reject {#if foc}<Kbd k="N" />{/if}</button>
-                <button class="ghost" onclick={act(i, () => app.dispatch({ type: "edit" }))}>Edit {#if foc}<Kbd k="E" />{/if}</button>
+              {#if h.origin.type === "agent"}
+                <button class="ghost" onclick={act(i, () => app.rvHunkReject())} title="Reject this change (N)">Reject</button>
+                <button class="ghost" onclick={act(i, () => app.dispatch({ type: "edit" }))} title="Accept and change it by hand (E)">Edit</button>
               {/if}
-              <button class="ok" onclick={act(i, () => app.rvHunkStage())}>
-                ✓ {p ? "Accept" : "Stage"}
-                {#if foc}<Kbd k="Y" />{/if}
-              </button>
+              <button class="ok" onclick={act(i, () => app.rvHunkStage())} title="Accept this change only (Y)">✓ Accept</button>
             {/if}
           </span>
         </div>
-        {#if p?.why}<div class="why">{p.why}</div>{/if}
         {#if app.rvSplit}
           <SplitDiff hunk={h} />
         {:else}
@@ -161,13 +181,12 @@
         {/if}
       </article>
     {/each}
-    {#if hunks.length > 1 || pendingIn}
+    {#if row.section === "review" && hunks.length}
       <footer class="end">
-        {#if pendingIn}
-          <span>{pendingIn} of {hunks.length} hunks left in this file</span>
-        {:else}
-          <span>Every hunk of this file is staged</span>
-        {/if}
+        <button class="btn p big" onclick={() => void app.rvStageRow(row)}>
+          ✓ Accept file{reviewList.length > 1 ? " and go to the next" : ""}
+          <Kbd k="Space" />
+        </button>
       </footer>
     {/if}
   {/if}
@@ -243,13 +262,6 @@
     gap: 10px;
     min-width: 0;
   }
-  .repo {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--faint);
-    flex: none;
-  }
   .path {
     font-family: var(--code);
     font-size: 15px;
@@ -272,20 +284,6 @@
   }
   .grow {
     flex: 1;
-  }
-  .badge {
-    padding: 2px 9px;
-    border-radius: 9999px;
-    background: var(--hover);
-    font-weight: 600;
-  }
-  .badge[data-kind="proposed"] {
-    color: var(--warn);
-    background: color-mix(in srgb, var(--warn) 14%, transparent);
-  }
-  .badge[data-kind="staged"] {
-    color: var(--add);
-    background: color-mix(in srgb, var(--add) 14%, transparent);
   }
   .sz {
     font-family: var(--code);
@@ -314,6 +312,11 @@
   }
   .hunk.staged {
     box-shadow: inset 3px 0 0 var(--add);
+    opacity: 0.75;
+  }
+  .hunk.staged:hover,
+  .hunk.staged.focus {
+    opacity: 1;
   }
   .hunk.focus {
     box-shadow: 0 0 0 2px var(--space);
@@ -332,14 +335,10 @@
     font-size: 12.5px;
     color: var(--muted);
   }
-  .hh b {
-    color: var(--fg);
-    font-weight: 600;
-    font-size: 13.5px;
-  }
   .loc {
     font-family: var(--code);
-    color: var(--faint);
+    color: var(--fg);
+    font-weight: 600;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -384,10 +383,43 @@
     padding: 0 6px;
   }
   .why {
-    padding: 0 14px 10px;
+    flex: none;
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: var(--raised);
+    box-shadow: inset 3px 0 0 var(--c);
     font-size: 13.5px;
+  }
+  .why b {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--c);
+  }
+  .why p {
+    margin: 4px 0 0;
     line-height: 1.5;
-    color: var(--fg);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 6;
+    line-clamp: 6;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .accepted {
+    font-weight: 700;
+    color: var(--add);
+    font-size: 13px;
+  }
+  .by {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--c);
+  }
+  .big {
+    height: 40px;
+    padding: 0 18px;
+    font-size: 14px;
   }
   .note {
     margin: 6px 14px 12px 60px;
@@ -451,10 +483,9 @@
     color: var(--fg);
   }
   .end {
-    text-align: center;
-    font-size: 12.5px;
-    color: var(--faint);
-    padding: 4px;
+    display: flex;
+    justify-content: center;
+    padding: 8px 4px 24px;
   }
   .allclear {
     padding: 48px 20px;

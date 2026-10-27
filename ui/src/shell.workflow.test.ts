@@ -114,7 +114,7 @@ describe("review", () => {
   it("V shows the diff before and after side by side", async () => {
     press("2");
     await settle();
-    const proposed = app.rows.find((r) => r.section === "proposed")!;
+    const proposed = app.rows.find((r) => r.agents.length > 0)!;
     app.rvSelect(proposed.id);
     await settle();
     expect($(".split")).toBeNull();

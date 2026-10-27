@@ -67,13 +67,14 @@
     min-width: 0;
     min-height: 0;
   }
+  /* The file list comes first; the checks keep what is left, at most a third. */
   .side > :global(.files) {
-    flex: 1 1 auto;
-    min-height: 120px;
+    flex: 1 1 0;
+    min-height: 220px;
   }
   .side > :global(.checks) {
     flex: 0 1 auto;
-    max-height: 45%;
+    max-height: 34%;
   }
   .handle {
     cursor: col-resize;

@@ -467,17 +467,18 @@ describe("editor menu", () => {
 });
 
 describe("review menus", () => {
-  it("file rows by section", () => {
-    const staged = reviewFileMenu({ section: "staged", repo: "api", path: "a.ts" });
-    expect(labels(staged)).toEqual(["Unstage", "Open in editor", "-", "Discard changes…", "-", "Copy path"]);
-    expect(find(staged, "Unstage").shortcut).toBe("Space");
-    expect(find(staged, "Discard changes…").disabled).toMatch(/Unstage it first/);
-    const mine = reviewFileMenu({ section: "unstaged", repo: "api", path: "a.ts" });
-    expect(has(mine, "Stage")).toBe(true);
-    expect(find(mine, "Discard changes…").disabled).toBe(false);
-    const prop = reviewFileMenu({ section: "proposed", repo: "api", path: "a.ts" });
-    expect(has(prop, "Accept proposed hunks")).toBe(true);
-    expect(find(prop, "Discard changes…").disabled).toMatch(/rejected with N/);
+  it("file rows: accept or take back, reject the agent's part, discard only your own", () => {
+    const done = reviewFileMenu({ section: "done", repo: "api", path: "a.ts", agents: [], mine: false });
+    expect(labels(done)).toEqual(["Back to review", "Reject the agent's changes", "Open in editor", "-", "Discard your changes…", "-", "Copy path"]);
+    expect(find(done, "Back to review").shortcut).toBe("Space");
+    expect(find(done, "Discard your changes…").disabled).toMatch(/back to review first/);
+    const mine = reviewFileMenu({ section: "review", repo: "api", path: "a.ts", agents: [], mine: true });
+    expect(has(mine, "Accept file")).toBe(true);
+    expect(find(mine, "Discard your changes…").disabled).toBe(false);
+    expect(find(mine, "Reject the agent's changes").disabled).toMatch(/No proposal/);
+    const prop = reviewFileMenu({ section: "review", repo: "api", path: "a.ts", agents: ["developer-1"], mine: false });
+    expect(find(prop, "Reject the agent's changes").disabled).toBe(false);
+    expect(find(prop, "Discard your changes…").disabled).toMatch(/Nothing of yours/);
   });
 
   const hunk = (over: Partial<Hunk>): Hunk => ({
@@ -497,25 +498,25 @@ describe("review menus", () => {
 
   it("a pending agent proposal can be staged, rejected and edited", () => {
     const m = hunkMenu(hunk({}));
-    expect(labels(m)).toEqual(["Stage hunk", "Unstage hunk", "Reject proposal", "Edit by hand", "-", "Copy hunk as patch"]);
-    expect(find(m, "Stage hunk").shortcut).toBe("Y");
-    expect(find(m, "Unstage hunk").shortcut).toBe("U");
-    expect(find(m, "Reject proposal").shortcut).toBe("N");
+    expect(labels(m)).toEqual(["Accept change", "Back to review", "Reject change", "Edit by hand", "-", "Copy as patch"]);
+    expect(find(m, "Accept change").shortcut).toBe("Y");
+    expect(find(m, "Back to review").shortcut).toBe("U");
+    expect(find(m, "Reject change").shortcut).toBe("N");
     expect(find(m, "Edit by hand").shortcut).toBe("E");
-    expect(find(m, "Stage hunk").disabled).toBe(false);
-    expect(find(m, "Unstage hunk").disabled).toMatch(/not staged/);
-    expect(find(m, "Reject proposal").disabled).toBe(false);
+    expect(find(m, "Accept change").disabled).toBe(false);
+    expect(find(m, "Back to review").disabled).toMatch(/Not accepted/);
+    expect(find(m, "Reject change").disabled).toBe(false);
   });
 
   it("your own staged hunk can be unstaged but never rejected", () => {
     const m = hunkMenu(hunk({ origin: { type: "you" }, state: "staged" }));
-    expect(find(m, "Stage hunk").disabled).toMatch(/Already staged/);
-    expect(find(m, "Unstage hunk").disabled).toBe(false);
-    expect(find(m, "Reject proposal").disabled).toMatch(/never discarded/);
+    expect(find(m, "Accept change").disabled).toMatch(/Already accepted/);
+    expect(find(m, "Back to review").disabled).toBe(false);
+    expect(find(m, "Reject change").disabled).toMatch(/never discarded/);
   });
 
   it("a staged proposal cannot be rejected any more", () => {
-    expect(find(hunkMenu(hunk({ state: "staged" })), "Reject proposal").disabled).toMatch(/pending/);
+    expect(find(hunkMenu(hunk({ state: "staged" })), "Reject change").disabled).toMatch(/pending/);
   });
 });
 
@@ -710,7 +711,7 @@ describe("the command bar", () => {
     app.goSpace(0);
     app.setView("review");
     const titles = contextPaletteItems().map((i) => i.title);
-    expect(titles).toContain("Copy hunk as patch");
+    expect(titles).toContain("Copy as patch");
     expect(titles).toContain("Open in editor");
   });
 });

@@ -46,7 +46,7 @@
       stackOpen: app.stackOpen,
       view: app.view,
       hasQuestion: app.spaces.length > 0 && !!app.sd.question,
-      filesOpen: app.filesOpen,
+      filesOpen: app.filesOpen && app.view !== "review",
       inFiles: !!(e.target as HTMLElement | null)?.closest?.("[data-files]"),
       inTerm: !!(e.target as HTMLElement | null)?.closest?.(".xterm"),
     });
@@ -98,7 +98,8 @@
     <div class="main" style:--termh={app.termOpen && !app.elsewhere ? `${app.termHeight + 8}px` : "0px"}>
       <TopBar />
       <div class="body">
-        {#if app.filesOpen}<FilesDrawer />{/if}
+        <!-- The Review view lists its own files: the tree would only take room there. -->
+        {#if app.filesOpen && app.view !== "review"}<FilesDrawer />{/if}
         {#key surfaceKey}
           {#if app.elsewhere}
             <section class="surface enter">
@@ -120,7 +121,8 @@
         <!-- xterm.js is loaded the first time a terminal opens. -->
         {#await import("./components/TerminalPanel.svelte") then { default: TerminalPanel }}<TerminalPanel />{/await}
       {/if}
-      {#if app.overlay !== "composer"}<Island />{/if}
+      <!-- In the Review view the list already says what is next: the island only brings news. -->
+      {#if app.overlay !== "composer" && !(app.view === "review" && ["review", "commit", "nothing"].includes(app.upNext.kind.type))}<Island />{/if}
       <BottomHints />
       {#if app.stackOpen}<StackPopover />{/if}
       {#if app.overlay === "composer"}<Composer />{/if}

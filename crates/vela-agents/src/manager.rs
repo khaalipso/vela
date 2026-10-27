@@ -653,6 +653,8 @@ impl AgentManager {
         shown: &str,
         emit: &Emit,
     ) -> Result<Agent> {
+        // Only what the agent changes from now on is offered next, when all before is decided.
+        let _ = crate::proposals::advance_base(vela, space, entry);
         let agent_id = entry.agent.id.as_str();
         let cfg = self.agents_config(vela, space);
         let driver = self

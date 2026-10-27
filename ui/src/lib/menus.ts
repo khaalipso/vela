@@ -215,26 +215,28 @@ export function editorMenu(i: EditorInfo): MenuEntry[] {
 // Review view
 // ---------------------------------------------------------------------------
 
-export function reviewFileMenu(r: Pick<FileRow, "section" | "repo" | "path">): MenuEntry[] {
+export function reviewFileMenu(r: Pick<FileRow, "section" | "repo" | "path" | "agents" | "mine">): MenuEntry[] {
+  const row = () => app.rows.find((x) => x.repo === r.repo && x.path === r.path);
   const toggle =
-    r.section === "staged"
-      ? it("Unstage", { shortcut: shortcutFor({ type: "rv-toggle-file" }, "review"), icon: "unstage", run: () => void app.dispatch({ type: "rv-toggle-file" }) })
-      : r.section === "unstaged"
-        ? it("Stage", { shortcut: shortcutFor({ type: "rv-toggle-file" }, "review"), icon: "stage", run: () => void app.dispatch({ type: "rv-toggle-file" }) })
-        : it("Accept proposed hunks", { shortcut: shortcutFor({ type: "rv-toggle-file" }, "review"), icon: "stage", run: () => void app.dispatch({ type: "rv-toggle-file" }) });
+    r.section === "done"
+      ? it("Back to review", { shortcut: shortcutFor({ type: "rv-toggle-file" }, "review"), icon: "unstage", run: () => void app.dispatch({ type: "rv-toggle-file" }) })
+      : it("Accept file", { shortcut: shortcutFor({ type: "rv-toggle-file" }, "review"), icon: "stage", run: () => void app.dispatch({ type: "rv-toggle-file" }) });
   return tidy([
     toggle,
+    it("Reject the agent's changes", {
+      icon: "discard",
+      disabled: r.agents.length ? false : "No proposal of an agent in this file",
+      run: () => {
+        const x = row();
+        if (x) void app.rvRejectRow(x);
+      },
+    }),
     it("Open in editor", { icon: "open", run: () => ops.open(r.repo, r.path, true) }),
     SEP,
-    it("Discard changes…", {
+    it("Discard your changes…", {
       icon: "discard",
       danger: true,
-      disabled:
-        r.section === "unstaged"
-          ? false
-          : r.section === "staged"
-            ? "Unstage it first, then discard"
-            : "Agent proposals are rejected with N, not discarded",
+      disabled: r.mine ? false : r.section === "done" ? "Take it back to review first, then discard" : "Nothing of yours to discard",
       run: () => ops.askDiscard(r.repo, r.path),
     }),
     SEP,
@@ -247,15 +249,15 @@ export function hunkMenu(h: Hunk): MenuEntry[] {
   const agent = h.origin.type === "agent";
   const key = fileKey(h.repo, h.path);
   return tidy([
-    act("Stage hunk", { type: "rv-hunk-stage" }, "review", {
+    act("Accept change", { type: "rv-hunk-stage" }, "review", {
       icon: "stage",
-      disabled: h.state === "staged" ? "Already staged" : false,
+      disabled: h.state === "staged" ? "Already accepted" : false,
     }),
-    act("Unstage hunk", { type: "rv-hunk-unstage" }, "review", {
+    act("Back to review", { type: "rv-hunk-unstage" }, "review", {
       icon: "unstage",
-      disabled: h.state === "staged" ? false : "This hunk is not staged",
+      disabled: h.state === "staged" ? false : "Not accepted yet",
     }),
-    act("Reject proposal", { type: "reject" }, "review", {
+    act("Reject change", { type: "reject" }, "review", {
       icon: "close",
       disabled: !agent ? "Your own changes are never discarded from here" : h.state !== "pending" ? "Only pending proposals can be rejected" : false,
       run: () => void app.rvHunkReject(),
@@ -266,7 +268,7 @@ export function hunkMenu(h: Hunk): MenuEntry[] {
       run: () => (agent && h.state === "pending" ? void app.dispatch({ type: "edit" }) : app.gotoLine(key, h.newStart)),
     }),
     SEP,
-    it("Copy hunk as patch", { icon: "patch", run: () => void ops.copyPatch(h) }),
+    it("Copy as patch", { icon: "patch", run: () => void ops.copyPatch(h) }),
   ]);
 }
 

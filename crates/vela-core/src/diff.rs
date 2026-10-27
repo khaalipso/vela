@@ -417,7 +417,7 @@ static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Snapshot the working files of `dir` (honouring .gitignore) as a tree object,
 /// through a throwaway index so the real index is never touched.
-fn snapshot_tree(dir: &Path) -> Result<String> {
+pub fn snapshot_tree(dir: &Path) -> Result<String> {
     let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     let index: PathBuf =
         std::env::temp_dir().join(format!("vela-index-{}-{n}", std::process::id()));

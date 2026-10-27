@@ -91,12 +91,24 @@ pub fn stage_hunks(space: &Space, hunk_ids: &[String]) -> Result<Vec<String>> {
     Ok(missing)
 }
 
-/// Stage every change of several files: one `git add` per repo.
+/// Stage every change of several files: one `git add` per repo. A path that is neither on
+/// disk nor known to git (nothing to stage) is skipped instead of failing the lot.
 pub fn stage_files(space: &Space, files: &[(String, String)]) -> Result<()> {
     for (repo, paths) in by_repo(files) {
+        let dir = repo_dir(space, &repo)?;
         let mut args = vec!["add", "-A", "--"];
-        args.extend(paths.iter().map(String::as_str));
-        git(repo_dir(space, &repo)?, &args)?;
+        let known: Vec<&String> = paths
+            .iter()
+            .filter(|p| {
+                dir.join(p).exists()
+                    || git(dir, &["ls-files", "--", p]).is_ok_and(|o| !o.trim().is_empty())
+            })
+            .collect();
+        if known.is_empty() {
+            continue;
+        }
+        args.extend(known.iter().map(|p| p.as_str()));
+        git(dir, &args)?;
     }
     Ok(())
 }

@@ -139,6 +139,31 @@ pub fn rejected_ids(vela: &Vela, id: &str) -> AppResult<BTreeSet<String>> {
     }
 }
 
+fn accepted_file(vela: &Vela, id: &str) -> PathBuf {
+    paths::spaces_dir(&vela.home).join(format!("{id}.accepted.json"))
+}
+
+/// Ids of the proposals the user accepted: never offered again, even when the user changes
+/// those lines afterwards.
+pub fn accepted_ids(vela: &Vela, id: &str) -> AppResult<BTreeSet<String>> {
+    match fs::read_to_string(accepted_file(vela, id)) {
+        Ok(text) => Ok(serde_json::from_str(&text)?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeSet::new()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn remember_accepted(vela: &Vela, id: &str, ids: &[String]) -> AppResult<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let mut all = accepted_ids(vela, id)?;
+    all.extend(ids.iter().cloned());
+    fs::create_dir_all(paths::spaces_dir(&vela.home))?;
+    fs::write(accepted_file(vela, id), serde_json::to_string_pretty(&all)?)?;
+    Ok(())
+}
+
 fn save_rejected(vela: &Vela, id: &str, ids: &BTreeSet<String>) -> AppResult<()> {
     fs::create_dir_all(paths::spaces_dir(&vela.home))?;
     fs::write(rejected_file(vela, id), serde_json::to_string_pretty(ids)?)?;
@@ -244,12 +269,20 @@ fn agent_proposals(
     if entries.iter().all(|e| e.agent.worktrees.is_empty()) {
         return Ok(Vec::new());
     }
-    Ok(proposals::proposals(
-        space,
-        &entries,
-        rejected,
-        with_rejected,
-    )?)
+    let accepted = accepted_ids(vela, &space.id)?;
+    // Hidden either way: the accepted ones are skipped before any git call.
+    let hide: BTreeSet<String>;
+    let skip = if with_rejected {
+        rejected
+    } else {
+        hide = rejected.union(&accepted).cloned().collect();
+        &hide
+    };
+    let list: Vec<Proposal> = proposals::proposals(space, &entries, skip, with_rejected)?
+        .into_iter()
+        .filter(|p| !accepted.contains(&p.hunk.id))
+        .collect();
+    Ok(list)
 }
 
 fn find(list: Vec<Hunk>, hunk_id: &str) -> AppResult<Hunk> {
@@ -839,6 +872,12 @@ pub fn accept_hunks(vela: &Vela, id: &str, hunk_ids: &[String]) -> AppResult<Vec
         .collect();
     stage::stage_hunks(&space, &mine)?;
     let failed = proposals::accept_many(&space, &picked)?;
+    let taken: Vec<String> = picked
+        .iter()
+        .map(|p| p.hunk.id.clone())
+        .filter(|h| !failed.iter().any(|(f, _)| f == h))
+        .collect();
+    remember_accepted(vela, id, &taken)?;
     let before = rejected.len();
     rejected.retain(|r| !hunk_ids.contains(r) || failed.iter().any(|(f, _)| f == r));
     if rejected.len() != before {
@@ -858,6 +897,7 @@ pub fn accept_proposal(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> 
         .find(|p| p.hunk.id == hunk_id)
         .ok_or_else(|| vela_core::Error::HunkNotFound(hunk_id.to_string()))?;
     let hunk = proposals::accept(&space, p)?;
+    remember_accepted(vela, id, &[hunk_id.to_string()])?;
     let mut rejected = rejected;
     if rejected.remove(hunk_id) {
         save_rejected(vela, id, &rejected)?;

@@ -47,6 +47,8 @@ beforeAll(async () => {
   backend = new MockBackend({ speed: 0 });
   await app.init(backend);
   app.filesOpen = true;
+  // The file tree shows in the Code view (the Review view lists its own files).
+  app.ui[app.space.id].view = "code";
   component = mount(App, { target: document.body });
   await settle();
   await vi.waitFor(() => expect($$(".files .row.repo").length).toBeGreaterThan(0));
@@ -470,22 +472,22 @@ describe("review", () => {
   it("a file row and a hunk have their own menus", async () => {
     press("2");
     await settle();
-    const frow = $$(".frow").find((r) => r.closest("[data-section='proposed']"))!;
+    const frow = $$(".frow").find((r) => r.closest("[data-section='review']"))!;
     rightClick(frow);
     await settle();
-    expect(items()).toEqual(["Accept proposed hunks", "Open in editor", "Discard changes…", "Copy path"]);
-    expect(item("Accept proposed hunks").textContent).toContain("Space");
+    expect(items()).toEqual(["Accept file", "Reject the agent's changes", "Open in editor", "Discard your changes…", "Copy path"]);
+    expect(item("Accept file").textContent).toContain("Space");
     await closeMenu();
 
     const hunk = $$("article.hunk")[0];
     rightClick(hunk);
     await settle();
-    expect(items()).toEqual(["Stage hunk", "Unstage hunk", "Reject proposal", "Edit by hand", "Copy hunk as patch"]);
-    expect(item("Stage hunk").textContent).toContain("Y");
-    expect(item("Reject proposal").textContent).toContain("N");
+    expect(items()).toEqual(["Accept change", "Back to review", "Reject change", "Edit by hand", "Copy as patch"]);
+    expect(item("Accept change").textContent).toContain("Y");
+    expect(item("Reject change").textContent).toContain("N");
     expect(item("Edit by hand").textContent).toContain("E");
     const before = app.pending.length;
-    item("Stage hunk").click();
+    item("Accept change").click();
     await settle();
     await vi.waitFor(() => expect(app.pending.length).toBe(before - 1));
   });
@@ -495,7 +497,7 @@ describe("review", () => {
     const hunk = $$("article.hunk")[0];
     rightClick(hunk);
     await settle();
-    item("Copy hunk as patch").click();
+    item("Copy as patch").click();
     await settle();
     await vi.waitFor(() => expect(clip).toHaveBeenCalled());
     expect(clip.mock.calls[0][0]).toMatch(/^--- a\/.+\n\+\+\+ b\/.+\n@@ -\d+/);
@@ -505,7 +507,7 @@ describe("review", () => {
     (document.activeElement as HTMLElement | null)?.blur();
     press("ContextMenu");
     await settle();
-    expect(items()).toContain("Copy hunk as patch");
+    expect(items()).toContain("Copy as patch");
     press("Escape");
     await settle();
   });

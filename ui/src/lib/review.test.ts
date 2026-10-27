@@ -67,32 +67,41 @@ const hunks = [
 describe("sections", () => {
   const s = buildSections(status, hunks);
 
-  it("groups staged, not staged and proposed with counts", () => {
-    expect(s.counts).toEqual({ staged: 3, unstaged: 2, proposed: 1 });
-    expect(s.staged.map((g) => g.repo)).toEqual(["api", "web"]);
-    expect(s.staged[0].files.map((f) => f.path)).toEqual(["src/a.ts", "src/b.ts"]);
-    expect(s.unstaged.map((g) => g.files.map((f) => f.path))).toEqual([["src/a.ts"], ["x.tsx"]]);
-    expect(s.proposed[0].files[0]).toMatchObject({ repo: "web", path: "p.ts", letter: "P", hunks: 2, add: 3, del: 1 });
+  it("lists each file once: to review when something waits in it, else accepted", () => {
+    expect(s.counts).toEqual({ review: 3, done: 2 });
+    expect(s.review.map((g) => [g.repo, g.files.map((f) => f.path)])).toEqual([
+      ["api", ["src/a.ts"]],
+      ["web", ["p.ts", "x.tsx"]],
+    ]);
+    expect(s.done.map((g) => [g.repo, g.files.map((f) => f.path)])).toEqual([
+      ["api", ["src/b.ts"]],
+      ["web", ["gone.ts"]],
+    ]);
   });
 
-  it("counts lines of the right side only and totals the staged ones", () => {
-    const a = s.staged[0].files[0];
-    expect(a).toMatchObject({ letter: "A", add: 2, del: 0, section: "staged" });
-    const aUn = s.unstaged[0].files[0];
-    expect(aUn).toMatchObject({ letter: "M", add: 5, del: 2 });
-    expect(s.total).toEqual({ add: 5, del: 1 });
-    expect(s.staged[1].files[0]).toMatchObject({ letter: "D", add: 0, del: 0 });
-    expect(s.unstaged[1].files[0].letter).toBe("U");
+  it("says who the waiting changes come from and counts every line of the file", () => {
+    const [a] = s.review[0].files;
+    expect(a).toMatchObject({ id: "api/src/a.ts", letter: "M", add: 7, del: 2, hunks: 2, pending: 1, mine: true, agents: [] });
+    const [p, x] = s.review[1].files;
+    expect(p).toMatchObject({ letter: "M", add: 3, del: 1, hunks: 2, pending: 2, mine: false, agents: ["a1"] });
+    expect(x).toMatchObject({ letter: "A", mine: true });
+    expect(s.done[1].files[0]).toMatchObject({ letter: "D", section: "done" });
+    expect(s.total).toEqual({ add: 3, del: 1 });
   });
 
-  it("gives every row a unique id and leaves rejected proposals out", () => {
+  it("gives every file one id and leaves rejected proposals out", () => {
     const ids = allRows(s).map((r) => r.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).not.toContain("proposed:web/r.ts");
+    expect(ids).not.toContain("web/r.ts");
+  });
+
+  it("a new file proposed by an agent shows as added", () => {
+    const n = { ...hunk("n1", "api", "new.ts", "pending", agent, 3, 0), oldStart: 0, oldLines: 0 };
+    expect(buildSections([], [n]).review[0].files[0]).toMatchObject({ letter: "A", agents: ["a1"] });
   });
 
   it("is empty without data", () => {
-    expect(buildSections([], []).counts).toEqual({ staged: 0, unstaged: 0, proposed: 0 });
+    expect(buildSections([], []).counts).toEqual({ review: 0, done: 0 });
   });
 
   it("lists a file's hunks in file order with their states", () => {
@@ -128,11 +137,11 @@ describe("selection", () => {
   });
 
   it("collapsed sections are skipped", () => {
-    const st = toggleSection(initialRv(), "staged");
+    const st = toggleSection(initialRv(), "done");
     const vis = visibleRows(s, st.collapsed);
-    expect(vis.every((r) => r.section !== "staged")).toBe(true);
+    expect(vis.every((r) => r.section !== "done")).toBe(true);
     expect(vis.length).toBe(3);
-    expect(toggleSection(st, "staged").collapsed.staged).toBe(false);
+    expect(toggleSection(st, "done").collapsed.done).toBe(false);
   });
 
   it("after a row vanishes, the selection takes the row now at its place", () => {

@@ -58,19 +58,19 @@ pub fn proposals(
             let user_wt = Path::new(&user.worktree);
             for file in diff::changes_since(Path::new(path), base, repo)? {
                 for ph in file.hunks {
+                    let mut hunk = ph.hunk;
+                    // Decided or seen already: no git call needed.
+                    if out.iter().any(|p| p.hunk.id == hunk.id)
+                        || (!with_rejected && rejected.contains(&hunk.id))
+                    {
+                        continue;
+                    }
                     let patch = format!("{}{}", file.header, ph.raw);
                     // Already in the user's worktree: the patch reverses cleanly.
                     if runs(user_wt, &["--check", "-R"], &patch) {
                         continue;
                     }
-                    let mut hunk = ph.hunk;
-                    if out.iter().any(|p| p.hunk.id == hunk.id) {
-                        continue;
-                    }
                     if rejected.contains(&hunk.id) {
-                        if !with_rejected {
-                            continue;
-                        }
                         hunk.state = HunkState::Rejected;
                     }
                     hunk.origin = Origin::Agent {
@@ -157,6 +157,52 @@ pub fn accept_many(space: &Space, list: &[&Proposal]) -> Result<Vec<(String, Str
     // A hunk git merged with your edits next to it stays applied but not staged.
     stage::stage_hunks(space, &applied)?;
     Ok(failed)
+}
+
+/// Ids of the hunks the user already decided on in a space (accepted or rejected), as the
+/// app keeps them in `VELA_HOME/spaces/<space>.accepted.json` and `<space>.rejected.json`.
+pub fn decided_ids(vela: &vela_core::Vela, space: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for kind in ["accepted", "rejected"] {
+        let f = vela_core::paths::spaces_dir(&vela.home).join(format!("{space}.{kind}.json"));
+        if let Some(ids) = std::fs::read_to_string(f)
+            .ok()
+            .and_then(|t| serde_json::from_str::<BTreeSet<String>>(&t).ok())
+        {
+            out.extend(ids);
+        }
+    }
+    out
+}
+
+/// Before an agent works again: when the user decided on every change it proposed, what it
+/// has now becomes its new base, so the next run offers only what it changes next (a new
+/// edit next to accepted lines is not merged with them into a hunk offered again).
+pub fn advance_base(vela: &vela_core::Vela, space: &Space, entry: &Entry) -> Result<()> {
+    if entry.read_only || entry.agent.worktrees.is_empty() {
+        return Ok(());
+    }
+    let decided = decided_ids(vela, &space.id);
+    if !proposals(space, std::slice::from_ref(entry), &decided, false)?.is_empty() {
+        return Ok(());
+    }
+    let mut bases = entry.bases.clone();
+    let mut moved = false;
+    for (repo, path) in &entry.agent.worktrees {
+        let Ok(tree) = diff::snapshot_tree(Path::new(path)) else {
+            continue;
+        };
+        if let Some((_, b)) = bases.iter_mut().find(|(r, _)| r == repo)
+            && *b != tree
+        {
+            *b = tree;
+            moved = true;
+        }
+    }
+    if moved {
+        crate::registry::update(vela, &space.id, &entry.agent.id, |e| e.bases = bases)?;
+    }
+    Ok(())
 }
 
 /// Why each proposed hunk exists: the latest message of its author, one line.

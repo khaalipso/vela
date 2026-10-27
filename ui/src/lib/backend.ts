@@ -953,6 +953,13 @@ export class MockBackend implements Backend {
       if ([...f.mine].some((i) => !f.stagedMine?.has(i))) get(f).unstaged = "modified";
       if (f.stagedMine?.size) get(f).staged = "modified";
     }
+    // Staged before the session and unstaged since: the change is back in the worktree only.
+    for (const k of this.unstagedBase) {
+      if (!k.startsWith(`${spaceId}:`)) continue;
+      const fk = k.slice(spaceId.length + 1);
+      const i = fk.indexOf("/");
+      get({ repo: fk.slice(0, i), path: fk.slice(i + 1) }).unstaged = "modified";
+    }
     for (const [k, o] of s.fileStage) {
       const i = k.indexOf("/");
       const c = get({ repo: k.slice(0, i), path: k.slice(i + 1) });
@@ -1699,10 +1706,8 @@ export class MockBackend implements Backend {
       return;
     }
     if (this.unstagedBase.delete(bk)) {
-      // Staged before the session and unstaged since: stage it back.
+      // Staged before the session and unstaged since: stage it back (with any edit of yours).
       if (!s.baseStaged.some((x) => x.repo === repo && x.path === path)) s.baseStaged.push({ repo, path });
-      this.emit(spaceId);
-      return;
     }
     const f = this.file(s, repo, path);
     if (f.mine.size) {

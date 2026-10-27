@@ -37,15 +37,17 @@ afterAll(() => {
 });
 
 describe("shell", () => {
-  it("opens on the first space in review with the island on the proposals", () => {
+  it("opens on the first space in review; the list says what is next, so the island stays out of the way", () => {
     expect($("h1")?.textContent).toContain("Stripe v2 billing");
     expect($$(".sp").length).toBe(3);
-    expect($(".island b")?.textContent).toBe("Review 3 proposals");
-    // three zones: files with the proposals listed, the diff of the first one, the checks
-    expect($$("[data-section='proposed'] .frow").length).toBe(2);
+    expect(app.upNext.title).toBe("Review 3 proposals");
+    expect($(".island")).toBeNull();
+    // the files to review, the diff of the first one with what its agents say, the checks
+    expect($$("[data-section='review'] .frow").length).toBe(2);
     expect($$(".hunk").length).toBe(2);
     expect($$(".hunk.focus").length).toBe(1);
-    expect($(".hunk.focus")?.textContent).toContain("Verify the Stripe signature");
+    expect($(".hunk.focus")?.textContent).toContain("constructEvent");
+    expect($(".why")?.textContent).toContain("says");
     expect($("aside[aria-label='Checks']")).toBeTruthy();
     expect(document.documentElement.style.getPropertyValue("--space")).toBe("#E8A14A");
   });
@@ -53,20 +55,20 @@ describe("shell", () => {
   it("Tab moves the hunk cursor, Y accepts, U undoes", async () => {
     press("Tab");
     await settle();
-    expect($(".hunk.focus")?.textContent).toContain("Log event ids");
+    expect($(".hunk.focus")?.textContent).toContain("log.info");
     press("y");
     await settle();
     expect($$(".hunk[data-state='staged']").length).toBe(1);
-    expect($(".island b")?.textContent).toBe("Review 2 proposals");
+    expect(app.upNext.title).toBe("Review 2 proposals");
     // after accepting, the cursor moved on to the next pending proposal
-    expect($(".hunk.focus")?.textContent).toContain("Verify the Stripe signature");
+    expect($(".hunk.focus")?.textContent).toContain("constructEvent");
     press("Tab");
     await settle();
-    expect($(".hunk.focus")?.textContent).toContain("Log event ids");
+    expect($(".hunk.focus")?.textContent).toContain("log.info");
     press("u");
     await settle();
     expect($$(".hunk[data-state='staged']").length).toBe(0);
-    expect($(".island b")?.textContent).toBe("Review 3 proposals");
+    expect(app.upNext.title).toBe("Review 3 proposals");
   });
 
   it("switching space changes the accent, Alt 2 jumps, [ goes back", async () => {

@@ -452,7 +452,9 @@ fn many_files_stage_and_unstage_in_one_go() {
         .iter()
         .map(|p| ("app".to_string(), p.to_string()))
         .collect();
-    stage::stage_files(&s, &files).unwrap();
+    let mut with_ghost = files.clone();
+    with_ghost.push(("app".to_string(), "never/there.txt".to_string()));
+    stage::stage_files(&s, &with_ghost).unwrap();
     let st = status::space_status(&s).unwrap();
     assert_eq!(st.len(), 3);
     assert!(

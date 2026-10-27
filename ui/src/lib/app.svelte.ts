@@ -443,8 +443,35 @@ export class AppState {
     if (e.toast) this.toast(e.toast);
   }
 
-  /** Reload everything the backend knows about a space. */
-  async load(id: string, light = false) {
+  private loadJobs: Record<string, Promise<void> | undefined> = {};
+  private loadAgain: Record<string, boolean> = {};
+
+  /**
+   * Reload everything the backend knows about a space. Calls that come while a reload runs
+   * share it, and one more reload follows it: an action and the change event it causes cost
+   * two reloads at most, and every caller sees data newer than its call.
+   */
+  load(id: string, light = false): Promise<void> {
+    const running = this.loadJobs[id];
+    if (running) {
+      this.loadAgain[id] = true;
+      return running;
+    }
+    const job = (async () => {
+      try {
+        do {
+          this.loadAgain[id] = false;
+          await this.loadOnce(id, light);
+        } while (this.loadAgain[id]);
+      } finally {
+        delete this.loadJobs[id];
+      }
+    })();
+    this.loadJobs[id] = job;
+    return job;
+  }
+
+  private async loadOnce(id: string, light: boolean) {
     const b = this.backend;
     const [hunks, reasons, agents, stack, status, question, notes, files, links, checks, comments] = await Promise.all([
       b.hunks(id),
@@ -483,7 +510,7 @@ export class AppState {
     if (st.sel === null) {
       // First look: open on the proposal the space points at, else on the first file.
       const hi = this.data[id].hunks.find((h) => h.id === this.ui[id]?.hi);
-      const want = hi && hi.state === "pending" && hi.origin.type === "agent" ? rowId("proposed", hi.repo, hi.path) : null;
+      const want = hi && hi.state === "pending" ? rowId(hi.repo, hi.path) : null;
       if (want && rows.some((r) => r.id === want)) next = { ...next, sel: want };
     }
     const row = rows.find((r) => r.id === next.sel);
@@ -573,8 +600,7 @@ export class AppState {
   rvLocate(hunkId: string) {
     const h = this.sd.hunks.find((x) => x.id === hunkId);
     if (!h) return;
-    const sec: Section = h.state === "staged" ? "staged" : h.origin.type === "agent" ? "proposed" : "unstaged";
-    const row = this.rows.find((r) => r.section === sec && r.repo === h.repo && r.path === h.path);
+    const row = this.rows.find((r) => r.repo === h.repo && r.path === h.path);
     if (!row) return;
     const i = fileHunks(this.sd.hunks, h.repo, h.path).findIndex((x) => x.id === hunkId);
     this.setRv({ sel: row.id, hunk: Math.max(0, i) });
@@ -596,15 +622,36 @@ export class AppState {
     );
   }
 
-  private async stageRows(sid: string, rows: FileRow[]) {
+  /**
+   * Accept files: the proposals of agents in them are applied to your worktree, then each
+   * whole file is staged (your edits included). One git call per repo for the lot.
+   */
+  private async approveRows(sid: string, rows: FileRow[]) {
     if (!rows.length) return;
-    this.optimistic(sid, (st, hs) => stageLocally(st, hs, rows));
+    const ids = rows.flatMap((r) => this.pendingAgentHunks(sid, r).map((h) => h.id));
+    this.advanceFrom(sid, rows);
+    this.optimistic(sid, (st, hs) => {
+      const a = acceptLocally(st, hs, ids);
+      const b = stageLocally(a.status, a.hunks, rows);
+      return { status: b.status, hunks: b.hunks.map((h) => (rows.some((r) => r.repo === h.repo && r.path === h.path) && h.state === "pending" && h.origin.type === "you" ? { ...h, state: "staged" } : h)) };
+    });
     try {
+      if (ids.length) this.failedToApply(await this.backend.acceptHunks(sid, ids));
       await this.backend.stageFiles(sid, rows.map((r) => ({ repo: r.repo, path: r.path })));
     } catch (e) {
       this.fail(e);
     }
     await this.refresh(sid);
+  }
+  /** After the selected file leaves "To review", select the next one still waiting. */
+  private advanceFrom(sid: string, rows: FileRow[]) {
+    const sel = this.rv[sid]?.sel;
+    if (!sel || !rows.some((r) => r.id === sel)) return;
+    const list = this.sectionsOf(sid).review.flatMap((g) => g.files);
+    const i = list.findIndex((r) => r.id === sel);
+    const rest = list.filter((r) => !rows.some((x) => x.id === r.id));
+    const next = rest.find((r) => list.indexOf(r) > i) ?? rest[rest.length - 1];
+    if (next) this.rv[sid] = { ...(this.rv[sid] ?? initialRv()), sel: next.id, hunk: 0 };
   }
   private async unstageRows(sid: string, rows: FileRow[]) {
     if (!rows.length) return;
@@ -617,68 +664,53 @@ export class AppState {
     }
     await this.refresh(sid);
   }
-  private async acceptIds(sid: string, ids: string[]) {
-    if (!ids.length) return;
-    this.optimistic(sid, (st, hs) => acceptLocally(st, hs, ids));
-    try {
-      this.failedToApply(await this.backend.acceptHunks(sid, ids));
-    } catch (e) {
-      this.fail(e);
-    }
-    await this.refresh(sid);
-  }
   private failedToApply(failed: string[]) {
     if (failed.length) this.toast(failed.length === 1 ? failed[0] : `${failed.length} proposals did not apply: ${failed[0]}`);
   }
 
-  /** Space: stage or unstage the selected file (a proposed file: accept its pending hunks). */
+  /** Space: accept the selected file, or take an accepted one back to review. */
   async rvToggleFile() {
     const r = this.selectedRow;
     if (r) await this.rvStageRow(r);
   }
-  /** Stage, unstage or accept one row of the list. */
+  /** Accept one file (or take it back to review when it is accepted). */
   async rvStageRow(r: FileRow) {
     const sid = this.space.id;
-    if (r.section === "staged") return this.unstageRows(sid, [r]);
-    if (r.section === "unstaged") return this.stageRows(sid, [r]);
-    return this.acceptIds(
-      sid,
-      this.pendingAgentHunks(sid, r).map((h) => h.id),
-    );
+    if (r.section === "done") return this.unstageRows(sid, [r]);
+    return this.approveRows(sid, [r]);
   }
-  async rvStageAll() {
-    const rows = this.sections.unstaged.flatMap((g) => g.files);
-    if (!rows.length) return this.toast("Nothing to stage. Proposals need Y");
-    await this.stageRows(this.space.id, rows);
-  }
-  async rvUnstageAll() {
-    const rows = this.sections.staged.flatMap((g) => g.files);
-    if (!rows.length) return this.toast("Nothing is staged");
-    await this.unstageRows(this.space.id, rows);
-  }
-  /** Accept every pending proposal of the agents. */
-  async rvAcceptAll() {
+  /** Reject every proposal of agents in one file; your own edits stay. */
+  async rvRejectRow(r: FileRow) {
     const sid = this.space.id;
-    const ids = this.pendingAgentHunks(sid).map((h) => h.id);
-    if (!ids.length) return this.toast("No proposals waiting");
-    await this.acceptIds(sid, ids);
-  }
-  /** Shift A: approve everything at once, your edits staged and every proposal accepted. */
-  async rvApproveAll() {
-    const sid = this.space.id;
-    const rows = this.sections.unstaged.flatMap((g) => g.files);
-    const ids = this.pendingAgentHunks(sid).map((h) => h.id);
-    if (!rows.length && !ids.length) return this.toast(this.readyToCommit ? "All approved. Press C to commit" : "Nothing left to approve");
-    if (rows.length) this.optimistic(sid, (st, hs) => stageLocally(st, hs, rows));
-    if (ids.length) this.optimistic(sid, (st, hs) => acceptLocally(st, hs, ids));
+    const ids = this.pendingAgentHunks(sid, r).map((h) => h.id);
+    if (!ids.length) return this.toast("No proposal of an agent in this file. Your own edits are never thrown away here");
+    if (!r.mine) this.advanceFrom(sid, [r]);
+    this.optimistic(sid, (st, hs) => ({ status: st, hunks: hs.map((h) => (ids.includes(h.id) ? { ...h, state: "rejected" } : h)) }));
     try {
-      if (rows.length) await this.backend.stageFiles(sid, rows.map((r) => ({ repo: r.repo, path: r.path })));
-      if (ids.length) this.failedToApply(await this.backend.acceptHunks(sid, ids));
+      for (const id of ids) await this.backend.rejectHunk(sid, id);
     } catch (e) {
       this.fail(e);
     }
     await this.refresh(sid);
-    if (!this.pending.length && this.readyToCommit) this.toast("All approved. Press C to commit");
+  }
+  async rvStageAll() {
+    return this.rvApproveAll();
+  }
+  async rvUnstageAll() {
+    const rows = this.sections.done.flatMap((g) => g.files);
+    if (!rows.length) return this.toast("Nothing is accepted yet");
+    await this.unstageRows(this.space.id, rows);
+  }
+  async rvAcceptAll() {
+    return this.rvApproveAll();
+  }
+  /** Shift A: accept every file waiting, in one go. */
+  async rvApproveAll() {
+    const sid = this.space.id;
+    const rows = this.sections.review.flatMap((g) => g.files);
+    if (!rows.length) return this.toast(this.readyToCommit ? "Everything is accepted. Press C to commit" : "Nothing waits for review");
+    await this.approveRows(sid, rows);
+    if (!this.sections.counts.review && this.readyToCommit) this.toast("Everything is accepted. Press C to commit");
   }
   /** Y on the hunk under the cursor: stage it (accept it when an agent proposed it). */
   async rvHunkStage() {

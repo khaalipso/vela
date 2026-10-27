@@ -3,25 +3,36 @@
 
 import type { ChangeKind, FileChange, Hunk } from "./types";
 
-export type Section = "staged" | "unstaged" | "proposed";
-export const SECTIONS: Section[] = ["staged", "unstaged", "proposed"];
+/**
+ * One entry per changed file. "To review" holds every file with something waiting for you
+ * (an agent proposal, or an edit of yours not staged yet); "Accepted" the files whose every
+ * change is staged and will go in the commit. A file is never in both.
+ */
+export type Section = "review" | "done";
+export const SECTIONS: Section[] = ["review", "done"];
 export const SECTION_TITLES: Record<Section, string> = {
-  staged: "Staged",
-  unstaged: "Not staged",
-  proposed: "Proposed by agents",
+  review: "To review",
+  done: "Accepted",
 };
 
 export interface FileRow {
-  /** `section:repo/path`, unique in the list. */
+  /** `repo/path`: the same row whether the file waits or is accepted. */
   id: string;
   section: Section;
   repo: string;
   path: string;
-  /** Status letter: A, M, D, R, U, C, or P for a proposal. */
+  /** Status letter: A, M, D, R, U, C. */
   letter: string;
+  /** Lines added and removed by every change of the file (accepted or not). */
   add: number;
   del: number;
   hunks: number;
+  /** Hunks still waiting. */
+  pending: number;
+  /** Agents whose proposals wait in this file. */
+  agents: string[];
+  /** The file holds edits of yours not staged yet. */
+  mine: boolean;
 }
 
 export interface RepoGroup {
@@ -30,11 +41,10 @@ export interface RepoGroup {
 }
 
 export interface Sections {
-  staged: RepoGroup[];
-  unstaged: RepoGroup[];
-  proposed: RepoGroup[];
+  review: RepoGroup[];
+  done: RepoGroup[];
   counts: Record<Section, number>;
-  /** Lines added and removed by the staged set. */
+  /** Lines added and removed by the accepted files. */
   total: { add: number; del: number };
 }
 
@@ -43,11 +53,11 @@ const LETTER: Record<ChangeKind, string> = {
   modified: "M",
   deleted: "D",
   renamed: "R",
-  untracked: "U",
+  untracked: "A",
   conflicted: "C",
 };
 
-export const rowId = (section: Section, repo: string, path: string) => `${section}:${repo}/${path}`;
+export const rowId = (repo: string, path: string) => `${repo}/${path}`;
 
 function sizeOf(h: Hunk): { add: number; del: number } {
   let add = 0;
@@ -68,68 +78,56 @@ function group(rows: FileRow[]): RepoGroup[] {
   }));
 }
 
-/**
- * Staged files come from the index, "Not staged" from your edits in the worktree,
- * "Proposed" from pending agent hunks. Sizes are counted from the hunks of that side.
- */
+/** The files of the space with what waits in each, from git status and the hunks. */
 export function buildSections(status: FileChange[], hunks: Hunk[]): Sections {
-  const rows: Record<Section, FileRow[]> = { staged: [], unstaged: [], proposed: [] };
-  const of = (repo: string, path: string, pick: (h: Hunk) => boolean) => {
-    let add = 0;
-    let del = 0;
-    let n = 0;
-    for (const h of hunks) {
-      if (h.repo !== repo || h.path !== path || !pick(h)) continue;
-      const s = sizeOf(h);
-      add += s.add;
-      del += s.del;
-      n++;
-    }
-    return { add, del, hunks: n };
-  };
-  for (const c of status) {
-    if (c.staged) {
-      rows.staged.push({
-        id: rowId("staged", c.repo, c.path),
-        section: "staged",
-        repo: c.repo,
-        path: c.path,
-        letter: LETTER[c.staged],
-        ...of(c.repo, c.path, (h) => h.state === "staged"),
-      });
-    }
-    if (c.unstaged) {
-      rows.unstaged.push({
-        id: rowId("unstaged", c.repo, c.path),
-        section: "unstaged",
-        repo: c.repo,
-        path: c.path,
-        letter: LETTER[c.unstaged],
-        ...of(c.repo, c.path, (h) => h.state === "pending" && h.origin.type === "you"),
-      });
-    }
-  }
+  const keys: { repo: string; path: string }[] = [];
   const seen = new Set<string>();
-  for (const h of hunks) {
-    if (h.origin.type !== "agent" || h.state !== "pending") continue;
-    const k = `${h.repo}/${h.path}`;
-    if (seen.has(k)) continue;
-    seen.add(k);
-    rows.proposed.push({
-      id: rowId("proposed", h.repo, h.path),
-      section: "proposed",
-      repo: h.repo,
-      path: h.path,
-      letter: "P",
-      ...of(h.repo, h.path, (x) => x.state === "pending" && x.origin.type === "agent"),
-    });
-  }
-  const total = rows.staged.reduce((t, r) => ({ add: t.add + r.add, del: t.del + r.del }), { add: 0, del: 0 });
+  const add = (repo: string, path: string) => {
+    const k = rowId(repo, path);
+    if (!seen.has(k)) {
+      seen.add(k);
+      keys.push({ repo, path });
+    }
+  };
+  for (const c of status) if (c.staged || c.unstaged) add(c.repo, c.path);
+  for (const h of hunks) if (h.origin.type === "agent" && h.state === "pending") add(h.repo, h.path);
+
+  const rows: FileRow[] = keys.map(({ repo, path }) => {
+    const c = status.find((x) => x.repo === repo && x.path === path);
+    const hs = hunks.filter((h) => h.repo === repo && h.path === path && h.state !== "rejected");
+    const waiting = hs.filter((h) => h.state === "pending");
+    let a = 0;
+    let d = 0;
+    for (const h of hs) {
+      const z = sizeOf(h);
+      a += z.add;
+      d += z.del;
+    }
+    const agents = [...new Set(waiting.flatMap((h) => (h.origin.type === "agent" ? [h.origin.agent] : [])))];
+    const mine = !!c?.unstaged;
+    const kind = c?.unstaged ?? c?.staged ?? null;
+    const created = !c && hs.some((h) => h.oldStart === 0 && h.oldLines === 0);
+    return {
+      id: rowId(repo, path),
+      section: waiting.length || mine ? "review" : "done",
+      repo,
+      path,
+      letter: kind ? LETTER[kind] : created ? "A" : "M",
+      add: a,
+      del: d,
+      hunks: hs.length,
+      pending: waiting.length,
+      agents,
+      mine,
+    };
+  });
+  const review = rows.filter((r) => r.section === "review");
+  const done = rows.filter((r) => r.section === "done");
+  const total = done.reduce((t, r) => ({ add: t.add + r.add, del: t.del + r.del }), { add: 0, del: 0 });
   return {
-    staged: group(rows.staged),
-    unstaged: group(rows.unstaged),
-    proposed: group(rows.proposed),
-    counts: { staged: rows.staged.length, unstaged: rows.unstaged.length, proposed: rows.proposed.length },
+    review: group(review),
+    done: group(done),
+    counts: { review: review.length, done: done.length },
     total,
   };
 }
@@ -155,7 +153,7 @@ export interface RvState {
 
 export const initialRv = (): RvState => ({
   sel: null,
-  collapsed: { staged: false, unstaged: false, proposed: false },
+  collapsed: { review: false, done: false },
   focus: "files",
   hunk: 0,
   check: null,
@@ -168,7 +166,7 @@ export function visibleRows(s: Sections, collapsed: Record<Section, boolean>): F
 }
 
 export function allRows(s: Sections): FileRow[] {
-  return visibleRows(s, { staged: false, unstaged: false, proposed: false });
+  return visibleRows(s, { review: false, done: false });
 }
 
 /** J and K: move the selection, stopping at both ends. */
