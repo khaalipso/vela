@@ -296,6 +296,17 @@ pub fn spawn_terminal(dir: &Path, cmd: &[String]) -> AppResult<String> {
 pub fn open_terminal(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<String> {
     let dir = terminal_dir(vela, id, repo, path)?;
     let env = std::env::var("TERMINAL").ok();
+    // macOS: Terminal.app (or $TERMINAL, e.g. "open -a iTerm") opened on the folder.
+    if cfg!(target_os = "macos") {
+        let mut cmd: Vec<String> = match env.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+            Some(t) => t.split_whitespace().map(str::to_string).collect(),
+            None => vec!["open".into(), "-a".into(), "Terminal".into()],
+        };
+        if cmd.first().is_some_and(|c| c == "open") {
+            cmd.push(dir.to_string_lossy().into_owned());
+        }
+        return spawn_terminal(&dir, &cmd);
+    }
     let cmd = terminal_command(env.as_deref(), &on_path).ok_or_else(|| {
         AppError::new(
             "no_terminal",
@@ -333,10 +344,14 @@ pub fn list_archived(vela: &Vela) -> AppResult<Vec<Space>> {
         .collect())
 }
 
-/// Remove a space: its worktrees go, its branch is deleted only when fully merged.
+/// Remove a space: its worktrees go, its branch is deleted only when fully merged, the
+/// worktrees, branches, logs and notes of its agents go too.
 pub fn remove_space(vela: &Vela, id: &str) -> AppResult<()> {
     space::remove(vela, id)?;
-    let rejected = vela_core::paths::spaces_dir(&vela.home).join(format!("{id}.rejected.json"));
-    let _ = fs::remove_file(rejected);
+    let dir = vela_core::paths::spaces_dir(&vela.home);
+    for f in ["rejected.json", "agents.json", "notes.json"] {
+        let _ = fs::remove_file(dir.join(format!("{id}.{f}")));
+    }
+    let _ = fs::remove_dir_all(dir.join(format!("{id}.agents")));
     Ok(())
 }

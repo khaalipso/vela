@@ -22,6 +22,8 @@ pub struct RunSpec {
     pub harness: String,
     /// None: the harness picks its default model.
     pub model: Option<String>,
+    /// Reasoning effort (`low`, `medium`, `high`, ...). None: the harness default.
+    pub effort: Option<String>,
     pub tier: Option<Tier>,
     pub role: AgentRole,
     pub prompt: String,
@@ -34,15 +36,20 @@ pub struct RunSpec {
     pub extra_args: Vec<String>,
 }
 
+/// Answers a question while the run is still going (ACP permission requests). Returns
+/// false when the run has no question waiting.
+pub type Replier = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
 /// A running harness process and its normalized events.
 pub struct RunHandle {
     events: Receiver<AgentEvent>,
     ctl: Arc<Ctl>,
+    replier: Option<Replier>,
 }
 
-struct Ctl {
-    pid: u32,
-    cancelled: AtomicBool,
+pub(crate) struct Ctl {
+    pub(crate) pid: u32,
+    pub(crate) cancelled: AtomicBool,
 }
 
 impl RunHandle {
@@ -73,6 +80,24 @@ impl RunHandle {
     /// A cheap handle that can cancel this run from another thread.
     pub fn canceller(&self) -> Canceller {
         Canceller(self.ctl.clone())
+    }
+
+    /// Answers questions in the live run, for transports that can (ACP). None: a question
+    /// ends the run and the answer is a resumed run.
+    pub fn replier(&self) -> Option<Replier> {
+        self.replier.clone()
+    }
+
+    pub(crate) fn from_parts(
+        events: Receiver<AgentEvent>,
+        ctl: Arc<Ctl>,
+        replier: Option<Replier>,
+    ) -> Self {
+        RunHandle {
+            events,
+            ctl,
+            replier,
+        }
     }
 }
 
@@ -120,11 +145,7 @@ pub fn parse_stream(parser: &mut dyn LineParser, text: &str) -> Vec<AgentEvent> 
 }
 
 pub(crate) fn kill_group(pid: u32) {
-    let _ = Command::new("kill")
-        .args(["-KILL", "--", &format!("-{pid}")])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    vela_core::process::kill_group(pid);
 }
 
 /// Where harness binaries are looked for besides `PATH`, because an app started from a
@@ -280,7 +301,11 @@ pub(crate) fn launch(
             state.send(end);
         }
     });
-    Ok(RunHandle { events: rx, ctl })
+    Ok(RunHandle {
+        events: rx,
+        ctl,
+        replier: None,
+    })
 }
 
 struct Forward {

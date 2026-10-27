@@ -51,16 +51,52 @@ export interface FileContent extends FileRef {
   language: "typescript" | "javascript" | "rust" | "yaml" | "sql" | "markdown" | "plain";
 }
 
-/** A blocking note from the reviewer, attached to a hunk. */
+export type NoteLevel = "blocking" | "warning" | "info";
+
+/** A finding of the reviewer or security agent, on a line of a file (and the hunk there). */
 export interface ReviewNote {
+  id: string;
+  /** The agent that reported it. */
+  agent: string;
+  /** The hunk whose lines contain it; empty when none does. */
   hunkId: string;
   /** e.g. "Reviewer · Codex". */
   by: string;
+  level: NoteLevel;
+  repo: string;
+  path: string;
+  line: number;
   text: string;
   resolved: boolean;
-  /** The author is working on the fix. */
+  /** The agent asked for a fix is working on it. */
   busy: boolean;
+  /** The agent asked for a fix. */
+  fixer?: string | null;
 }
+
+/** Model and reasoning effort of one tier of a harness; null is the harness default. */
+export interface TierSetting {
+  tier: Tier;
+  model: string | null;
+  effort: string | null;
+}
+
+/** The tier settings of a harness (global config). */
+export interface HarnessTiers {
+  harness: string;
+  label: string;
+  available: boolean;
+  tiers: TierSetting[];
+  /** Model names to suggest; any other name works too. */
+  models: string[];
+  /** Efforts the harness accepts. */
+  efforts: string[];
+  /** The file the settings are written to. */
+  file: string | null;
+}
+
+/** Output of a terminal, or its end. */
+export type TermEvent = { type: "data"; id: number; data: string } | { type: "exit"; id: number; code: number | null };
 
 /** A question an agent is waiting on. */
 export interface AgentQuestion {
@@ -182,8 +218,21 @@ export interface Backend {
   /** Events of the agents, as they happen. */
   onAgent(listener: (e: AgentNotice) => void): Unsubscribe;
   notes(spaceId: string): Promise<ReviewNote[]>;
-  /** Ask the author of the hunk to fix the reviewer's blocking note. */
-  askFix(spaceId: string, hunkId: string): Promise<void>;
+  /** Ask the author of the hunk (or a new developer agent) to fix a note. */
+  askFix(spaceId: string, noteId: string): Promise<void>;
+  /** Mark a note resolved, or open it again. */
+  resolveNote(spaceId: string, noteId: string, resolved: boolean): Promise<void>;
+  /** Model and effort of each tier, per harness. */
+  agentTiers(): Promise<HarnessTiers[]>;
+  /** Set one tier of a harness; null or "" goes back to the harness default. */
+  setAgentTier(harness: string, tier: Tier, model: string | null, effort: string | null): Promise<void>;
+
+  /** Start a shell in the worktree of `repo` (the first repo when null). Returns its id. */
+  termOpen(spaceId: string, repo: string | null, cols: number, rows: number): Promise<number>;
+  termWrite(id: number, data: string): Promise<void>;
+  termResize(id: number, cols: number, rows: number): Promise<void>;
+  termClose(id: number): Promise<void>;
+  onTerm(listener: (e: TermEvent) => void): Unsubscribe;
 
   stack(spaceId: string): Promise<StackItem[]>;
 
@@ -396,10 +445,23 @@ export class MockBackend implements Backend {
         commitMsg: s.commitMsg,
         question: s.question,
         notes: new Map(
-          s.notes.map((n) => [
-            n.hunkId,
-            { note: { hunkId: n.hunkId, by: n.by, text: n.text, resolved: false, busy: false }, fix: n.fix },
-          ]),
+          s.notes.map((n) => {
+            const h = s.hunks.find((x) => x.id === n.hunkId);
+            const note: ReviewNote = {
+              id: `note-${n.hunkId}`,
+              agent: s.agents.find((a) => a.role === "reviewer")?.id ?? "reviewer",
+              hunkId: n.hunkId,
+              by: n.by,
+              level: "blocking",
+              repo: h?.repo ?? "",
+              path: h?.path ?? "",
+              line: h?.at ?? 1,
+              text: n.text,
+              resolved: false,
+              busy: false,
+            };
+            return [n.hunkId, { note, fix: n.fix }];
+          }),
         ),
       });
     }
@@ -910,8 +972,101 @@ export class MockBackend implements Backend {
     });
   }
 
-  async askFix(spaceId: string, hunkId: string): Promise<void> {
+  async resolveNote(spaceId: string, noteId: string, resolved: boolean): Promise<void> {
     const s = this.sp(spaceId);
+    const entry = [...s.notes.values()].find((n) => n.note.id === noteId);
+    if (!entry) throw new Error("This note is gone");
+    entry.note.resolved = resolved;
+    this.emit(spaceId);
+  }
+
+  private tierStore: Record<string, Record<Tier, { model: string | null; effort: string | null }>> = {};
+
+  async agentTiers(): Promise<HarnessTiers[]> {
+    const efforts: Record<string, string[]> = {
+      claude: ["low", "medium", "high", "xhigh", "max"],
+      codex: ["minimal", "low", "medium", "high", "xhigh"],
+      opencode: ["minimal", "low", "medium", "high", "max"],
+    };
+    const models: Record<string, string[]> = {
+      claude: ["opus", "sonnet", "haiku"],
+      codex: [],
+      opencode: ["opencode/big-pickle", "openrouter/deepseek/deepseek-v4.1-flash"],
+    };
+    return (["claude", "codex", "opencode"] as const).map((h) => ({
+      harness: h,
+      label: toolLabel(h),
+      available: true,
+      tiers: (["high", "medium", "low"] as Tier[]).map((t) => ({
+        tier: t,
+        model: this.tierStore[h]?.[t]?.model ?? null,
+        effort: this.tierStore[h]?.[t]?.effort ?? null,
+      })),
+      models: models[h],
+      efforts: efforts[h],
+      file: "~/.config/vela/config.toml",
+    }));
+  }
+
+  async setAgentTier(harness: string, tier: Tier, model: string | null, effort: string | null): Promise<void> {
+    const store = (this.tierStore[harness] ??= {} as Record<Tier, { model: string | null; effort: string | null }>);
+    store[tier] = { model: model?.trim() || null, effort: effort?.trim() || null };
+  }
+
+  // A fake shell: echoes what you type and answers `pwd`.
+  private terms = new Map<number, { line: string; cwd: string }>();
+  private termSeq = 0;
+  private termListeners = new Set<(e: TermEvent) => void>();
+  async termOpen(spaceId: string, repo: string | null, _cols: number, _rows: number): Promise<number> {
+    const s = this.sp(spaceId);
+    const r = s.space.repos.find((x) => x.name === repo) ?? s.space.repos[0];
+    const id = ++this.termSeq;
+    const cwd = `~/.local/share/vela/${r?.worktree ?? s.space.id}`;
+    this.terms.set(id, { line: "", cwd });
+    this.later(10, () => this.termOut(id, `mock shell in ${cwd}\r\n$ `));
+    return id;
+  }
+  private termOut(id: number, data: string) {
+    for (const l of this.termListeners) l({ type: "data", id, data });
+  }
+  async termWrite(id: number, data: string): Promise<void> {
+    const t = this.terms.get(id);
+    if (!t) throw new Error("This terminal is closed");
+    for (const ch of data) {
+      if (ch === "\r" || ch === "\n") {
+        const cmd = t.line.trim();
+        t.line = "";
+        if (cmd === "exit") {
+          this.terms.delete(id);
+          this.termOut(id, "\r\n");
+          for (const l of this.termListeners) l({ type: "exit", id, code: 0 });
+          return;
+        }
+        this.termOut(id, `\r\n${cmd === "pwd" ? `${t.cwd}\r\n` : cmd ? `${cmd}\r\n` : ""}$ `);
+      } else if (ch === "\x7f") {
+        if (t.line) {
+          t.line = t.line.slice(0, -1);
+          this.termOut(id, "\b \b");
+        }
+      } else {
+        t.line += ch;
+        this.termOut(id, ch);
+      }
+    }
+  }
+  async termResize(): Promise<void> {}
+  async termClose(id: number): Promise<void> {
+    if (!this.terms.delete(id)) return;
+    for (const l of this.termListeners) l({ type: "exit", id, code: null });
+  }
+  onTerm(listener: (e: TermEvent) => void): Unsubscribe {
+    this.termListeners.add(listener);
+    return () => this.termListeners.delete(listener);
+  }
+
+  async askFix(spaceId: string, noteId: string): Promise<void> {
+    const s = this.sp(spaceId);
+    const hunkId = [...s.notes.values()].find((n) => n.note.id === noteId)?.note.hunkId ?? noteId;
     const h = this.find(s, hunkId);
     const entry = s.notes.get(hunkId);
     if (!entry || entry.note.resolved || entry.note.busy) return;
@@ -1604,6 +1759,7 @@ export const CHANGED_EVENT = "vela://changed";
 export const CHECK_EVENT = "vela://check";
 /** Event the agent runner of the app emits; the payload is an AgentNotice. */
 export const AGENT_EVENT = "vela://agent";
+export const TERM_EVENT = "vela://term";
 
 /**
  * Talks to the Rust core. Notes, stack and gate come back empty until their milestones
@@ -1723,18 +1879,32 @@ export class TauriBackend implements Backend {
   notes(spaceId: string) {
     return call<ReviewNote[]>("notes", { spaceId });
   }
-  /** Send the proposal back to its author with the reviewer's note as the prompt. */
-  async askFix(spaceId: string, hunkId: string) {
-    const [hunks, notes, agents] = await Promise.all([this.hunks(spaceId), this.notes(spaceId), this.agents(spaceId)]);
-    const hunk = hunks.find((h) => h.id === hunkId);
-    if (!hunk || hunk.origin.type !== "agent") throw new Error("Only an agent's proposal can be sent back");
-    const note = notes.find((n) => n.hunkId === hunkId && !n.resolved);
-    if (!note) throw new Error("There is no reviewer note to fix");
-    const author = agents.find((a) => a.id === (hunk.origin as { agent: string }).agent);
-    if (!author) throw new Error("The author of this proposal is gone");
-    await this.askAgent(spaceId, author.role, `Fix the reviewer's note on ${hunk.path}:\n${note.text}`, {
-      harness: author.tool,
-    });
+  async askFix(spaceId: string, noteId: string) {
+    await call("ask_fix", { spaceId, noteId });
+  }
+  async resolveNote(spaceId: string, noteId: string, resolved: boolean) {
+    await call("resolve_note", { spaceId, noteId, resolved });
+  }
+  agentTiers() {
+    return call<HarnessTiers[]>("agent_tiers");
+  }
+  async setAgentTier(harness: string, tier: Tier, model: string | null, effort: string | null) {
+    await call("set_agent_tier", { harness, tier, model, effort });
+  }
+  termOpen(spaceId: string, repo: string | null, cols: number, rows: number) {
+    return call<number>("term_open", { spaceId, repo, cols, rows });
+  }
+  async termWrite(id: number, data: string) {
+    await call("term_write", { id, data });
+  }
+  async termResize(id: number, cols: number, rows: number) {
+    await call("term_resize", { id, cols, rows });
+  }
+  async termClose(id: number) {
+    await call("term_close", { id });
+  }
+  onTerm(listener: (e: TermEvent) => void): Unsubscribe {
+    return this.subscribe(TERM_EVENT, listener);
   }
   stack(spaceId: string) {
     return call<StackItem[]>("stack", { spaceId });

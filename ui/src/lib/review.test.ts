@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   allRows,
   buildSections,
+  splitRows,
   clampHunk,
   fileHunks,
   initialRv,
@@ -158,5 +159,29 @@ describe("hunk cursor", () => {
   it("is clamped when hunks disappear", () => {
     expect(clampHunk({ ...initialRv(), hunk: 4 }, 2).hunk).toBe(1);
     expect(clampHunk({ ...initialRv(), hunk: 4 }, 0).hunk).toBe(0);
+  });
+});
+
+describe("splitRows", () => {
+  it("pairs removed and added runs, context on both sides", () => {
+    const rows = splitRows({
+      lines: [
+        { kind: "ctx", old: 1, new: 1, text: "a" },
+        { kind: "del", old: 2, text: "b" },
+        { kind: "del", old: 3, text: "c" },
+        { kind: "add", new: 2, text: "B" },
+        { kind: "ctx", old: 4, new: 3, text: "d" },
+        { kind: "add", new: 4, text: "e" },
+      ],
+    } as never);
+    expect(rows.map((r) => [r.left?.text ?? null, r.right?.text ?? null])).toEqual([
+      ["a", "a"],
+      ["b", "B"],
+      ["c", null],
+      ["d", "d"],
+      [null, "e"],
+    ]);
+    expect(rows[1].left).toEqual({ n: 2, text: "b", kind: "del" });
+    expect(rows[1].right).toEqual({ n: 2, text: "B", kind: "add" });
   });
 });

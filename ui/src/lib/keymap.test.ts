@@ -278,3 +278,31 @@ describe("review view", () => {
     expect(resolveKey(key("Tab"), ctx({ view: "agents" }))).toBeNull();
   });
 });
+
+describe("find, terminal, preview, split, notes", () => {
+  const base: KeyContext = { typing: false, overlay: null, stackOpen: false, view: "code", hasQuestion: false };
+  it("Ctrl F finds in the code view, but leaves the editor's own Ctrl F alone", () => {
+    expect(resolveKey({ key: "f", ctrlKey: true }, base)).toEqual({ type: "find" });
+    expect(resolveKey({ key: "f", ctrlKey: true }, { ...base, typing: true })).toBeNull();
+    expect(resolveKey({ key: "f", ctrlKey: true }, { ...base, view: "review" })).toBeNull();
+  });
+  it("Ctrl ` toggles the terminal from anywhere, Ctrl Shift ` adds one, T too", () => {
+    expect(resolveKey({ key: "`", ctrlKey: true }, { ...base, typing: true })).toEqual({ type: "toggle-terminal" });
+    expect(resolveKey({ key: "~", code: "Backquote", ctrlKey: true, shiftKey: true }, base)).toEqual({ type: "new-terminal" });
+    expect(resolveKey({ key: "t" }, base)).toEqual({ type: "toggle-terminal" });
+    expect(resolveKey({ key: "t" }, { ...base, typing: true })).toBeNull();
+  });
+  it("V previews Markdown in the code view and splits the diff in the review", () => {
+    expect(resolveKey({ key: "v" }, base)).toEqual({ type: "toggle-preview" });
+    expect(resolveKey({ key: "v" }, { ...base, view: "review" })).toEqual({ type: "rv-split" });
+  });
+  it("Shift Y resolves a note in the review, Y still stages", () => {
+    const rv = { ...base, view: "review" as const };
+    expect(resolveKey({ key: "Y", shiftKey: true }, rv)).toEqual({ type: "rv-note-resolve" });
+    expect(resolveKey({ key: "y" }, rv)).toEqual({ type: "rv-hunk-stage" });
+  });
+  it("the settings sheet takes its own keys", () => {
+    expect(resolveKey({ key: "t" }, { ...base, overlay: "settings" })).toBeNull();
+    expect(resolveKey({ key: "Escape" }, { ...base, overlay: "settings" })).toEqual({ type: "close" });
+  });
+});

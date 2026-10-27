@@ -8,10 +8,13 @@ use vela_core::Vela;
 pub mod agentrun;
 pub mod checkrun;
 pub mod commands;
+pub mod desktop;
 pub mod error;
 pub mod fileops;
+pub mod shellenv;
 mod tauri_cmds;
 mod tauri_menu;
+pub mod term;
 pub mod watch;
 
 use tauri_cmds as c;
@@ -31,11 +34,13 @@ pub fn run() {
     let refresher = Arc::new(agentrun::Refresher::default());
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(vela)
         .manage(watchers)
         .manage(runner)
         .manage(agents)
         .manage(refresher)
+        .manage(Arc::new(term::Terminals::default()))
         .setup(|app| {
             let vela = app.state::<Vela>().inner().clone();
             let watchers = app.state::<Arc<watch::Watchers>>().inner().clone();
@@ -106,6 +111,14 @@ pub fn run() {
             c::agent_usage,
             c::accept_proposal,
             c::notes,
+            c::ask_fix,
+            c::resolve_note,
+            c::agent_tiers,
+            c::set_agent_tier,
+            c::term_open,
+            c::term_write,
+            c::term_resize,
+            c::term_close,
             c::stack,
             c::run_gate,
             c::set_checks_auto,

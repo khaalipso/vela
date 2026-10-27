@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 vela-core = { path = "../vela-core" }
+vela-agents = { path = "../vela-agents" }
 anyhow.workspace = true
 serde_json.workspace = true
 clap.workspace = true

@@ -137,6 +137,11 @@ pub struct RoleConfig {
 #[serde(default)]
 pub struct AgentsConfig {
     pub tiers: BTreeMap<String, TierModels>,
+    /// `[agents.effort.<harness>]`: the reasoning effort of each tier, same shape as `tiers`.
+    pub effort: BTreeMap<String, TierModels>,
+    /// `[agents.transport] <harness> = "acp" | "cli"`. Default: ACP when the harness has an ACP
+    /// server installed (`opencode acp`, `claude-code-acp`, `codex-acp`), else the CLI.
+    pub transport: BTreeMap<String, String>,
     pub roles: BTreeMap<String, RoleConfig>,
 }
 
@@ -221,8 +226,9 @@ fn is_known(path: &str) -> bool {
         ] | ["checks", "custom", _]
             | ["checks", "detected", _, "enabled"]
             | ["issues", "jira" | "linear"]
-            | ["agents", "tiers", _, "high" | "medium" | "low"]
+            | ["agents", "tiers" | "effort", _, "high" | "medium" | "low"]
             | ["agents", "roles", _, "tier" | "harness"]
+            | ["agents", "transport", _]
     )
 }
 
@@ -469,30 +475,70 @@ impl LoadedConfig {
 /// Set one value in the repo local layer, creating the file and tables as needed.
 /// Other keys, known or not, are kept (comments are not).
 pub fn set_local_value(vela: &Vela, repo_name: &str, path: &[&str], value: Value) -> Result<()> {
-    let file = local_file(vela, repo_name);
-    let mut root: Table = match fs::read_to_string(&file) {
+    set_value_in(&local_file(vela, repo_name), path, Some(value))
+}
+
+/// Set (`Some`) or remove (`None`) one value in the global layer of `dir`
+/// (`config_dir_from_env()` in the app). Tables left empty by a removal go too.
+pub fn set_global_value(dir: &Path, path: &[&str], value: Option<Value>) -> Result<()> {
+    set_value_in(&global_file(dir), path, value)
+}
+
+/// Set or remove one value in a config file, keeping the other keys.
+pub fn set_value_in(file: &Path, path: &[&str], value: Option<Value>) -> Result<()> {
+    let mut root: Table = match fs::read_to_string(file) {
         Ok(t) => t.parse().unwrap_or_default(),
         Err(_) => Table::new(),
     };
     let Some((last, parents)) = path.split_last() else {
         return Ok(());
     };
-    let mut cur = &mut root;
-    for p in parents {
-        let entry = cur
-            .entry((*p).to_string())
-            .or_insert_with(|| Value::Table(Table::new()));
-        if !entry.is_table() {
-            *entry = Value::Table(Table::new());
+    match value {
+        Some(value) => {
+            let mut cur = &mut root;
+            for p in parents {
+                let entry = cur
+                    .entry((*p).to_string())
+                    .or_insert_with(|| Value::Table(Table::new()));
+                if !entry.is_table() {
+                    *entry = Value::Table(Table::new());
+                }
+                cur = entry.as_table_mut().expect("table");
+            }
+            cur.insert((*last).to_string(), value);
         }
-        cur = entry.as_table_mut().expect("table");
+        None => {
+            fn remove(t: &mut Table, parents: &[&str], last: &str) {
+                match parents.split_first() {
+                    None => {
+                        t.remove(last);
+                    }
+                    Some((p, rest)) => {
+                        if let Some(Value::Table(child)) = t.get_mut(*p) {
+                            remove(child, rest, last);
+                            if child.is_empty() {
+                                t.remove(*p);
+                            }
+                        }
+                    }
+                }
+            }
+            remove(&mut root, parents, last);
+        }
     }
-    cur.insert((*last).to_string(), value);
     if let Some(dir) = file.parent() {
         fs::create_dir_all(dir)?;
     }
-    fs::write(&file, toml::to_string_pretty(&root)?)?;
+    fs::write(file, toml::to_string_pretty(&root)?)?;
     Ok(())
+}
+
+/// Only the global layer of `dir` (None: no global layer, the defaults).
+pub fn load_global(dir: Option<&Path>) -> LoadedConfig {
+    match dir {
+        Some(d) => load_layers(&[(Layer::Global, global_file(d))]),
+        None => load_layers(&[]),
+    }
 }
 
 /// Turn a check on or off in the repo local layer.
@@ -521,6 +567,38 @@ mod tests {
     fn write(p: &Path, text: &str) {
         fs::create_dir_all(p.parent().unwrap()).unwrap();
         fs::write(p, text).unwrap();
+    }
+
+    #[test]
+    fn global_values_are_set_and_removed() {
+        let t = tmp();
+        let g = t.path().join("g");
+        write(&global_file(&g), "[checks]\nauto = false\n");
+        set_global_value(
+            &g,
+            &["agents", "tiers", "claude", "high"],
+            Some(Value::String("opus".into())),
+        )
+        .unwrap();
+        set_global_value(
+            &g,
+            &["agents", "effort", "claude", "high"],
+            Some(Value::String("max".into())),
+        )
+        .unwrap();
+        let c = load_global(Some(&g)).config;
+        assert!(!c.checks.auto);
+        assert_eq!(c.agents.tiers["claude"].get(Tier::High), Some("opus"));
+        assert_eq!(c.agents.effort["claude"].get(Tier::High), Some("max"));
+        set_global_value(&g, &["agents", "effort", "claude", "high"], None).unwrap();
+        let c = load_global(Some(&g));
+        assert!(c.config.agents.effort.is_empty());
+        assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+        assert!(
+            !fs::read_to_string(global_file(&g))
+                .unwrap()
+                .contains("effort")
+        );
     }
 
     #[test]

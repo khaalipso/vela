@@ -9,9 +9,12 @@
 //! [agents.roles]
 //! planner = { tier = "high", harness = "claude" }
 //! tester = { harness = "opencode" }
+//!
+//! [agents.effort.claude]
+//! high = "max"
 //! ```
 //!
-//! A tier with no model configured passes no model flag: the harness picks its default.
+//! A tier with no model (or effort) configured passes no flag: the harness picks its default.
 
 use vela_core::config::AgentsConfig;
 use vela_core::model::{AgentRole, Tier};
@@ -31,7 +34,11 @@ pub fn harness_label(name: &str) -> &str {
 /// Default tier of a role (docs/HARNESS.md).
 pub fn default_tier(role: AgentRole) -> Tier {
     match role {
-        AgentRole::Planner | AgentRole::Reviewer | AgentRole::Debugger => Tier::High,
+        AgentRole::Planner
+        | AgentRole::Reviewer
+        | AgentRole::Debugger
+        | AgentRole::Product
+        | AgentRole::Security => Tier::High,
         AgentRole::Developer => Tier::Medium,
         AgentRole::Tester => Tier::Low,
     }
@@ -55,6 +62,8 @@ pub struct Resolved {
     pub tier: Tier,
     /// None: pass no model flag.
     pub model: Option<String>,
+    /// None: pass no effort flag (the harness default).
+    pub effort: Option<String>,
 }
 
 /// Pick the harness, tier and model for a role.
@@ -92,10 +101,16 @@ pub fn resolve(
         .get(&harness)
         .and_then(|t| t.get(tier))
         .map(str::to_string);
+    let effort = cfg
+        .effort
+        .get(&harness)
+        .and_then(|t| t.get(tier))
+        .map(str::to_string);
     Resolved {
         harness,
         tier,
         model,
+        effort,
     }
 }
 

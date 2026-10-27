@@ -8,6 +8,7 @@ use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use vela_agents::HarnessInfo;
 use vela_agents::manager::{AgentManager, AskRequest, Emit as EmitAgent, QuestionView};
+use vela_agents::notes::Note;
 use vela_agents::proposals::{self, Proposal};
 use vela_agents::registry::{self, LogEntry};
 use vela_core::Vela;
@@ -898,4 +899,193 @@ pub fn declare_repo(vela: &Vela, path: &str) -> AppResult<Vec<String>> {
         serde_json::to_string_pretty(&list).map_err(|e| AppError::new("io", e.to_string()))?;
     fs::write(declared_path(vela), json).map_err(|e| AppError::new("io", e.to_string()))?;
     list_repos(vela)
+}
+
+// ---------------------------------------------------------------------------
+// Tier settings: model and reasoning effort of each tier, per harness (global layer)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TierSetting {
+    pub tier: Tier,
+    /// None: the harness default model.
+    pub model: Option<String>,
+    /// None: the harness default effort.
+    pub effort: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessTiers {
+    pub harness: String,
+    pub label: String,
+    pub available: bool,
+    pub tiers: Vec<TierSetting>,
+    /// Model names to suggest (free text is fine too).
+    pub models: Vec<String>,
+    /// The efforts the harness accepts.
+    pub efforts: Vec<String>,
+    /// Where the settings are written.
+    pub file: Option<String>,
+}
+
+/// Efforts each harness accepts (`claude --effort`, codex `model_reasoning_effort`,
+/// opencode `--variant`).
+pub fn efforts_of(harness: &str) -> Vec<String> {
+    let v: &[&str] = match harness {
+        "claude" => &["low", "medium", "high", "xhigh", "max"],
+        "codex" => &["minimal", "low", "medium", "high", "xhigh"],
+        "opencode" => &["minimal", "low", "medium", "high", "max"],
+        _ => &[],
+    };
+    v.iter().map(|s| s.to_string()).collect()
+}
+
+fn models_of(harness: &str, bin: Option<&str>) -> Vec<String> {
+    match harness {
+        "claude" => ["opus", "sonnet", "haiku"].map(String::from).to_vec(),
+        // `opencode models` lists provider/model for every configured provider.
+        "opencode" => bin
+            .and_then(|b| {
+                std::process::Command::new(b)
+                    .arg("models")
+                    .stdin(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .output()
+                    .ok()
+            })
+            .filter(|o| o.status.success())
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| l.contains('/') && !l.contains(' '))
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// The tier settings of every harness Vela drives, from the global config.
+pub fn agent_tiers(agents: &AgentManager) -> Vec<HarnessTiers> {
+    let dir = agents.config_dir();
+    let cfg = config::load_global(dir).config.agents;
+    let installed = agents.harnesses();
+    vela_agents::tiers::HARNESSES
+        .iter()
+        .map(|h| {
+            let info = installed.iter().find(|i| i.name == *h);
+            let models = cfg.tiers.get(*h);
+            let efforts = cfg.effort.get(*h);
+            HarnessTiers {
+                harness: h.to_string(),
+                label: vela_agents::tiers::harness_label(h).to_string(),
+                available: info.is_some_and(|i| i.available),
+                tiers: Tier::ALL
+                    .into_iter()
+                    .map(|t| TierSetting {
+                        tier: t,
+                        model: models.and_then(|m| m.get(t)).map(str::to_string),
+                        effort: efforts.and_then(|m| m.get(t)).map(str::to_string),
+                    })
+                    .collect(),
+                models: models_of(h, info.and_then(|i| i.path.as_deref())),
+                efforts: efforts_of(h),
+                file: dir.map(|d| config::global_file(d).to_string_lossy().into_owned()),
+            }
+        })
+        .collect()
+}
+
+/// Set the model and effort of one tier of a harness. Empty or None goes back to the default.
+pub fn set_agent_tier(
+    agents: &AgentManager,
+    harness: &str,
+    tier: &str,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> AppResult<()> {
+    if !vela_agents::tiers::HARNESSES.contains(&harness) {
+        return Err(AppError::invalid(format!("unknown harness: {harness}")));
+    }
+    if !Tier::ALL.iter().any(|t| t.as_str() == tier) {
+        return Err(AppError::invalid(format!("unknown tier: {tier}")));
+    }
+    let dir = agents
+        .config_dir()
+        .ok_or_else(|| AppError::invalid("no config directory (set XDG_CONFIG_HOME or HOME)"))?;
+    let val = |s: Option<&str>| {
+        s.map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| toml::Value::String(s.to_string()))
+    };
+    if let Some(e) = effort.map(str::trim).filter(|e| !e.is_empty())
+        && !efforts_of(harness).iter().any(|x| x == e)
+    {
+        return Err(AppError::invalid(format!(
+            "{e} is not an effort {} knows ({})",
+            vela_agents::tiers::harness_label(harness),
+            efforts_of(harness).join(", ")
+        )));
+    }
+    config::set_global_value(dir, &["agents", "tiers", harness, tier], val(model))?;
+    config::set_global_value(dir, &["agents", "effort", harness, tier], val(effort))?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Reviewer notes
+// ---------------------------------------------------------------------------
+
+/// The notes of the reviewer and security agents, tied to the hunks they fall in.
+pub fn notes(vela: &Vela, agents: &AgentManager, id: &str) -> AppResult<Vec<Note>> {
+    let space = load(vela, id)?;
+    let entries = agents.entries(vela, id)?;
+    let mut entries = entries;
+    entries.reverse();
+    let all = hunks(vela, id)?;
+    Ok(vela_agents::notes::notes(vela, &space, &entries, &all))
+}
+
+/// `F`: send a note to the agent that wrote the hunk (or a new developer agent) for a fix.
+pub fn ask_fix(
+    vela: &Vela,
+    agents: &std::sync::Arc<AgentManager>,
+    id: &str,
+    note_id: &str,
+    emit: &EmitAgent,
+) -> AppResult<Agent> {
+    let space = load(vela, id)?;
+    let note = notes(vela, agents, id)?
+        .into_iter()
+        .find(|n| n.id == note_id)
+        .ok_or_else(|| AppError::invalid("this note is gone"))?;
+    if note.busy {
+        return Err(AppError::invalid("a fix is already on its way"));
+    }
+    let author = hunks(vela, id)?
+        .into_iter()
+        .find(|h| !note.hunk_id.is_empty() && h.id == note.hunk_id)
+        .and_then(|h| match h.origin {
+            vela_core::model::Origin::Agent { agent } => Some(agent),
+            _ => None,
+        });
+    Ok(agents.ask_fix(vela, &space, &note, author.as_deref(), emit)?)
+}
+
+/// `Y` on a note: mark it resolved (or open again).
+pub fn resolve_note(vela: &Vela, id: &str, note_id: &str, resolved: bool) -> AppResult<()> {
+    load(vela, id)?;
+    let mut st = vela_agents::notes::load_state(vela, id);
+    if resolved {
+        st.resolved.insert(note_id.to_string());
+    } else {
+        st.resolved.remove(note_id);
+        st.fixers.remove(note_id);
+    }
+    vela_agents::notes::save_state(vela, id, &st)?;
+    Ok(())
 }

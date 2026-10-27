@@ -228,8 +228,27 @@ pub fn set_color(vela: &Vela, id: &str, color: &str) -> Result<Space> {
 /// Remove worktrees (forced), delete the branch where fully merged, delete the toml.
 pub fn remove(vela: &Vela, id: &str) -> Result<()> {
     let space = store::load(vela, id)?;
+    let agents_dir = paths::space_root(&vela.home, id).join(".agents");
     for repo in &space.repos {
         let source = Path::new(&repo.source);
+        // The agents' worktrees (under the space directory) and their branches
+        // `<space-branch>--<agent>`: their work only ever reached you as proposals.
+        if let Ok(list) = git(source, &["worktree", "list", "--porcelain"]) {
+            for wt in list.lines().filter_map(|l| l.strip_prefix("worktree ")) {
+                if Path::new(wt).starts_with(&agents_dir) {
+                    let _ = git(source, &["worktree", "remove", "--force", wt]);
+                }
+            }
+        }
+        let pattern = format!("refs/heads/{}--*", space.branch);
+        if let Ok(refs) = git(
+            source,
+            &["for-each-ref", "--format=%(refname:short)", &pattern],
+        ) {
+            for b in refs.lines().map(str::trim).filter(|b| !b.is_empty()) {
+                let _ = git(source, &["branch", "-D", b]);
+            }
+        }
         if Path::new(&repo.worktree).exists() {
             git(source, &["worktree", "remove", "--force", &repo.worktree])?;
         }

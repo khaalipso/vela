@@ -211,3 +211,44 @@ export function fileHunks(hunks: Hunk[], repo: string, path: string): Hunk[] {
     .filter((h) => h.repo === repo && h.path === path && h.state !== "rejected")
     .sort((a, b) => a.newStart - b.newStart);
 }
+
+/** One side of a row of the side by side diff. */
+export interface SideCell {
+  n: number | null;
+  text: string;
+  kind: "ctx" | "add" | "del";
+}
+
+/** One row of the side by side diff: before on the left, after on the right. */
+export interface SplitRow {
+  left: SideCell | null;
+  right: SideCell | null;
+}
+
+/**
+ * Before and after, side by side: context lines on both sides, each run of removed lines
+ * paired with the run of added lines that follows it (the longer run leaves blanks).
+ */
+export function splitRows(h: Pick<Hunk, "lines">): SplitRow[] {
+  const out: SplitRow[] = [];
+  let dels: SideCell[] = [];
+  let adds: SideCell[] = [];
+  const flush = () => {
+    for (let i = 0; i < Math.max(dels.length, adds.length); i++) out.push({ left: dels[i] ?? null, right: adds[i] ?? null });
+    dels = [];
+    adds = [];
+  };
+  for (const l of h.lines) {
+    if (l.kind === "del") {
+      if (adds.length) flush();
+      dels.push({ n: l.old ?? null, text: l.text, kind: "del" });
+    } else if (l.kind === "add") {
+      adds.push({ n: l.new ?? null, text: l.text, kind: "add" });
+    } else {
+      flush();
+      out.push({ left: { n: l.old ?? null, text: l.text, kind: "ctx" }, right: { n: l.new ?? null, text: l.text, kind: "ctx" } });
+    }
+  }
+  flush();
+  return out;
+}

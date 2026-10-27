@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { colorOfRepo } from "../lib/colors";
   import { onMount, tick, untrack } from "svelte";
   import { app } from "../lib/app.svelte";
   import { files } from "../lib/files.svelte";
@@ -372,6 +373,7 @@
               class:open={n.kind === "file" && openKey === fileKey(n.repo, n.path)}
               style:height="{ROW_HEIGHT}px"
               style:padding-left="{8 + r.depth * 14}px"
+              style:--rc={n.kind === "repo" ? colorOfRepo(app.space, n.repo) : undefined}
               onclick={() => clickRow(r)}
               ondblclick={() => dblRow(r)}
               oncontextmenu={(e) => rowMenu(e, r)}
@@ -568,6 +570,11 @@
   }
   .row.repo .nm {
     font-weight: 600;
+    color: color-mix(in srgb, var(--rc) 75%, var(--fg));
+  }
+  .row.repo {
+    background: color-mix(in srgb, var(--rc) 8%, transparent);
+    box-shadow: inset 2px 0 0 color-mix(in srgb, var(--rc) 80%, transparent);
   }
   .chev {
     width: 12px;

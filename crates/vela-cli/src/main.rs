@@ -47,6 +47,22 @@ enum Command {
     },
     /// What to do next in a space.
     Next { space: String },
+    /// Notes of the reviewer and security agents of a space.
+    Notes { space: String },
+    /// Run an agent in a space and print its events until it ends. A question is answered
+    /// on stdin.
+    Ask {
+        space: String,
+        /// developer, reviewer, tester, planner, debugger, product, security.
+        role: String,
+        prompt: String,
+        /// claude, codex or opencode (default: the role's).
+        #[arg(long)]
+        harness: Option<String>,
+        /// high, medium or low (default: the role's).
+        #[arg(long)]
+        tier: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -211,6 +227,138 @@ fn run(cli: Cli) -> Result<()> {
                 print_json(&next)?;
             } else {
                 println!("{}", describe(&next));
+            }
+        }
+        Command::Notes { space } => {
+            let sp = load(&space)?;
+            let entries = vela_agents::registry::load(&vela, &sp.id)?;
+            let mut hunks = diff::worktree_hunks(&sp)?;
+            hunks.extend(diff::staged_hunks(&sp)?);
+            let notes = vela_agents::notes::notes(&vela, &sp, &entries, &hunks);
+            if cli.json {
+                print_json(&notes)?;
+            } else {
+                for n in notes {
+                    println!(
+                        "{:?} {}/{}:{} [{}] {}{}",
+                        n.level,
+                        n.repo,
+                        n.path,
+                        n.line,
+                        if n.hunk_id.is_empty() {
+                            "-"
+                        } else {
+                            &n.hunk_id
+                        },
+                        n.text,
+                        if n.resolved { " (resolved)" } else { "" }
+                    );
+                }
+            }
+        }
+        Command::Ask {
+            space,
+            role,
+            prompt,
+            harness,
+            tier,
+        } => ask(
+            &vela,
+            &space,
+            &role,
+            &prompt,
+            harness,
+            tier.as_deref(),
+            cli.json,
+        )?,
+    }
+    Ok(())
+}
+
+fn ask(
+    vela: &Vela,
+    space_id: &str,
+    role: &str,
+    prompt: &str,
+    harness: Option<String>,
+    tier: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    use std::sync::mpsc::channel;
+    use vela_agents::{AgentEvent, AgentManager, AskRequest, Drivers};
+    use vela_core::model::{AgentRole, AgentStatus, Tier};
+    let space = store::load(vela, space_id)?;
+    let role = AgentRole::parse(role).ok_or_else(|| anyhow::anyhow!("unknown role: {role}"))?;
+    let tier = match tier {
+        None => None,
+        Some(t) => Some(
+            Tier::ALL
+                .into_iter()
+                .find(|x| x.as_str() == t)
+                .ok_or_else(|| anyhow::anyhow!("unknown tier: {t}"))?,
+        ),
+    };
+    let m = AgentManager::new(Drivers::system());
+    let (tx, rx) = channel();
+    let tx = std::sync::Mutex::new(tx);
+    let emit: vela_agents::Emit = std::sync::Arc::new(move |n| {
+        let _ = tx.lock().map(|t| t.send(n));
+    });
+    let agent = m.ask(
+        vela,
+        &space,
+        AskRequest {
+            role,
+            prompt: prompt.to_string(),
+            harness,
+            tier,
+        },
+        &emit,
+    )?;
+    eprintln!(
+        "{} on {} ({})",
+        agent.id,
+        agent.tool,
+        agent.model.as_deref().unwrap_or("default model")
+    );
+    while let Ok(n) = rx.recv() {
+        if json {
+            println!("{}", serde_json::to_string(&n.event)?);
+        } else {
+            match &n.event {
+                AgentEvent::Message { text } => println!("{text}"),
+                AgentEvent::ToolCall { name, summary } => println!("  · {name} {summary}"),
+                AgentEvent::FileChanged { path } => println!("  ~ {path}"),
+                AgentEvent::Plan { steps } => steps.iter().for_each(|s| println!("  - {s}")),
+                AgentEvent::Question { text, options, .. } => {
+                    println!("? {text} [{}]", options.join(" / "))
+                }
+                AgentEvent::Done { .. } => println!("done"),
+                AgentEvent::Failed { error } => println!("failed: {error}"),
+                _ => {}
+            }
+        }
+        if let AgentEvent::Question { .. } = n.event {
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line)?;
+            // A line based run ends at its question: retry until it has ended (ACP takes the
+            // answer at once).
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while let Err(e) = m.answer(vela, &space, &agent.id, line.trim(), &emit) {
+                if std::time::Instant::now() > end {
+                    return Err(e.into());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            continue;
+        }
+        if n.event.is_terminal() {
+            let a = m
+                .list(vela, &space.id)?
+                .into_iter()
+                .find(|a| a.id == agent.id);
+            if a.is_none_or(|a| a.status != AgentStatus::Waiting) {
+                break;
             }
         }
     }

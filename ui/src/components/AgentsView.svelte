@@ -78,9 +78,13 @@
           <li class="off">No harness detected</li>
         {/each}
       </ul>
+      <button class="btn tiers" onclick={() => app.dispatch({ type: "open-settings" })}>Models and effort per tier…</button>
     </div>
-  {:else if total}
-    <div class="total" title="Tokens and cost of all agents of this space">{plural(agents.length, "agent", "agents")} · {total}</div>
+  {:else}
+    <div class="total">
+      <span title="Tokens and cost of all agents of this space">{plural(agents.length, "agent", "agents")}{total ? ` · ${total}` : ""}</span>
+      <button class="lnk" onclick={() => app.dispatch({ type: "open-settings" })}>Models and effort per tier</button>
+    </div>
   {/if}
 
   {#each agents as a (a.id)}
@@ -197,6 +201,18 @@
     font-size: 13px;
     line-height: 20px;
   }
+  .total .lnk {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--faint);
+  }
+  .total .lnk:hover {
+    color: var(--fg);
+  }
+  .tiers {
+    margin-top: 10px;
+    align-self: flex-start;
+  }
   .harnesses {
     list-style: none;
     margin: 4px 0 0;
@@ -224,6 +240,8 @@
     font-size: 12px;
     color: var(--faint);
     padding: 0 4px;
+    display: flex;
+    gap: 8px;
   }
   .agent {
     background: var(--raised);

@@ -46,6 +46,13 @@ The Review view has three zones: files (Staged first and big, then Not staged, t
 
 The composer's gate lists the results of these checks (a failing one needs an override). If every enabled hook check passed on the exact index tree and `checks.skip_hooks_on_commit_if_passed` is on, the commit runs with `--no-verify` and carries `Vela-Checks: <ids> passed on <short tree>`.
 
+## Terminal, preview, colors, notifications
+
+- **Terminal panel** (`T` or `Ctrl \``): shells in a pseudo terminal (`portable-pty`, `$SHELL`) started in a worktree of the space, shown with xterm.js under the current view. One tab per shell, one more with `Ctrl Shift \`` or the `+ <repo>` buttons, resizable. Each space has its own terminals.
+- **Markdown**: `.md` files open rendered (marked, sanitized with DOMPurify); `V` shows the source in the editor; relative links open the file, web links the browser.
+- **Repo colors**: each repo of a space has a soft color in the family of the space color (analogous hues 32° apart, calm saturation, `lib/colors.ts`). Editor tabs, top bar chips, the file tree and the review groups use it.
+- **Desktop notifications** when an agent asks a question, is done or fails, while no Vela window has the focus.
+
 ## Commit gate
 
 Before a commit, run in parallel on the staged diff only: reviewer agent (non interactive CLI call), tests touched by the diff, lint, secret scan, repo rules. Results are cached per hunk id. One commit is made per repo with the same message; push goes to the same branch name everywhere. Override needs a written reason, stored in the commit trailer `Vela-Override:`.
@@ -60,7 +67,10 @@ Before a commit, run in parallel on the staged diff only: reviewer agent (non in
 | `1` `2` `3` | Code, Review, Agents |
 | `J` `K` | Next, previous proposal |
 | `Y` `N` `E` `U` | Accept, reject, accept and edit, undo |
-| `F` | Ask the author to fix the reviewer note |
+| `F` | Ask the author to fix the reviewer note (`Shift Y` resolves it) |
+| `V` | Code view: Markdown preview or source. Review: before and after side by side, or unified |
+| `Ctrl F` | Find (and replace) in the open file, or in the Markdown preview |
+| `T`, `Ctrl \`` | Terminal panel; `Ctrl Shift \`` opens one more |
 | `B` | Changes drawer (staged, changed by you, proposed) |
 | `S` | Stack and containers |
 | `@` | Ask an agent (Tab cycles the role) |
@@ -71,7 +81,7 @@ Before a commit, run in parallel on the staged diff only: reviewer agent (non in
 
 ## Right-click menus
 
-Every place has a context menu (`Menu` key or `Shift F10` on the focused item): file tree rows (file, folder, repo), editor tabs, the editor, review file rows and hunks, spaces in the rail (with an Archived section), repo chips in the top bar, links. Rows of the tree also have a `⋯` button. The same actions are listed under "Here" in the command bar for the current place, and shortcuts shown in menus are resolved through the keymap. Writes are guarded like `write_file`: inside a space worktree only, never `.git`. Delete goes to the system trash (`trash` crate); where there is none the UI asks and deletes for good. Discard restores the file from HEAD (from the index when part of it is staged); an untracked file needs an explicit confirm. Archiving a space only hides it; removing one deletes its worktrees and keeps branches with unmerged commits. Terminal: `$TERMINAL`, else `xdg-terminal-exec`, else a common terminal.
+Every place has a context menu (`Menu` key or `Shift F10` on the focused item): file tree rows (file, folder, repo), editor tabs, the editor, review file rows and hunks, spaces in the rail (with an Archived section), repo chips in the top bar, links. Rows of the tree also have a `⋯` button. The same actions are listed under "Here" in the command bar for the current place, and shortcuts shown in menus are resolved through the keymap. Writes are guarded like `write_file`: inside a space worktree only, never `.git`. Delete goes to the system trash (`trash` crate); where there is none the UI asks and deletes for good. Discard restores the file from HEAD (from the index when part of it is staged); an untracked file needs an explicit confirm. Archiving a space only hides it; removing one stops its agents, deletes its worktrees, the worktrees and branches of its agents (`<space-branch>--<agent>`, their work only ever reached you as proposals), their logs and notes, and keeps the space branch when it has unmerged commits. Terminal: `$TERMINAL`, else `xdg-terminal-exec`, else a common terminal.
 
 Single letter keys only act when focus is not in a text field. `Esc` leaves the field.
 

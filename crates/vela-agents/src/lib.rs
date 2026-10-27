@@ -1,7 +1,9 @@
 //! Vela drives existing coding agent CLIs ("harnesses") instead of shipping its own.
 //!
 //! - [`driver`]: the [`AgentDriver`] contract, [`RunSpec`], [`RunHandle`] and the process plumbing.
-//! - [`claude`], [`codex`], [`opencode`]: one driver and one stream parser each.
+//! - [`claude`], [`codex`], [`opencode`]: one CLI driver and one stream parser each.
+//! - [`acp`]: the ACP client driver, used when the harness has an ACP server.
+//! - [`notes`]: reviewer and security findings as notes on the hunks.
 //! - [`event`]: the normalized [`AgentEvent`] every driver produces.
 //! - [`tiers`]: role and tier to harness and model, from the layered config.
 //! - [`detect`]: which harnesses are installed.
@@ -10,12 +12,14 @@
 //! - [`registry`]: agents and their event logs on disk, restart recovery.
 //! - [`manager`]: runs agents on background threads and ties it all together.
 
+pub mod acp;
 pub mod claude;
 pub mod codex;
 pub mod detect;
 pub mod driver;
 pub mod event;
 pub mod manager;
+pub mod notes;
 pub mod opencode;
 pub mod proposals;
 pub mod registry;

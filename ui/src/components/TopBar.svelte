@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { colorOfRepo } from "../lib/colors";
   import { app } from "../lib/app.svelte";
   import { openAtEvent } from "../lib/contextmenu.svelte";
   import { linkMenu, repoChipMenu } from "../lib/menus";
@@ -34,7 +35,7 @@
   <div class="chips">
     {#each app.space.repos as r (r.name)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <span class="chip" oncontextmenu={(e) => openAtEvent(e, repoChipMenu(r.name), r.name)}>
+      <span class="chip" style:--rc={colorOfRepo(app.space, r.name)} oncontextmenu={(e) => openAtEvent(e, repoChipMenu(r.name), r.name)}>
         <button class="chipb" title={r.worktree} onclick={() => { if (!app.filesOpen) app.dispatch({ type: "toggle-files" }); }}><b>{r.name}</b><span class="mono">{app.space.branch}</span></button>
         {#if app.space.repos.length > 1}
           <button class="rm" aria-label={`Remove ${r.name} from this space`} title="Remove from this space (its worktree must be clean)" onclick={() => app.dispatch({ type: "remove-repo", repo: r.name })}>×</button>
@@ -137,7 +138,8 @@
     height: 28px;
     padding: 0 10px;
     border-radius: 8px;
-    background: var(--panel);
+    background: color-mix(in srgb, var(--rc) 12%, var(--panel));
+    box-shadow: inset 2px 0 0 color-mix(in srgb, var(--rc) 80%, transparent);
     font-size: 12px;
     color: var(--muted);
   }

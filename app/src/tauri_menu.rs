@@ -217,10 +217,19 @@ pub async fn remove_space(
     app: AppHandle,
     vela: State<'_, Vela>,
     watchers: State<'_, Arc<Watchers>>,
+    agents: State<'_, Arc<vela_agents::AgentManager>>,
     space_id: String,
 ) -> AppResult<()> {
     let id = space_id.clone();
-    blocking(&vela, move |v| fileops::remove_space(v, &id)).await?;
+    let mgr = agents.inner().clone();
+    blocking(&vela, move |v| {
+        // Their processes run in the worktrees about to go.
+        if mgr.cancel_space(&id) > 0 {
+            mgr.wait_idle_space(&id, std::time::Duration::from_secs(5));
+        }
+        fileops::remove_space(v, &id)
+    })
+    .await?;
     let (v, w, e) = (
         vela.inner().clone(),
         watchers.inner().clone(),

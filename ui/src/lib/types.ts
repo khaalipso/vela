@@ -83,7 +83,7 @@ export interface Hunk {
   state: HunkState;
 }
 
-export type AgentRole = "planner" | "developer" | "reviewer" | "tester" | "debugger";
+export type AgentRole = "planner" | "developer" | "reviewer" | "tester" | "debugger" | "product" | "security";
 
 export type AgentStatus = "working" | "waiting" | "done" | "failed" | "interrupted";
 
