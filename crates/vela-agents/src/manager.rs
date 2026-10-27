@@ -98,6 +98,11 @@ impl Drivers {
     pub fn detect(&self) -> Vec<HarnessInfo> {
         detect(self.path.as_deref())
     }
+
+    /// Installed harnesses, found on the `PATH` without running them.
+    pub fn installed(&self) -> Vec<String> {
+        crate::detect::installed(self.path.as_deref())
+    }
 }
 
 struct Live {
@@ -112,7 +117,12 @@ pub struct AgentManager {
     /// The directory of the global config layer; None skips it.
     config_dir: Option<PathBuf>,
     live: Mutex<HashMap<String, Live>>,
+    /// Harnesses with their versions, detected at most once per [`DETECT_TTL`].
+    detected: Mutex<Option<(Instant, Vec<HarnessInfo>)>>,
 }
+
+/// How long a harness detection (which runs `--version` of each) is reused.
+const DETECT_TTL: Duration = Duration::from_secs(300);
 
 fn key(space: &str, agent: &str) -> String {
     format!("{space}\0{agent}")
@@ -126,7 +136,8 @@ pub fn is_read_only(role: AgentRole) -> bool {
     )
 }
 
-fn role_brief(role: AgentRole) -> &'static str {
+/// The built in brief of a role, sent before every request. `[agents.prompts]` replaces it.
+pub fn role_brief(role: AgentRole) -> &'static str {
     match role {
         AgentRole::Developer => {
             "You are the developer agent of a Vela space. Make the requested change in this \
@@ -168,16 +179,22 @@ fn role_brief(role: AgentRole) -> &'static str {
     }
 }
 
-fn compose_prompt(role: AgentRole, prompt: &str) -> String {
+/// The brief of the role (the custom one when set), the notes format for the roles that
+/// report notes, then the request.
+pub fn compose_prompt(role: AgentRole, prompt: &str, custom: Option<&str>) -> String {
+    let brief = custom
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .unwrap_or_else(|| role_brief(role));
     if crate::notes::reports_notes(role) {
         format!(
             "{} {}\n\nRequest: {}",
-            role_brief(role),
+            brief,
             crate::notes::FORMAT,
             prompt.trim()
         )
     } else {
-        format!("{}\n\nRequest: {}", role_brief(role), prompt.trim())
+        format!("{}\n\nRequest: {}", brief, prompt.trim())
     }
 }
 
@@ -201,6 +218,7 @@ impl AgentManager {
             drivers,
             config_dir: vela_core::paths::config_dir_from_env(),
             live: Mutex::new(HashMap::new()),
+            detected: Mutex::new(None),
         })
     }
 
@@ -210,6 +228,7 @@ impl AgentManager {
             drivers,
             config_dir,
             live: Mutex::new(HashMap::new()),
+            detected: Mutex::new(None),
         })
     }
 
@@ -218,8 +237,28 @@ impl AgentManager {
         self.config_dir.as_deref()
     }
 
+    /// Harnesses with their versions. Cached: `--version` is slow for some of them.
     pub fn harnesses(&self) -> Vec<HarnessInfo> {
-        self.drivers.detect()
+        let mut g = self.detected.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, list)) = g.as_ref()
+            && at.elapsed() < DETECT_TTL
+        {
+            return list.clone();
+        }
+        let list = self.drivers.detect();
+        *g = Some((Instant::now(), list.clone()));
+        list
+    }
+
+    /// Forget the cached detection (after installing a harness).
+    pub fn refresh_harnesses(&self) -> Vec<HarnessInfo> {
+        *self.detected.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.harnesses()
+    }
+
+    /// Names of the installed harnesses, cheap: no process is started.
+    pub fn installed(&self) -> Vec<String> {
+        self.drivers.installed()
     }
 
     fn live(&self) -> std::sync::MutexGuard<'_, HashMap<String, Live>> {
@@ -279,12 +318,7 @@ impl AgentManager {
         space: &Space,
     ) -> Vec<(AgentRole, crate::tiers::Resolved)> {
         let cfg = self.agents_config(vela, space);
-        let installed: Vec<String> = self
-            .harnesses()
-            .into_iter()
-            .filter(|h| h.available)
-            .map(|h| h.name)
-            .collect();
+        let installed = self.installed();
         AgentRole::ALL
             .into_iter()
             .map(|r| (r, resolve(&cfg, r, &Overrides::default(), Some(&installed))))
@@ -378,12 +412,7 @@ impl AgentManager {
             return Err(Error::Invalid("tell the agent what to do".to_string()));
         }
         let cfg = self.agents_config(vela, space);
-        let installed: Vec<String> = self
-            .harnesses()
-            .into_iter()
-            .filter(|h| h.available)
-            .map(|h| h.name)
-            .collect();
+        let installed = self.installed();
         let resolved = resolve(
             &cfg,
             req.role,
@@ -475,7 +504,11 @@ impl AgentManager {
             effort: resolved.effort,
             tier: Some(resolved.tier),
             role: req.role,
-            prompt: compose_prompt(req.role, &req.prompt),
+            prompt: compose_prompt(
+                req.role,
+                &req.prompt,
+                cfg.prompts.get(req.role.as_str()).map(String::as_str),
+            ),
             cwd,
             session: None,
             read_only,

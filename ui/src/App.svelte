@@ -104,7 +104,7 @@
             </section>
           {:else}
             <section class="surface enter" aria-label={app.view}>
-              {#if app.view === "review"}<ReviewView />{:else if app.view === "code"}<CodeView />{:else}<AgentsView />{/if}
+              {#if app.view === "review"}<ReviewView />{:else if app.view === "code"}<CodeView />{:else if app.view === "prs"}{#await import("./components/PrsView.svelte") then { default: PrsView }}<PrsView />{/await}{:else}<AgentsView />{/if}
             </section>
           {/if}
         {/key}

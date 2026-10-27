@@ -32,6 +32,8 @@ install_app() {
   mkdir -p "$ICONS/256x256/apps" "$ICONS/512x512/apps"
   cp "$ROOT/app/icons/128x128@2x.png" "$ICONS/256x256/apps/vela.png"
   cp "$ROOT/app/icons/icon.png" "$ICONS/512x512/apps/vela.png"
+  mkdir -p "$ICONS/scalable/apps"
+  cp "$ROOT/assets/icon.svg" "$ICONS/scalable/apps/vela.svg"
   cat > "$DESKTOP" <<DESK
 [Desktop Entry]
 Name=Vela
@@ -53,5 +55,6 @@ launch_app() { nohup "$APP" "$@" >/dev/null 2>&1 & }
 uninstall_app() {
   rm -f "$APP" "$DESKTOP"
   for s in 32x32 128x128 256x256 512x512; do rm -f "$ICONS/$s/apps/vela.png"; done
+  rm -f "$ICONS/scalable/apps/vela.svg"
   update-desktop-database "$(dirname "$DESKTOP")" 2>/dev/null || true
 }

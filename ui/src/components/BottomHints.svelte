@@ -8,6 +8,7 @@
     review: [["J K", "move"], ["Y", "accept"], ["N", "reject"], ["E", "edit by hand"], ["F", "ask to fix"]],
     code: [["Click", "type anywhere"], ["J K", "proposals"], ["Y N", "accept, reject"], ["B", "files"], ["Ctrl P", "go to file"]],
     agents: [["@", "ask"], ["Y N", "answer"]],
+    prs: [["R", "refresh"], ["@", "ask an agent"]],
   };
   const hints = $derived([...HINTS[app.view], ["C", "commit"], ["L", "links"], ["Right click", "actions"], ["Ctrl K", "everything"]]);
   const stack = $derived(app.sd.stack);

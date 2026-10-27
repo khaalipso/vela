@@ -52,17 +52,32 @@ fn version_of(bin: &std::path::Path) -> Option<String> {
 /// Check every harness: binary on `path` (the `PATH` format; None for the process `PATH`
 /// plus the usual install directories) and its version.
 pub fn detect(path: Option<&OsStr>) -> Vec<HarnessInfo> {
+    // `--version` of a Node based CLI can take a second: ask them all at once.
+    std::thread::scope(|scope| {
+        let jobs: Vec<_> = HARNESSES
+            .iter()
+            .map(|name| {
+                let bin = locate(name, path);
+                scope.spawn(move || HarnessInfo {
+                    name: (*name).to_string(),
+                    label: harness_label(name).to_string(),
+                    available: bin.is_some(),
+                    version: bin.as_deref().and_then(version_of),
+                    path: bin.map(|b| b.to_string_lossy().into_owned()),
+                })
+            })
+            .collect();
+        jobs.into_iter()
+            .map(|j| j.join().expect("version thread"))
+            .collect()
+    })
+}
+
+/// The installed harnesses, without running them (a lookup on the `PATH`).
+pub fn installed(path: Option<&OsStr>) -> Vec<String> {
     HARNESSES
         .iter()
-        .map(|name| {
-            let bin = locate(name, path);
-            HarnessInfo {
-                name: (*name).to_string(),
-                label: harness_label(name).to_string(),
-                available: bin.is_some(),
-                version: bin.as_deref().and_then(version_of),
-                path: bin.map(|b| b.to_string_lossy().into_owned()),
-            }
-        })
+        .filter(|n| locate(n, path).is_some())
+        .map(|n| n.to_string())
         .collect()
 }

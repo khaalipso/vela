@@ -85,6 +85,14 @@ Each tier also has a reasoning effort per harness (`[agents.effort.<harness>]`),
 | Product | no | goal, user stories, acceptance criteria, edge cases, open questions |
 | Security | no | injection, auth, secrets, input handling, dependencies, data exposure; reports notes |
 
+## Prompts
+
+Every request is sent as the brief of its role, then `Request: <what you asked>`. The briefs can be edited in the app (Agents view, "Prompts", or Ctrl K "Agent prompts"); they are stored in `[agents.prompts]` of the global config, and a repo can override them in `.vela/config.toml`. The NOTE format is still appended for the reviewer and security roles.
+
+The Agents view takes a follow up on a finished agent (a resumed run of its session, in its own worktree) and reruns a request after editing it (the composer opens with its role, harness, tier and text). The harness picked in the composer stays picked for the next requests and across restarts.
+
+Harness detection (`--version` of each, in parallel) is cached for five minutes and warmed at startup; starting an agent only looks the binaries up on the `PATH`. opencode's model list (`opencode models`) is fetched in the background and cached for ten minutes.
+
 ## Reviewer notes
 
 The reviewer and security agents are asked to end their answer with one line per finding: `NOTE <blocking|warning|info> <path>:<line> <text>`. Those lines become notes, tied to the hunk whose lines contain them (`vela_agents::notes`). The Review view shows them on their hunk, or at the top of the file when no hunk holds them. `F` sends a note for a fix: the agent that proposed the hunk gets it as a resumed run of its session when it can be resumed, else a new developer agent starts with the note as its request; the note is resolved when that agent is done. `Shift Y` resolves a note by hand. What the user did with the notes is kept in `VELA_HOME/spaces/<space>.notes.json`. `vela notes <space>` lists them.

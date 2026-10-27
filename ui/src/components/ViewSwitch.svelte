@@ -7,8 +7,10 @@
     ["code", "Code", "1"],
     ["review", "Review", "2"],
     ["agents", "Agents", "3"],
+    ["prs", "PRs", "4"],
   ];
-  const count = (v: View) => (v === "review" ? app.pending.length : v === "agents" ? (app.sd.question ? 1 : 0) : 0);
+  const count = (v: View) =>
+    v === "review" ? app.pending.length : v === "agents" ? (app.sd.question ? 1 : 0) : v === "prs" ? app.prAttention : 0;
 </script>
 
 <div class="views" role="group" aria-label="View">

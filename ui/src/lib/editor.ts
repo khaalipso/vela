@@ -2,15 +2,11 @@
 // as block widgets above their position, a blue gutter mark on the lines you typed.
 
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { javascript } from "@codemirror/lang-javascript";
-import { markdown } from "@codemirror/lang-markdown";
-import { rust } from "@codemirror/lang-rust";
-import { sql } from "@codemirror/lang-sql";
-import { yaml } from "@codemirror/lang-yaml";
 import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
 import { HighlightStyle, bracketMatching, indentOnInput, syntaxHighlighting } from "@codemirror/language";
 import {
   Annotation,
+  Compartment,
   EditorState,
   Facet,
   RangeSet,
@@ -35,6 +31,7 @@ import { tags as t } from "@lezer/highlight";
 import { mount, unmount } from "svelte";
 import InlineHunk from "../components/InlineHunk.svelte";
 import type { FileContent } from "./backend";
+import { loadLanguage, type Lang } from "./languages";
 import type { AgentRole, Hunk } from "./types";
 
 /** Marks transactions that come from the backend, so they are not counted as your typing. */
@@ -232,34 +229,44 @@ const theme = EditorView.theme({
 });
 
 const highlight = HighlightStyle.define([
-  { tag: [t.keyword, t.modifier, t.operatorKeyword, t.controlKeyword], color: "var(--info)" },
-  { tag: [t.string, t.special(t.string), t.regexp], color: "var(--add)" },
-  { tag: [t.number, t.bool, t.null, t.atom], color: "var(--warn)" },
-  { tag: [t.comment, t.lineComment, t.blockComment], color: "var(--faint)", fontStyle: "italic" },
-  { tag: [t.typeName, t.className, t.namespace], color: "var(--syn-alt)" },
-  { tag: [t.function(t.variableName), t.function(t.propertyName), t.macroName], color: "var(--syn-alt)" },
-  { tag: [t.propertyName, t.attributeName], color: "var(--fg)" },
-  { tag: [t.heading], color: "var(--fg)", fontWeight: "600" },
+  { tag: [t.keyword, t.modifier, t.operatorKeyword, t.controlKeyword, t.definitionKeyword, t.moduleKeyword], color: "var(--info)" },
+  { tag: [t.self, t.atom, t.bool, t.null], color: "var(--warn)" },
+  { tag: [t.string, t.special(t.string), t.character, t.inserted], color: "var(--add)" },
+  { tag: [t.regexp, t.escape, t.special(t.regexp)], color: "var(--syn-str2, var(--add))", fontStyle: "italic" },
+  { tag: [t.number, t.integer, t.float, t.unit], color: "var(--warn)" },
+  { tag: [t.comment, t.lineComment, t.blockComment, t.docComment], color: "var(--faint)", fontStyle: "italic" },
+  { tag: [t.typeName, t.className, t.namespace, t.standard(t.typeName)], color: "var(--syn-alt)" },
+  { tag: [t.function(t.variableName), t.function(t.propertyName), t.function(t.definition(t.variableName)), t.macroName], color: "var(--syn-fn)" },
+  { tag: [t.definition(t.variableName), t.definition(t.propertyName)], color: "var(--fg)", fontWeight: "500" },
+  // Keys of YAML, TOML, JSON, CSS properties, object fields.
+  { tag: [t.propertyName, t.labelName], color: "var(--syn-key)" },
+  { tag: [t.attributeName], color: "var(--syn-attr)" },
+  { tag: [t.attributeValue], color: "var(--add)" },
+  { tag: [t.tagName, t.angleBracket], color: "var(--syn-tag)" },
+  { tag: [t.variableName, t.special(t.variableName)], color: "var(--fg)" },
+  { tag: [t.constant(t.variableName), t.standard(t.variableName)], color: "var(--warn)" },
+  { tag: [t.meta, t.annotation, t.processingInstruction, t.documentMeta], color: "var(--syn-meta)" },
+  { tag: [t.operator, t.derefOperator, t.arithmeticOperator, t.logicOperator, t.compareOperator], color: "var(--muted)" },
+  { tag: [t.punctuation, t.separator, t.bracket], color: "var(--muted)" },
+  { tag: [t.heading, t.heading1, t.heading2, t.heading3], color: "var(--fg)", fontWeight: "700" },
+  { tag: [t.strong], fontWeight: "700" },
+  { tag: [t.emphasis], fontStyle: "italic" },
+  { tag: [t.strikethrough], textDecoration: "line-through" },
+  { tag: [t.link, t.url], color: "var(--info)", textDecoration: "underline" },
+  { tag: [t.monospace], color: "var(--syn-key)" },
+  { tag: [t.quote], color: "var(--muted)", fontStyle: "italic" },
+  { tag: [t.deleted], color: "var(--del)" },
+  { tag: [t.changed], color: "var(--warn)" },
   { tag: [t.invalid], color: "var(--del)" },
 ]);
 
-export function languageExt(l: FileContent["language"]): Extension {
-  switch (l) {
-    case "typescript":
-      return javascript({ typescript: true });
-    case "javascript":
-      return javascript();
-    case "rust":
-      return rust();
-    case "yaml":
-      return yaml();
-    case "sql":
-      return sql();
-    case "markdown":
-      return markdown();
-    default:
-      return [];
-  }
+/** Holds the language of the document; filled once its support is loaded (`setLanguage`). */
+export const languageSlot = new Compartment();
+
+/** Load the language of the file and switch the editor to it. */
+export async function setLanguage(view: EditorView, lang: Lang, still: () => boolean): Promise<void> {
+  const ext = await loadLanguage(lang);
+  if (still()) view.dispatch({ effects: languageSlot.reconfigure(ext) });
 }
 
 // -- state and helpers ---------------------------------------------------------
@@ -279,7 +286,7 @@ export function createState(f: FileContent, onUserChange: (content: string) => v
       search({ top: true }),
       highlightSelectionMatches(),
       keymap.of([...searchKeymap, ...defaultKeymap, ...historyKeymap]),
-      languageExt(f.language),
+      languageSlot.of([]),
       syntaxHighlighting(highlight),
       theme,
       hunkField,

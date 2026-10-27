@@ -82,6 +82,7 @@ fn check_name(path: &str) -> AppResult<()> {
 
 /// Create an empty file (and its folders). Refuses to touch one that exists.
 pub fn create_file(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<()> {
+    let _inv = crate::commands::Invalidate(id);
     let space = load(vela, id)?;
     check_name(path)?;
     let full = resolve_path(&space, repo, path)?;
@@ -96,6 +97,7 @@ pub fn create_file(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<(
 
 /// Create a folder (and its parents). Git only shows it once it holds a file.
 pub fn create_dir(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<()> {
+    let _inv = crate::commands::Invalidate(id);
     let space = load(vela, id)?;
     check_name(path)?;
     let full = resolve_path(&space, repo, path)?;
@@ -107,6 +109,7 @@ pub fn create_dir(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<()
 
 /// Move a file or folder inside the worktree. The target must not exist.
 pub fn rename_path(vela: &Vela, id: &str, repo: &str, from: &str, to: &str) -> AppResult<()> {
+    let _inv = crate::commands::Invalidate(id);
     let space = load(vela, id)?;
     check_name(to)?;
     let src = resolve_path(&space, repo, from)?;
@@ -146,6 +149,7 @@ pub fn delete_path_with(
     permanent: bool,
     trash: Trasher,
 ) -> AppResult<Disposal> {
+    let _inv = crate::commands::Invalidate(id);
     let space = load(vela, id)?;
     let full = resolve_path(&space, repo, path)?;
     if fs::symlink_metadata(&full).is_err() {
@@ -183,6 +187,7 @@ pub fn discard_file_with(
     path: &str,
     trash: Trasher,
 ) -> AppResult<()> {
+    let _inv = crate::commands::Invalidate(id);
     let space = load(vela, id)?;
     let full = resolve_path(&space, repo, path)?;
     let change = status::space_status(&space)?

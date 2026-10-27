@@ -39,6 +39,7 @@ pub fn emitter(app: &AppHandle) -> Emit {
     Arc::new(move |e: ChangeEvent| {
         let auto = e.kind == ChangeKind::State;
         let space_id = e.space_id.clone();
+        commands::invalidate_hunks(&space_id);
         let _ = app.emit(watch::EVENT, e);
         if auto {
             let vela = app.state::<Vela>().inner().clone();
@@ -57,6 +58,7 @@ pub fn check_emitter(app: &AppHandle) -> EmitCheck {
 }
 
 fn notify_state(app: &AppHandle, space_id: &str) {
+    commands::invalidate_hunks(space_id);
     let _ = app.emit(
         watch::EVENT,
         ChangeEvent {
@@ -738,6 +740,42 @@ pub async fn agent_tiers(
 }
 
 #[tauri::command]
+pub async fn agent_prompts(
+    agents: State<'_, Arc<AgentManager>>,
+) -> AppResult<Vec<commands::RolePrompt>> {
+    let agents = agents.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || commands::agent_prompts(&agents))
+        .await
+        .map_err(|e| AppError::new("internal", e.to_string()))
+}
+
+#[tauri::command]
+pub async fn set_agent_prompt(
+    agents: State<'_, Arc<AgentManager>>,
+    role: String,
+    text: Option<String>,
+) -> AppResult<()> {
+    let agents = agents.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        commands::set_agent_prompt(&agents, &role, text.as_deref())
+    })
+    .await
+    .map_err(|e| AppError::new("internal", e.to_string()))?
+}
+
+/// Models to suggest for a harness (slow the first time for opencode, then cached).
+#[tauri::command]
+pub async fn agent_models(
+    agents: State<'_, Arc<AgentManager>>,
+    harness: String,
+) -> AppResult<Vec<String>> {
+    let agents = agents.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || commands::agent_models(&agents, &harness))
+        .await
+        .map_err(|e| AppError::new("internal", e.to_string()))
+}
+
+#[tauri::command]
 pub async fn set_agent_tier(
     agents: State<'_, Arc<AgentManager>>,
     harness: String,
@@ -821,4 +859,48 @@ pub fn term_resize(
 #[tauri::command]
 pub fn term_close(terms: State<'_, Arc<crate::term::Terminals>>, id: u64) {
     terms.close(id);
+}
+
+// -- pull requests -------------------------------------------------------------
+
+/// The PR of the space branch in each repo (GitHub CLI).
+#[tauri::command]
+pub async fn pull_requests(
+    vela: State<'_, Vela>,
+    space_id: String,
+) -> AppResult<Vec<crate::prs::RepoPr>> {
+    blocking(&vela, move |v| {
+        let space = vela_core::store::load(v, &space_id)?;
+        Ok(crate::prs::space_prs(&space))
+    })
+    .await
+}
+
+/// Push the space branch of `repo` and open a PR. Returns its URL.
+#[tauri::command]
+pub async fn create_pull_request(
+    vela: State<'_, Vela>,
+    space_id: String,
+    repo: String,
+    draft: bool,
+) -> AppResult<String> {
+    blocking(&vela, move |v| {
+        let space = vela_core::store::load(v, &space_id)?;
+        crate::prs::create_pr(&space, &repo, draft)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn comment_pull_request(
+    vela: State<'_, Vela>,
+    space_id: String,
+    repo: String,
+    body: String,
+) -> AppResult<()> {
+    blocking(&vela, move |v| {
+        let space = vela_core::store::load(v, &space_id)?;
+        crate::prs::comment_pr(&space, &repo, &body)
+    })
+    .await
 }

@@ -104,9 +104,11 @@ describe("composer pickers", () => {
     press("Enter", {}, ta);
     await settle();
     expect(ask).toHaveBeenCalledWith(expect.any(String), "developer", "Handle charge.refunded", { harness: "codex", tier: "high" });
-    // The pick is for one request: the next composer starts from the role's default again.
-    expect(app.harness).toBeNull();
+    // The harness stays picked for the next requests (and is remembered); the tier is for one request.
+    expect(app.harness).toBe("codex");
+    expect(localStorage.getItem("vela.harness")).toBe("codex");
     expect(app.tier).toBeNull();
+    app.harness = null;
     ask.mockRestore();
   });
 
@@ -163,7 +165,7 @@ describe("agents view", () => {
     await settle();
     const card = $(".agent")!;
     expect(card.textContent).toContain("working");
-    expect(card.textContent).toContain("Claude Code · opus · high");
+    expect($$(".agent .tag").map((t) => t.textContent)).toEqual(["Claude Code", "opus", "high"]);
     expect($(".stream")?.textContent).toContain("then adding the refund branch");
     expect($$(".plan li").map((e) => e.textContent)).toEqual(["Read the webhook", "Add the refund branch"]);
     expect(card.textContent).toContain("2.0k in · 340 out · $0.04");

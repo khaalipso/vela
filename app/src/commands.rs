@@ -130,8 +130,77 @@ fn save_rejected(vela: &Vela, id: &str, ids: &BTreeSet<String>) -> AppResult<()>
     Ok(())
 }
 
+// One refresh of the UI asks for the hunks, the notes and Up next at the same time, and each
+// needs every diff of the space. They share one computation: concurrent calls wait for the
+// one in flight, and its result is reused for a moment. Anything that changes the space drops
+// it (`Invalidate` at the end of every write, the file watcher, agent events).
+
+struct HunkSlot {
+    at: Option<std::time::Instant>,
+    hunks: Vec<Hunk>,
+}
+
+type Slots = std::collections::HashMap<String, std::sync::Arc<std::sync::Mutex<HunkSlot>>>;
+static HUNK_SLOTS: std::sync::Mutex<Option<Slots>> = std::sync::Mutex::new(None);
+const HUNK_TTL: std::time::Duration = std::time::Duration::from_millis(150);
+
+fn hunk_slot(vela: &Vela, id: &str) -> std::sync::Arc<std::sync::Mutex<HunkSlot>> {
+    let mut g = HUNK_SLOTS.lock().unwrap_or_else(|e| e.into_inner());
+    g.get_or_insert_with(Default::default)
+        .entry(format!("{}\0{id}", vela.home.display()))
+        .or_insert_with(|| {
+            std::sync::Arc::new(std::sync::Mutex::new(HunkSlot {
+                at: None,
+                hunks: Vec::new(),
+            }))
+        })
+        .clone()
+}
+
+/// Forget the cached hunks of a space.
+pub fn invalidate_hunks(id: &str) {
+    let suffix = format!("\0{id}");
+    let slots: Vec<_> = HUNK_SLOTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|m| {
+            m.iter()
+                .filter(|(k, _)| k.ends_with(&suffix))
+                .map(|(_, v)| v.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    for s in slots {
+        s.lock().unwrap_or_else(|e| e.into_inner()).at = None;
+    }
+}
+
+/// Drops the cached hunks when the write that holds it ends.
+pub struct Invalidate<'a>(pub &'a str);
+
+impl Drop for Invalidate<'_> {
+    fn drop(&mut self) {
+        invalidate_hunks(self.0);
+    }
+}
+
 /// Pending worktree hunks (origin You, minus the rejected ones) and the staged hunks.
 pub fn hunks(vela: &Vela, id: &str) -> AppResult<Vec<Hunk>> {
+    let slot = hunk_slot(vela, id);
+    let mut g = slot.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(at) = g.at
+        && at.elapsed() < HUNK_TTL
+    {
+        return Ok(g.hunks.clone());
+    }
+    let fresh = compute_hunks(vela, id)?;
+    g.hunks = fresh.clone();
+    g.at = Some(std::time::Instant::now());
+    Ok(fresh)
+}
+
+fn compute_hunks(vela: &Vela, id: &str) -> AppResult<Vec<Hunk>> {
     let space = load(vela, id)?;
     let rejected = rejected_ids(vela, id)?;
     let staged = diff::staged_hunks(&space)?;
@@ -176,6 +245,7 @@ fn find(list: Vec<Hunk>, hunk_id: &str) -> AppResult<Hunk> {
 
 /// Stage one hunk (also what accepting a proposal does) and return it as staged.
 pub fn stage_hunk(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> {
+    let _inv = Invalidate(id);
     let space = load(vela, id)?;
     let Some(mut hunk) = diff::worktree_hunks(&space)?
         .into_iter()
@@ -201,6 +271,7 @@ pub fn stage_hunk(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> {
 
 /// Back to pending: unstage a staged hunk, or forget a rejection.
 pub fn unstage_hunk(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> {
+    let _inv = Invalidate(id);
     let space = load(vela, id)?;
     let mut rejected = rejected_ids(vela, id)?;
     if rejected.remove(hunk_id) {
@@ -229,6 +300,7 @@ pub fn unstage_hunk(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> {
 
 /// Hide a pending hunk for good: its id is stored in `spaces/<id>.rejected.json`.
 pub fn reject_hunk(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> {
+    let _inv = Invalidate(id);
     let space = load(vela, id)?;
     let mut rejected = rejected_ids(vela, id)?;
     let mut h = match diff::worktree_hunks(&space)?
@@ -338,6 +410,7 @@ pub fn space_files(vela: &Vela, id: &str) -> AppResult<Vec<RepoFiles>> {
 
 /// Stage every change of one file.
 pub fn stage_file(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<()> {
+    let _inv = Invalidate(id);
     let space = load(vela, id)?;
     resolve_path(&space, repo, path)?;
     Ok(stage::stage_file(&space, repo, path)?)
@@ -345,6 +418,7 @@ pub fn stage_file(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<()
 
 /// Unstage every staged change of one file.
 pub fn unstage_file(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<()> {
+    let _inv = Invalidate(id);
     let space = load(vela, id)?;
     resolve_path(&space, repo, path)?;
     Ok(stage::unstage_file(&space, repo, path)?)
@@ -359,6 +433,7 @@ pub fn read_file(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<Str
 }
 
 pub fn write_file(vela: &Vela, id: &str, repo: &str, path: &str, content: &str) -> AppResult<()> {
+    let _inv = Invalidate(id);
     let space = load(vela, id)?;
     let full = resolve_path(&space, repo, path)?;
     if let Some(parent) = full.parent() {
@@ -380,6 +455,7 @@ pub fn commit(
     message: &str,
     _override_reason: Option<&str>,
 ) -> AppResult<CommitResult> {
+    let _inv = Invalidate(id);
     let space = load(vela, id)?;
     if message.trim().is_empty() {
         return Err(AppError::invalid("empty commit message"));
@@ -414,6 +490,7 @@ pub fn commit_groups(
     groups: Vec<CommitGroup>,
     override_reason: Option<&str>,
 ) -> AppResult<CommitResult> {
+    let _inv = Invalidate(id);
     let space = load(vela, id)?;
     let mut groups = groups;
     if let Some(reason) = override_reason.map(str::trim).filter(|r| !r.is_empty()) {
@@ -703,6 +780,7 @@ pub fn reasons(vela: &Vela, id: &str) -> AppResult<std::collections::HashMap<Str
 
 /// Apply a proposal of an agent to your worktree and stage it.
 pub fn accept_proposal(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> {
+    let _inv = Invalidate(id);
     let space = load(vela, id)?;
     let rejected = rejected_ids(vela, id)?;
     let list = agent_proposals(vela, &space, &rejected, true)?;
@@ -942,6 +1020,36 @@ pub fn efforts_of(harness: &str) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
 }
 
+/// Model lists, by harness: `opencode models` takes a second or more.
+type ModelCache = std::collections::HashMap<String, (std::time::Instant, Vec<String>)>;
+static MODELS: std::sync::Mutex<Option<ModelCache>> = std::sync::Mutex::new(None);
+
+/// The models to suggest for a harness, cached for ten minutes.
+pub fn agent_models(agents: &AgentManager, harness: &str) -> Vec<String> {
+    const TTL: std::time::Duration = std::time::Duration::from_secs(600);
+    if let Some((at, list)) = MODELS
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().and_then(|m| m.get(harness).cloned()))
+        && at.elapsed() < TTL
+    {
+        return list;
+    }
+    let bin = agents
+        .harnesses()
+        .into_iter()
+        .find(|h| h.name == harness)
+        .and_then(|h| h.path);
+    let list = models_of(harness, bin.as_deref());
+    if let Ok(mut g) = MODELS.lock() {
+        g.get_or_insert_with(Default::default).insert(
+            harness.to_string(),
+            (std::time::Instant::now(), list.clone()),
+        );
+    }
+    list
+}
+
 fn models_of(harness: &str, bin: Option<&str>) -> Vec<String> {
     match harness {
         "claude" => ["opus", "sonnet", "haiku"].map(String::from).to_vec(),
@@ -992,7 +1100,12 @@ pub fn agent_tiers(agents: &AgentManager) -> Vec<HarnessTiers> {
                         effort: efforts.and_then(|m| m.get(t)).map(str::to_string),
                     })
                     .collect(),
-                models: models_of(h, info.and_then(|i| i.path.as_deref())),
+                // Cheap ones now; opencode's list comes from `agent_models`.
+                models: if *h == "opencode" {
+                    Vec::new()
+                } else {
+                    models_of(h, None)
+                },
                 efforts: efforts_of(h),
                 file: dir.map(|d| config::global_file(d).to_string_lossy().into_owned()),
             }
@@ -1087,5 +1200,53 @@ pub fn resolve_note(vela: &Vela, id: &str, note_id: &str, resolved: bool) -> App
         st.fixers.remove(note_id);
     }
     vela_agents::notes::save_state(vela, id, &st)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Agent prompts: the brief each role gets before the request (global layer)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RolePrompt {
+    pub role: AgentRole,
+    /// The built in brief.
+    pub default: String,
+    /// The user's brief from the global config, None when the default is used.
+    pub custom: Option<String>,
+    /// The roles that report notes get the NOTE format appended.
+    pub notes: bool,
+}
+
+pub fn agent_prompts(agents: &AgentManager) -> Vec<RolePrompt> {
+    let cfg = config::load_global(agents.config_dir()).config.agents;
+    AgentRole::ALL
+        .into_iter()
+        .map(|r| RolePrompt {
+            role: r,
+            default: vela_agents::manager::role_brief(r).to_string(),
+            custom: cfg
+                .prompts
+                .get(r.as_str())
+                .filter(|p| !p.trim().is_empty())
+                .cloned(),
+            notes: vela_agents::notes::reports_notes(r),
+        })
+        .collect()
+}
+
+/// Set the brief of a role; None or blank goes back to the built in one.
+pub fn set_agent_prompt(agents: &AgentManager, role: &str, text: Option<&str>) -> AppResult<()> {
+    let role =
+        AgentRole::parse(role).ok_or_else(|| AppError::invalid(format!("unknown role: {role}")))?;
+    let dir = agents
+        .config_dir()
+        .ok_or_else(|| AppError::invalid("no config directory (set XDG_CONFIG_HOME or HOME)"))?;
+    let value = text
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && *t != vela_agents::manager::role_brief(role))
+        .map(|t| toml::Value::String(t.to_string()));
+    config::set_global_value(dir, &["agents", "prompts", role.as_str()], value)?;
     Ok(())
 }

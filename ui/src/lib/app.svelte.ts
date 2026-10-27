@@ -11,6 +11,8 @@ import type {
   FileRef,
   GateCheck,
   HarnessTiers,
+  RepoPr,
+  RolePrompt,
   ReviewNote,
   TermEvent,
   Unsubscribe,
@@ -173,14 +175,15 @@ export class AppState {
   filesOpen = $state(readFlag("vela.filesOpen", true));
   overlay = $state<Overlay>(null);
   stackOpen = $state(false);
-  role = $state<AgentRole>("developer");
+  /** The role and harness of the last request stay picked for the next one. */
+  role = $state<AgentRole>(readRole());
   composerText = $state("");
   /** Harnesses Vela knows about and whether they are installed. */
   harnesses = $state.raw<Harness[]>([]);
   /** What each role gets by default, per space (the config can change it). */
   roleDefaults = $state.raw<Record<string, RoleDefault[]>>({});
-  /** The harness picked in the composer; null keeps the role's default. */
-  harness = $state<string | null>(null);
+  /** The harness picked in the composer (kept across requests and restarts); null: the role's default. */
+  harness = $state<string | null>(readStr("vela.harness"));
   /** The tier picked in the composer; null keeps the role's default. */
   tier = $state<Tier | null>(null);
   pal = $state({ q: "", i: 0 });
@@ -271,6 +274,16 @@ export class AppState {
 
   /** Tier settings of every harness (overlay "settings"). */
   tierSettings = $state.raw<HarnessTiers[]>([]);
+  /** The tab of the settings sheet. */
+  settingsTab = $state<"tiers" | "prompts">("tiers");
+  /** The settings were fetched at least once (the sheet shows the cached ones meanwhile). */
+  settingsLoaded = $state(false);
+  /** Model names per harness, loaded after the sheet is open. */
+  agentModelList = $state.raw<Record<string, string[]>>({});
+  rolePrompts = $state.raw<RolePrompt[]>([]);
+
+  /** Pull requests per space, fetched with the GitHub CLI when the PRs view opens. */
+  prs = $state.raw<Record<string, { list: RepoPr[]; at: number; loading: boolean; error: string | null }>>({});
 
   private off: Unsubscribe | null = null;
   private offCheck: Unsubscribe | null = null;
@@ -862,6 +875,7 @@ export class AppState {
   setView(v: View) {
     this.cui.view = v;
     this.overlay = null;
+    if (v === "prs") void this.loadPrs();
   }
 
   goSpace(i: number) {
@@ -1082,14 +1096,107 @@ export class AppState {
 
   // -- agent tier settings --------------------------------------------------
 
-  async openSettings() {
+  /** Open the agent settings at once; the data comes in behind (cached values first). */
+  openSettings(tab: "tiers" | "prompts" = "tiers") {
+    this.settingsTab = tab;
+    this.overlay = "settings";
+    void this.loadSettings();
+  }
+  private async loadSettings() {
+    const b = this.backend;
     try {
-      this.tierSettings = await this.backend.agentTiers();
-      this.overlay = "settings";
+      const [tiers, prompts] = await Promise.all([b.agentTiers(), b.agentPrompts()]);
+      this.tierSettings = tiers;
+      this.rolePrompts = prompts;
+      this.settingsLoaded = true;
+    } catch (e) {
+      this.fail(e);
+      return;
+    }
+    for (const h of this.tierSettings) {
+      if (h.models.length || !h.available) continue;
+      void b
+        .agentModels(h.harness)
+        .then((m) => (this.agentModelList = { ...this.agentModelList, [h.harness]: m }))
+        .catch(() => {});
+    }
+  }
+  /** Models to suggest for a harness: what the tiers call gave, else the lazily loaded list. */
+  modelsOf(h: HarnessTiers): string[] {
+    return h.models.length ? h.models : (this.agentModelList[h.harness] ?? []);
+  }
+  /** Save the brief of a role (null or blank: back to the built in one). */
+  async setPrompt(role: AgentRole, text: string | null) {
+    const def = this.rolePrompts.find((p) => p.role === role)?.default;
+    const t = text?.trim() || null;
+    const custom = t && t !== def ? t : null;
+    this.rolePrompts = this.rolePrompts.map((p) => (p.role === role ? { ...p, custom } : p));
+    try {
+      await this.backend.setAgentPrompt(role, custom);
+      this.toast(custom ? `${roleLabel(role)} brief saved` : `${roleLabel(role)} brief reset`);
     } catch (e) {
       this.fail(e);
     }
   }
+
+  // -- pull requests --------------------------------------------------------
+
+  get prState() {
+    return this.prs[this.space.id] ?? { list: [], at: 0, loading: false, error: null };
+  }
+  /** PRs that want something from you: changes requested or failing checks. */
+  get prAttention(): number {
+    return this.prState.list.filter(
+      (r) => r.pr && r.pr.state === "OPEN" && (r.pr.reviewDecision === "CHANGES_REQUESTED" || r.pr.checks.some((c) => c.state === "fail")),
+    ).length;
+  }
+  /** Fetch the PRs of the space; a fetch less than a minute old is kept unless `force`. */
+  async loadPrs(force = false) {
+    const id = this.space.id;
+    const cur = this.prs[id];
+    if (cur?.loading || (!force && cur && Date.now() - cur.at < 60_000)) return;
+    this.prs = { ...this.prs, [id]: { list: cur?.list ?? [], at: cur?.at ?? 0, loading: true, error: null } };
+    try {
+      const list = await this.backend.pullRequests(id);
+      this.prs = { ...this.prs, [id]: { list, at: Date.now(), loading: false, error: null } };
+    } catch (e) {
+      this.prs = { ...this.prs, [id]: { list: cur?.list ?? [], at: Date.now(), loading: false, error: String((e as Error)?.message ?? e) } };
+    }
+  }
+  async createPr(repo: string, draft = false) {
+    this.toast(`Pushing ${repo} and opening the pull request…`);
+    try {
+      const url = await this.backend.createPullRequest(this.space.id, repo, draft);
+      if (url) await this.addLinkFromPaste(url).catch(() => {});
+      this.toast("Pull request opened");
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.loadPrs(true);
+  }
+  async commentPr(repo: string, body: string): Promise<boolean> {
+    try {
+      await this.backend.commentPullRequest(this.space.id, repo, body);
+    } catch (e) {
+      this.fail(e);
+      return false;
+    }
+    await this.loadPrs(true);
+    return true;
+  }
+  /** Send a review comment to an agent: the remembered harness, as a developer. */
+  async fixPrComment(repo: string, text: string, where?: string) {
+    const prompt = `A reviewer left this comment on the pull request${where ? ` at ${where}` : ""} (repo ${repo}):\n${text}\n\nAddress it. Change only what the comment asks for.`;
+    try {
+      const harness = this.effectiveHarnessFor("developer");
+      await this.backend.askAgent(this.space.id, "developer", prompt, { harness });
+      this.toast("Sent to a developer agent");
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh();
+  }
+
   /** Change the model and/or the effort of a tier; what is left out keeps its latest value. */
   async setTier(harness: string, tier: Tier, patch: { model?: string | null; effort?: string | null }) {
     const cur = this.tierSettings.find((h) => h.harness === harness)?.tiers.find((t) => t.tier === tier);
@@ -1137,6 +1244,7 @@ export class AppState {
 
   openComposer() {
     this.overlay = "composer";
+    // The list is cached by the backend; refresh it behind the open composer.
     void this.loadHarnesses();
     void this.loadRoleDefaults(this.space.id);
   }
@@ -1164,9 +1272,14 @@ export class AppState {
 
   /** The harness the next request uses: the pick, else the role's default, else the first installed. */
   get effectiveHarness(): string {
-    const def = this.roleDefaults[this.space.id]?.find((d) => d.role === this.role)?.harness;
+    return this.effectiveHarnessFor(this.role);
+  }
+  effectiveHarnessFor(role: AgentRole): string {
+    const def = this.roleDefaults[this.space.id]?.find((d) => d.role === role)?.harness;
     const installed = this.installedHarnesses.map((h) => h.name);
-    return this.harness ?? (def && (!installed.length || installed.includes(def)) ? def : (installed[0] ?? def ?? "claude"));
+    // A remembered harness that is no longer installed gives way to the default.
+    if (this.harness && (!installed.length || installed.includes(this.harness))) return this.harness;
+    return def && (!installed.length || installed.includes(def)) ? def : (installed[0] ?? def ?? "claude");
   }
 
   /** The tier the next request uses: the pick, else the role's default. */
@@ -1179,6 +1292,7 @@ export class AppState {
     if (!names.length) return;
     const i = Math.max(0, names.indexOf(this.effectiveHarness));
     this.harness = names[(i + (delta === 1 ? 1 : names.length - 1)) % names.length];
+    writeStr("vela.harness", this.harness);
   }
 
   /** `delta` 1 raises the tier (towards high), -1 lowers it. */
@@ -1224,6 +1338,30 @@ export class AppState {
     await this.loadAgents(this.space.id);
   }
 
+  /** More work for a finished agent: a resumed run of its session, in its own worktree. */
+  async followUp(agentId: string, text: string): Promise<boolean> {
+    const t = text.trim();
+    if (!t) return false;
+    try {
+      await this.backend.answerAgentText(this.space.id, agentId, t);
+      this.toast("Sent");
+    } catch (e) {
+      this.fail(e);
+      return false;
+    }
+    await this.loadAgents(this.space.id);
+    return true;
+  }
+
+  /** Open the composer with the request of an agent, to edit it and run it again. */
+  rerun(a: Agent) {
+    this.role = a.role;
+    this.harness = a.tool;
+    this.tier = a.tier ?? null;
+    this.composerText = a.prompt ?? "";
+    this.openComposer();
+  }
+
   async cancelAgent(agentId: string) {
     try {
       await this.backend.cancelAgent(this.space.id, agentId);
@@ -1238,14 +1376,17 @@ export class AppState {
     if (!text) return false;
     const s = this.space;
     try {
-      const a = await this.backend.askAgent(s.id, this.role, text, { harness: this.harness, tier: this.tier });
+      const harness = this.effectiveHarness;
+      const a = await this.backend.askAgent(s.id, this.role, text, { harness, tier: this.tier });
+      this.harness = harness;
+      writeStr("vela.harness", harness);
+      writeStr("vela.role", this.role);
       const wt = a.worktrees[0] ? `${a.worktrees[0][0]} · ${a.worktrees[0][1]}` : "read only";
       this.toast(`${roleLabel(this.role)} started in ${wt}`);
     } catch (e) {
       this.fail(e);
     }
     this.composerText = "";
-    this.harness = null;
     this.tier = null;
     this.overlay = null;
     await this.refresh(s.id);
@@ -1755,7 +1896,11 @@ export class AppState {
         return;
       }
       case "open-settings":
-        return this.openSettings();
+        return this.openSettings("tiers");
+      case "open-prompts":
+        return this.openSettings("prompts");
+      case "prs-refresh":
+        return this.loadPrs(true);
       case "rv-split":
         this.rvSplit = !this.rvSplit;
         writeFlag("vela.rvSplit", this.rvSplit);
@@ -1878,6 +2023,26 @@ export interface TermTab {
 
 export function isMarkdown(key: string): boolean {
   return /\.(md|markdown|mdx)$/i.test(key);
+}
+
+function readStr(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function writeStr(key: string, value: string | null) {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    /* private mode */
+  }
+}
+function readRole(): AgentRole {
+  const r = readStr("vela.role");
+  return r && (ROLES as string[]).includes(r) ? (r as AgentRole) : "developer";
 }
 
 function readFlag(key: string, fallback: boolean): boolean {

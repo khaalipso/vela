@@ -34,6 +34,7 @@ export function buildPaletteItems(src: PaletteSource): PaletteItem[] {
     ["Go to review", "2", { type: "view", view: "review" }],
     ["Go to code", "1", { type: "view", view: "code" }],
     ["Go to agents", "3", { type: "view", view: "agents" }],
+    ["Pull requests: reviews, comments, checks", "4", { type: "view", view: "prs" }],
     ["Ask an agent", "@", { type: "open-composer" }],
     ["Commit and push", "C", { type: "open-commit" }],
     ["Links of this space", "L", { type: "open-links" }],
@@ -49,6 +50,7 @@ export function buildPaletteItems(src: PaletteSource): PaletteItem[] {
     ["Find in file", "Ctrl F", { type: "find" }],
     ["Markdown preview or source", "V", { type: "toggle-preview" }],
     ["Agent tiers: model and effort per tool", "", { type: "open-settings" }],
+    ["Agent prompts: edit the brief of each role", "", { type: "open-prompts" }],
     ["All shortcuts", "?", { type: "open-help" }],
   ];
   const items: PaletteItem[] = actions.map(([title, key, action]) => ({ sec: "Actions", title, key, action }));

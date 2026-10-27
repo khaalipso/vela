@@ -109,12 +109,16 @@ tester = { harness = "opencode" }        # either key can be left out
 
 [agents.transport]
 opencode = "cli"                         # acp or cli
+
+[agents.prompts]
+reviewer = "Review like a staff engineer: correctness first, then naming."
 ```
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `agents.tiers.<harness>.<high\|medium\|low>` | none | Model passed to that harness for the tier (`--model` / `-m`). Not set: no model flag, the harness picks its own default. opencode wants `provider/model`. |
 | `agents.effort.<harness>.<high\|medium\|low>` | none | Reasoning effort of the tier: `--effort` (Claude Code), `model_reasoning_effort` (Codex), `--variant` / `thought_level` (opencode). Not set: the harness default. |
+| `agents.prompts.<role>` | built in | The brief sent before each request of the role. Edited in the app under "Prompts". |
 | `agents.transport.<harness>` | ACP when installed | `acp` or `cli`. See `docs/HARNESS.md`. |
 | `agents.roles.<role>.tier` | planner, reviewer, debugger, product, security `high`; developer `medium`; tester `low` | Tier of the role. |
 | `agents.roles.<role>.harness` | `claude` | Harness of the role. If it is not installed, the first installed one (claude, codex, opencode) is used. |

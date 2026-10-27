@@ -18,6 +18,11 @@
   --warn: #e8a14a;
   --info: #7db8f5;
   --syn-alt: #c9a0f0;
+  --syn-fn: #e6c07b;
+  --syn-key: #8cc8d8;
+  --syn-attr: #e8a14a;
+  --syn-tag: #f08c8c;
+  --syn-meta: #b8a8e8;
   --on-accent: #131209;
   --ui: "Geist Sans", "Geist", ui-sans-serif, system-ui, sans-serif;
   --code: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -44,6 +49,11 @@
     --warn: #b45309;
     --info: #1d4ed8;
     --syn-alt: #7c3aed;
+    --syn-fn: #8a5a00;
+    --syn-key: #0e7490;
+    --syn-attr: #b45309;
+    --syn-tag: #be123c;
+    --syn-meta: #6d28d9;
     --on-accent: #131209;
     color-scheme: light;
   }
@@ -66,6 +76,11 @@
   --warn: #b45309;
   --info: #1d4ed8;
   --syn-alt: #7c3aed;
+  --syn-fn: #8a5a00;
+  --syn-key: #0e7490;
+  --syn-attr: #b45309;
+  --syn-tag: #be123c;
+  --syn-meta: #6d28d9;
   --on-accent: #131209;
   color-scheme: light;
 }

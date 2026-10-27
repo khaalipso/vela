@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="app/icons/128x128@2x.png" width="96" alt="Vela icon">
+  <img src="assets/icon.svg" width="96" alt="Vela icon">
 </p>
 
 <h1 align="center">Vela</h1>

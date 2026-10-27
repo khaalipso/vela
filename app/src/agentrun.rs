@@ -64,6 +64,9 @@ pub fn sink(
     delay: Duration,
 ) -> Emit {
     Arc::new(move |n: Notice| {
+        if changes_proposals(&n.event) {
+            crate::commands::invalidate_hunks(&n.space_id);
+        }
         send(&n);
         if changes_proposals(&n.event) {
             refresher.schedule(&n.space_id, delay, &change);

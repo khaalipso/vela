@@ -170,3 +170,127 @@ describe("agent tiers", () => {
     expect(app.overlay).toBeNull();
   });
 });
+
+describe("agent settings open at once", () => {
+  it("the sheet shows before the backend answers, then fills in", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const slow = vi.spyOn(backend, "agentTiers").mockImplementation(async () => {
+      await gate;
+      slow.mockRestore();
+      return backend.agentTiers();
+    });
+    app.tierSettings = [];
+    await app.dispatch({ type: "open-settings" });
+    await tick();
+    expect($("[aria-label='Agent settings']")).toBeTruthy();
+    expect($(".skel")).toBeTruthy();
+    release();
+    await vi.waitFor(() => expect($("[aria-label='Claude Code high model']")).toBeTruthy());
+    press("Escape");
+    await settle();
+  });
+
+  it("the Prompts tab edits the brief of a role and resets it", async () => {
+    await app.dispatch({ type: "open-prompts" });
+    await vi.waitFor(() => expect($("textarea[aria-label$='brief']")).toBeTruthy());
+    $$(".roles button").find((b) => b.textContent?.includes("Security"))!.click();
+    await settle();
+    const ta = $("textarea[aria-label='Security brief']") as HTMLTextAreaElement;
+    expect(ta.value).toContain("security");
+    ta.value = "Audit like a pentester.";
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    await settle();
+    press("s", { ctrlKey: true }, ta);
+    await vi.waitFor(async () => expect((await backend.agentPrompts()).find((p) => p.role === "security")?.custom).toBe("Audit like a pentester."));
+    await settle();
+    expect($$(".roles button").find((b) => b.textContent?.includes("Security"))?.textContent).toContain("edited");
+    $$(".acts button").find((b) => b.textContent?.includes("Reset"))!.click();
+    await vi.waitFor(async () => expect((await backend.agentPrompts()).find((p) => p.role === "security")?.custom).toBeNull());
+    press("Escape");
+    await settle();
+  });
+});
+
+describe("pull requests", () => {
+  it("4 shows the PR of each repo with reviews, line comments and checks", async () => {
+    press("4");
+    await vi.waitFor(() => expect($("[data-repo]")).toBeTruthy());
+    const first = $(`[data-repo='${app.space.repos[0].name}']`)!;
+    expect(first.textContent).toContain("#412");
+    expect(first.textContent).toContain("Changes requested");
+    expect(first.textContent).toContain("requested changes");
+    expect(first.querySelector(".thread .loc")?.textContent).toContain("src/billing/webhook.ts:12");
+    expect([...first.querySelectorAll(".ck .cs")].map((e) => e.textContent)).toEqual(["pass", "fail", "pending"]);
+    expect(app.prAttention).toBe(1);
+  });
+
+  it("a line comment opens its file, or goes to a developer agent", async () => {
+    const ask = vi.spyOn(backend, "askAgent");
+    const first = $(`[data-repo='${app.space.repos[0].name}']`)!;
+    [...first.querySelectorAll<HTMLElement>(".thread button")].find((b) => b.textContent?.includes("Ask an agent"))!.click();
+    await vi.waitFor(() => expect(ask).toHaveBeenCalled());
+    expect(ask.mock.calls[0][1]).toBe("developer");
+    expect(ask.mock.calls[0][2]).toContain("Return 400 here");
+    expect(ask.mock.calls[0][2]).toContain("src/billing/webhook.ts:12");
+    ask.mockRestore();
+    first.querySelector<HTMLElement>(".thread .loc")!.click();
+    await settle();
+    expect(app.view).toBe("code");
+    expect(app.cui.file).toBe(`${app.space.repos[0].name}/src/billing/webhook.ts`);
+  });
+
+  it("comments go to the PR; a repo without one offers to open it", async () => {
+    press("4");
+    await vi.waitFor(() => expect($("[data-repo]")).toBeTruthy());
+    const repo = app.space.repos[0].name;
+    const ta = $(`textarea[aria-label='Comment on ${repo}']`) as HTMLTextAreaElement;
+    ta.value = "Fixed in the last commit";
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    press("Enter", { ctrlKey: true }, ta);
+    await vi.waitFor(() => expect($(`[data-repo='${repo}']`)?.textContent).toContain("Fixed in the last commit"));
+    if (app.space.repos.length > 1) {
+      const other = app.space.repos[1].name;
+      expect($(`[data-repo='${other}'] .none`)).toBeTruthy();
+      $$(`[data-repo='${other}'] .none button`)[0].click();
+      await vi.waitFor(() => expect($(`[data-repo='${other}']`)?.textContent).toContain("#413"));
+    }
+  });
+});
+
+describe("agents view", () => {
+  it("a finished agent takes a follow up and an edited rerun", async () => {
+    press("3");
+    await settle();
+    const done = app.sd.agents.find((a) => a.status === "done");
+    if (!done) return;
+    app.data = {
+      ...app.data,
+      [app.space.id]: { ...app.sd, agents: app.sd.agents.map((a) => (a.id === done.id ? { ...a, session: "s1", prompt: "Write the tests" } : a)) },
+    };
+    await settle();
+    const card = $(`[data-agent='${done.id}']`)!;
+    [...card.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent === "Follow up")!.click();
+    await settle();
+    const input = $(`input[aria-label='Follow up for ${done.id}']`) as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+    const ans = vi.spyOn(backend, "answerAgentText");
+    input.value = "Also cover refunds";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.form!.requestSubmit();
+    await vi.waitFor(() => expect(ans).toHaveBeenCalledWith(app.space.id, done.id, "Also cover refunds"));
+    ans.mockRestore();
+    await settle();
+    const card2 = $(`[data-agent='${done.id}']`)!;
+    const rerun = [...card2.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent === "Edit and rerun");
+    if (rerun) {
+      rerun.click();
+      await settle();
+      expect(app.overlay).toBe("composer");
+      expect(app.role).toBe(done.role);
+      expect(app.harness).toBe(done.tool);
+      press("Escape");
+      await settle();
+    }
+  });
+});

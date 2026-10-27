@@ -142,6 +142,8 @@ pub struct AgentsConfig {
     /// `[agents.transport] <harness> = "acp" | "cli"`. Default: ACP when the harness has an ACP
     /// server installed (`opencode acp`, `claude-code-acp`, `codex-acp`), else the CLI.
     pub transport: BTreeMap<String, String>,
+    /// `[agents.prompts] <role> = "..."`: replaces the built in brief of the role.
+    pub prompts: BTreeMap<String, String>,
     pub roles: BTreeMap<String, RoleConfig>,
 }
 
@@ -229,6 +231,7 @@ fn is_known(path: &str) -> bool {
             | ["agents", "tiers" | "effort", _, "high" | "medium" | "low"]
             | ["agents", "roles", _, "tier" | "harness"]
             | ["agents", "transport", _]
+            | ["agents", "prompts", _]
     )
 }
 

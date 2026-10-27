@@ -11,6 +11,7 @@ pub mod commands;
 pub mod desktop;
 pub mod error;
 pub mod fileops;
+pub mod prs;
 pub mod shellenv;
 mod tauri_cmds;
 mod tauri_menu;
@@ -48,6 +49,15 @@ pub fn run() {
             // No window is open yet, so no space lives in another one.
             let _ = commands::clear_windows(&vela);
             std::thread::spawn(move || watchers.sync(&vela, &emit));
+            // Warm the caches the agent sheets read: harness versions, opencode's models.
+            let agents = app
+                .state::<Arc<vela_agents::AgentManager>>()
+                .inner()
+                .clone();
+            std::thread::spawn(move || {
+                agents.harnesses();
+                commands::agent_models(&agents, "opencode");
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -115,6 +125,12 @@ pub fn run() {
             c::resolve_note,
             c::agent_tiers,
             c::set_agent_tier,
+            c::agent_models,
+            c::pull_requests,
+            c::create_pull_request,
+            c::comment_pull_request,
+            c::agent_prompts,
+            c::set_agent_prompt,
             c::term_open,
             c::term_write,
             c::term_resize,

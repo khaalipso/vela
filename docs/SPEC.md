@@ -50,8 +50,13 @@ The composer's gate lists the results of these checks (a failing one needs an ov
 
 - **Terminal panel** (`T` or `Ctrl \``): shells in a pseudo terminal (`portable-pty`, `$SHELL`) started in a worktree of the space, shown with xterm.js under the current view. One tab per shell, one more with `Ctrl Shift \`` or the `+ <repo>` buttons, resizable. Each space has its own terminals.
 - **Markdown**: `.md` files open rendered (marked, sanitized with DOMPurify); `V` shows the source in the editor; relative links open the file, web links the browser.
+- **Syntax colors** for TypeScript, JavaScript (and JSX), JSON, HTML, CSS, SCSS, Less, Vue, Svelte, Python, Rust, Go, Java, Kotlin, C, C++, C#, PHP, Ruby, Swift, Lua, shell, TOML, INI and `.env`, YAML, SQL, Markdown (with code blocks), XML, Dockerfile and more. Each language is loaded the first time a file of it opens (`lib/languages.ts`).
 - **Repo colors**: each repo of a space has a soft color in the family of the space color (analogous hues 32° apart, calm saturation, `lib/colors.ts`). Editor tabs, top bar chips, the file tree and the review groups use it.
 - **Desktop notifications** when an agent asks a question, is done or fails, while no Vela window has the focus.
+
+## Pull requests
+
+The Pull requests view (`4`) shows, for each repo of the space, the PR of the space branch through the GitHub CLI (`gh`, logged in): state, review decision, reviews, review comments on lines with their replies, the conversation, and the checks. A line comment opens the file at its line or goes to a developer agent ("Ask an agent to fix", on the remembered harness); a review that requests changes too. Comments are posted with `gh pr comment`. A repo without a PR offers to push the branch and open one (`gh pr create --fill`, or as a draft); its URL is added to the links. `R` refreshes; a fetch is reused for a minute. The switch shows how many PRs want something from you (changes requested or a failing check).
 
 ## Commit gate
 
@@ -64,7 +69,7 @@ Before a commit, run in parallel on the staged diff only: reviewer agent (non in
 | `Ctrl K` | Command bar: spaces, files, actions |
 | `Enter` / `Shift Enter` | Up next / next space waiting |
 | `[` `]`, `Alt 1..9` | Previous, next space / jump to space |
-| `1` `2` `3` | Code, Review, Agents |
+| `1` `2` `3` `4` | Code, Review, Agents, Pull requests |
 | `J` `K` | Next, previous proposal |
 | `Y` `N` `E` `U` | Accept, reject, accept and edit, undo |
 | `F` | Ask the author to fix the reviewer note (`Shift Y` resolves it) |

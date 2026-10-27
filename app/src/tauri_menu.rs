@@ -23,6 +23,7 @@ where
 }
 
 fn notify(app: &AppHandle, space_id: &str, kind: ChangeKind) {
+    crate::commands::invalidate_hunks(space_id);
     let _ = app.emit(
         watch::EVENT,
         ChangeEvent {

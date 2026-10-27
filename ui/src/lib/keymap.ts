@@ -1,4 +1,4 @@
-export type View = "code" | "review" | "agents";
+export type View = "code" | "review" | "agents" | "prs";
 export type Overlay =
   | "palette"
   | "quickopen"
@@ -75,6 +75,8 @@ export type Action =
   | { type: "new-terminal" } // Ctrl Shift `: one more terminal
   | { type: "toggle-preview" } // V in the code view: Markdown preview
   | { type: "open-settings" } // agent tiers: model and effort per harness
+  | { type: "open-prompts" } // the brief of each agent role
+  | { type: "prs-refresh" } // R in the pull requests view
   // review view
   | { type: "rv-file"; delta: 1 | -1 } // J / K: next, previous file
   | { type: "rv-check"; delta: 1 | -1 } // Shift J / Shift K: next, previous check
@@ -248,6 +250,7 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
     const r = resolveReviewKey(k, shift);
     if (r) return r;
   }
+  if (c.view === "prs" && (k === "r" || k === "R")) return { type: "prs-refresh" };
 
   switch (k) {
     case "/":
@@ -260,6 +263,8 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
       return { type: "view", view: "review" };
     case "3":
       return { type: "view", view: "agents" };
+    case "4":
+      return { type: "view", view: "prs" };
     case "[":
       return { type: "space-prev" };
     case "]":
@@ -267,11 +272,11 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
     case "j":
     case "J":
     case "ArrowDown":
-      return c.view === "agents" ? null : { type: "move", delta: 1 };
+      return c.view === "agents" || c.view === "prs" ? null : { type: "move", delta: 1 };
     case "k":
     case "K":
     case "ArrowUp":
-      return c.view === "agents" ? null : { type: "move", delta: -1 };
+      return c.view === "agents" || c.view === "prs" ? null : { type: "move", delta: -1 };
     case "y":
     case "Y":
       return c.view === "agents" && c.hasQuestion ? { type: "answer", yes: true } : { type: "accept" };

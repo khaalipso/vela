@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { languageOf, type Lang } from "./languages";
 import { listen } from "@tauri-apps/api/event";
 import { fileKey, ROLES, toolForRole, toolLabel, uniq } from "./format";
 import { composeMessage, planFromHunks, validateFor } from "./commitplan";
@@ -48,7 +49,7 @@ export interface FileContent extends FileRef {
   content: string;
   /** Number of the first line of `content` in the real file (1 for a whole file). */
   firstLine: number;
-  language: "typescript" | "javascript" | "rust" | "yaml" | "sql" | "markdown" | "plain";
+  language: Lang;
 }
 
 export type NoteLevel = "blocking" | "warning" | "info";
@@ -93,6 +94,75 @@ export interface HarnessTiers {
   efforts: string[];
   /** The file the settings are written to. */
   file: string | null;
+}
+
+/** The brief a role gets before each request. */
+export interface RolePrompt {
+  role: AgentRole;
+  /** The built in brief. */
+  default: string;
+  /** Yours, from the global config; null when the default is used. */
+  custom: string | null;
+  /** The role reports notes: the NOTE format is appended to its brief. */
+  notes: boolean;
+}
+
+export interface PrReview {
+  author: string;
+  /** APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING. */
+  state: string;
+  body: string;
+  at: string;
+}
+export interface PrComment {
+  author: string;
+  body: string;
+  at: string;
+  url: string;
+}
+/** A review comment on a line, with its replies. */
+export interface PrThread {
+  id: number;
+  path: string;
+  line: number | null;
+  author: string;
+  body: string;
+  at: string;
+  url: string;
+  diffHunk: string;
+  replies: PrComment[];
+}
+export interface PrCheck {
+  name: string;
+  state: "pass" | "fail" | "pending" | "skipped" | "neutral";
+  url: string;
+  workflow: string;
+}
+export interface PullRequest {
+  number: number;
+  title: string;
+  url: string;
+  state: "OPEN" | "CLOSED" | "MERGED" | string;
+  draft: boolean;
+  reviewDecision: string;
+  author: string;
+  base: string;
+  head: string;
+  additions: number;
+  deletions: number;
+  mergeable: string;
+  requested: string[];
+  reviews: PrReview[];
+  comments: PrComment[];
+  threads: PrThread[];
+  checks: PrCheck[];
+}
+/** The PR of the space branch in one repo, or why there is none. */
+export interface RepoPr {
+  repo: string;
+  branch: string;
+  pr: PullRequest | null;
+  error: string | null;
 }
 
 /** Output of a terminal, or its end. */
@@ -226,6 +296,18 @@ export interface Backend {
   agentTiers(): Promise<HarnessTiers[]>;
   /** Set one tier of a harness; null or "" goes back to the harness default. */
   setAgentTier(harness: string, tier: Tier, model: string | null, effort: string | null): Promise<void>;
+  /** Model names to suggest for a harness (slow the first time for opencode). */
+  agentModels(harness: string): Promise<string[]>;
+  /** The brief of every role. */
+  agentPrompts(): Promise<RolePrompt[]>;
+  /** Set the brief of a role; null or blank goes back to the built in one. */
+  setAgentPrompt(role: AgentRole, text: string | null): Promise<void>;
+
+  /** The PR of the space branch in each repo, with reviews, comments, threads and checks. */
+  pullRequests(spaceId: string): Promise<RepoPr[]>;
+  /** Push the space branch of a repo and open a PR. Returns its URL. */
+  createPullRequest(spaceId: string, repo: string, draft: boolean): Promise<string>;
+  commentPullRequest(spaceId: string, repo: string, body: string): Promise<void>;
 
   /** Start a shell in the worktree of `repo` (the first repo when null). Returns its id. */
   termOpen(spaceId: string, repo: string | null, cols: number, rows: number): Promise<number>;
@@ -302,29 +384,6 @@ export interface Backend {
   onCheck(listener: (e: CheckEvent) => void): Unsubscribe;
 }
 
-export function languageOf(path: string): FileContent["language"] {
-  const ext = path.split(".").pop() ?? "";
-  switch (ext) {
-    case "ts":
-    case "tsx":
-      return "typescript";
-    case "js":
-    case "jsx":
-    case "mjs":
-      return "javascript";
-    case "rs":
-      return "rust";
-    case "yml":
-    case "yaml":
-      return "yaml";
-    case "sql":
-      return "sql";
-    case "md":
-      return "markdown";
-    default:
-      return "plain";
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Mock backend
@@ -856,8 +915,21 @@ export class MockBackend implements Backend {
     return ROLES.map((role) => ({ role, harness: toolForRole(role) === "opencode" ? "claude" : toolForRole(role), tier: tier(role), model: null }));
   }
 
-  async answerAgentText(spaceId: string, _agentId: string, _text: string): Promise<void> {
-    return this.answerAgent(spaceId, true);
+  async answerAgentText(spaceId: string, agentId: string, text: string): Promise<void> {
+    const s = this.sp(spaceId);
+    if (s.question?.agentId === agentId) return this.answerAgent(spaceId, true);
+    // A follow up to a finished agent: it works a moment, then is done again.
+    const a = s.agents.find((x) => x.id === agentId);
+    if (!a) throw new Error(`Unknown agent: ${agentId}`);
+    if (a.status === "working") throw new Error(`${agentId} is still working`);
+    a.status = "working";
+    a.summary = text;
+    this.emit(spaceId);
+    this.later(600, () => {
+      a.status = "done";
+      a.summary = `Done: ${text}`;
+      this.emit(spaceId);
+    });
   }
 
   async cancelAgent(spaceId: string, agentId: string): Promise<void> {
@@ -1011,6 +1083,103 @@ export class MockBackend implements Backend {
   async setAgentTier(harness: string, tier: Tier, model: string | null, effort: string | null): Promise<void> {
     const store = (this.tierStore[harness] ??= {} as Record<Tier, { model: string | null; effort: string | null }>);
     store[tier] = { model: model?.trim() || null, effort: effort?.trim() || null };
+  }
+
+  async agentModels(harness: string): Promise<string[]> {
+    return (await this.agentTiers()).find((h) => h.harness === harness)?.models ?? [];
+  }
+
+  private prompts: Partial<Record<AgentRole, string>> = {};
+  async agentPrompts(): Promise<RolePrompt[]> {
+    return ROLES.map((role) => ({
+      role,
+      default: `You are the ${role} agent of a Vela space.`,
+      custom: this.prompts[role] ?? null,
+      notes: role === "reviewer" || role === "security",
+    }));
+  }
+  async setAgentPrompt(role: AgentRole, text: string | null): Promise<void> {
+    const t = text?.trim();
+    if (t) this.prompts[role] = t;
+    else delete this.prompts[role];
+  }
+
+  private prs = new Map<string, RepoPr[]>();
+  async pullRequests(spaceId: string): Promise<RepoPr[]> {
+    const s = this.sp(spaceId);
+    const known = this.prs.get(spaceId);
+    if (known) return structuredClone(known);
+    const list: RepoPr[] = s.space.repos.map((r, i) => ({
+      repo: r.name,
+      branch: s.space.branch,
+      error: null,
+      pr:
+        i > 0
+          ? null
+          : {
+              number: 412,
+              title: `${s.space.name}`,
+              url: `https://github.com/acme/${r.name}/pull/412`,
+              state: "OPEN",
+              draft: false,
+              reviewDecision: "CHANGES_REQUESTED",
+              author: "you",
+              base: "main",
+              head: s.space.branch,
+              additions: 128,
+              deletions: 14,
+              mergeable: "MERGEABLE",
+              requested: ["dana"],
+              reviews: [
+                { author: "lea", state: "APPROVED", body: "", at: "2026-10-26T09:12:00Z" },
+                { author: "marc", state: "CHANGES_REQUESTED", body: "The webhook must reject a bad signature before parsing.", at: "2026-10-26T10:40:00Z" },
+              ],
+              comments: [{ author: "lea", body: "Nice split of the commits.", at: "2026-10-26T09:13:00Z", url: "" }],
+              threads: [
+                {
+                  id: 1,
+                  path: "src/billing/webhook.ts",
+                  line: 12,
+                  author: "marc",
+                  body: "Return 400 here instead of throwing.",
+                  at: "2026-10-26T10:41:00Z",
+                  url: "",
+                  diffHunk: "@@ -10,3 +10,4 @@\n const sig = req.headers['stripe-signature'];\n+const event = stripe.webhooks.constructEvent(body, sig, secret);",
+                  replies: [{ author: "you", body: "Good catch, on it.", at: "2026-10-26T11:02:00Z", url: "" }],
+                },
+              ],
+              checks: [
+                { name: "test", state: "pass", url: "", workflow: "CI" },
+                { name: "lint", state: "fail", url: "", workflow: "CI" },
+                { name: "deploy-preview", state: "pending", url: "", workflow: "Preview" },
+              ],
+            },
+    }));
+    this.prs.set(spaceId, list);
+    return structuredClone(list);
+  }
+  async createPullRequest(spaceId: string, repo: string, draft: boolean): Promise<string> {
+    const list = await this.pullRequests(spaceId);
+    const s = this.sp(spaceId);
+    const r = list.find((x) => x.repo === repo);
+    if (!r) throw new Error(`No repo ${repo} in this space`);
+    if (r.pr) throw new Error("This branch already has a pull request");
+    const url = `https://github.com/acme/${repo}/pull/413`;
+    r.pr = {
+      number: 413, title: s.space.name, url, state: "OPEN", draft, reviewDecision: "REVIEW_REQUIRED", author: "you",
+      base: "main", head: s.space.branch, additions: 0, deletions: 0, mergeable: "MERGEABLE", requested: [],
+      reviews: [], comments: [], threads: [], checks: [],
+    };
+    this.prs.set(spaceId, list);
+    return url;
+  }
+  async commentPullRequest(spaceId: string, repo: string, body: string): Promise<void> {
+    if (!body.trim()) throw new Error("The comment is empty");
+    const list = await this.pullRequests(spaceId);
+    const r = list.find((x) => x.repo === repo);
+    if (!r?.pr) throw new Error("No pull request to comment on");
+    r.pr.comments.push({ author: "you", body: body.trim(), at: new Date().toISOString(), url: "" });
+    this.prs.set(spaceId, list);
   }
 
   // A fake shell: echoes what you type and answers `pwd`.
@@ -1890,6 +2059,24 @@ export class TauriBackend implements Backend {
   }
   async setAgentTier(harness: string, tier: Tier, model: string | null, effort: string | null) {
     await call("set_agent_tier", { harness, tier, model, effort });
+  }
+  agentModels(harness: string) {
+    return call<string[]>("agent_models", { harness });
+  }
+  agentPrompts() {
+    return call<RolePrompt[]>("agent_prompts");
+  }
+  async setAgentPrompt(role: AgentRole, text: string | null) {
+    await call("set_agent_prompt", { role, text });
+  }
+  pullRequests(spaceId: string) {
+    return call<RepoPr[]>("pull_requests", { spaceId });
+  }
+  createPullRequest(spaceId: string, repo: string, draft: boolean) {
+    return call<string>("create_pull_request", { spaceId, repo, draft });
+  }
+  async commentPullRequest(spaceId: string, repo: string, body: string) {
+    await call("comment_pull_request", { spaceId, repo, body });
   }
   termOpen(spaceId: string, repo: string | null, cols: number, rows: number) {
     return call<number>("term_open", { spaceId, repo, cols, rows });

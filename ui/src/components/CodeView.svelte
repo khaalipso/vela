@@ -10,7 +10,7 @@
   import { app } from "../lib/app.svelte";
   import type { FileContent } from "../lib/backend";
   import { menu, openAtEvent, isKeyboardEvent } from "../lib/contextmenu.svelte";
-  import { createState, firstLineFacet, focusLine, replaceContent, setHunks, setMine, type HunkSpec } from "../lib/editor";
+  import { createState, firstLineFacet, focusLine, replaceContent, setHunks, setLanguage, setMine, type HunkSpec } from "../lib/editor";
   import { fileKey } from "../lib/format";
   import { editorMenu, tabMenu } from "../lib/menus";
   import { readClipboard, writeClipboard } from "../lib/ops.svelte";
@@ -95,6 +95,7 @@
         }),
       );
       shown = id;
+      void setLanguage(view, f.language, () => shown === id && !!view);
     } else {
       replaceContent(view, f.content);
     }
