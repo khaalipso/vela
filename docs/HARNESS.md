@@ -71,7 +71,7 @@ Agents are given a tier, not a model. A tier maps to a model per harness in conf
 
 Default role to tier: Planner high, Reviewer high, Debugger high, Product high, Security high, Developer medium, Tester low. Vela's own internal tasks always use `low`.
 
-Each tier also has a reasoning effort per harness (`[agents.effort.<harness>]`), passed as `--effort` (Claude Code: low, medium, high, xhigh, max), `-c model_reasoning_effort` (Codex: minimal, low, medium, high, xhigh), `--variant` or the `thought_level` option (opencode). Not set: the harness default. Both are edited in the app under "Agent tiers" (Ctrl K, or the link in the Agents view), which writes the global config.
+Each tier also has a reasoning effort per harness (`[agents.effort.<harness>]`), passed as `--effort` (Claude Code: low, medium, high, xhigh, max), `-c model_reasoning_effort` (Codex: minimal, low, medium, high, xhigh), `--variant` or the `thought_level` option (opencode). Not set: the harness default. Both are edited in the app under "Agent tiers" (Ctrl T, or the link in the Agents view), which writes the global config.
 
 ## Roles
 
@@ -89,7 +89,7 @@ Each tier also has a reasoning effort per harness (`[agents.effort.<harness>]`),
 
 A request is sent as: Vela's ground rules (`crates/vela-agents/prompts/_common.md`: investigate before answering, cite `file:line`, follow the project's conventions, never commit), the brief of the role (`prompts/<role>.md`: how to work and what the answer must contain), the NOTE format for reviewer and security, a `## Context` section (space, branch, repos and where the agent runs), then `## Request` and what you asked.
 
-Read only roles used to run in Claude Code's plan mode, where Claude writes a plan to investigate instead of investigating ("Here is the plan to verify it"). They now run with `--permission-mode dontAsk`: reading, searching and read-only commands are allowed, writes are refused without a question. The briefs can be edited in the app (Agents view, "Prompts", or Ctrl K "Agent prompts"); they are stored in `[agents.prompts]` of the global config, and a repo can override them in `.vela/config.toml`. The NOTE format is still appended for the reviewer and security roles.
+Read only roles used to run in Claude Code's plan mode, where Claude writes a plan to investigate instead of investigating ("Here is the plan to verify it"). They now run with `--permission-mode dontAsk`: reading, searching and read-only commands are allowed, writes are refused without a question. The briefs can be edited in the app (Agents view, "Prompts", or Ctrl T "Agent prompts"); they are stored in `[agents.prompts]` of the global config, and a repo can override them in `.vela/config.toml`. The NOTE format is still appended for the reviewer and security roles.
 
 The Agents view takes a follow up on a finished agent (a resumed run of its session, in its own worktree) and reruns a request after editing it (the composer opens with its role, harness, tier and text). The harness picked in the composer stays picked for the next requests and across restarts.
 

@@ -123,6 +123,6 @@ reviewer = "Review like a staff engineer: correctness first, then naming."
 | `agents.roles.<role>.tier` | planner, reviewer, debugger, product, security `high`; developer `medium`; tester `low` | Tier of the role. |
 | `agents.roles.<role>.harness` | `claude` | Harness of the role. If it is not installed, the first installed one (claude, codex, opencode) is used. |
 
-The "Agent tiers" sheet of the app (Ctrl K, "Agent tiers") edits `agents.tiers` and `agents.effort` in the global layer; clearing a field removes the key.
+The "Agent tiers" sheet of the app (Ctrl T, "Agent tiers") edits `agents.tiers` and `agents.effort` in the global layer; clearing a field removes the key.
 
 A request can override both: the composer's harness picker (`Shift Tab`) and tier (`Ctrl ↑` / `Ctrl ↓`). An agent asks for the layers of the first repo of its space.
