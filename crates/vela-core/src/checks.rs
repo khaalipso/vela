@@ -510,11 +510,7 @@ struct Raw {
 }
 
 fn kill_group(child: &mut Child) {
-    let _ = Command::new("kill")
-        .args(["-KILL", "--", &format!("-{}", child.id())])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    crate::process::kill_group(child.id());
     let _ = child.kill();
 }
 

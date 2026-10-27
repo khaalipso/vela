@@ -145,11 +145,7 @@ pub fn parse_stream(parser: &mut dyn LineParser, text: &str) -> Vec<AgentEvent> 
 }
 
 pub(crate) fn kill_group(pid: u32) {
-    let _ = Command::new("kill")
-        .args(["-KILL", "--", &format!("-{pid}")])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    vela_core::process::kill_group(pid);
 }
 
 /// Where harness binaries are looked for besides `PATH`, because an app started from a

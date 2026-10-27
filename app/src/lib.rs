@@ -11,6 +11,7 @@ pub mod commands;
 pub mod desktop;
 pub mod error;
 pub mod fileops;
+pub mod shellenv;
 mod tauri_cmds;
 mod tauri_menu;
 pub mod term;
