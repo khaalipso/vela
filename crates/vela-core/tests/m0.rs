@@ -644,3 +644,47 @@ fn add_and_remove_a_repo_in_a_space() {
     // The last repo cannot be removed.
     assert!(space::remove_repo(&e.vela, &s.id, &s3.repos[0].name).is_err());
 }
+
+#[test]
+fn discard_hunk_reverts_one_unstaged_hunk_and_keeps_the_others() {
+    let e = env();
+    let s = one_repo_space(&e, &[("f.txt", &numbered(30))]);
+    let w = wt(&s, 0);
+    let edited = numbered(30)
+        .replace("line 2\n", "two\n")
+        .replace("line 25\n", "twenty-five\n");
+    write(&w, "f.txt", &edited);
+    let hunks = diff::worktree_hunks(&s).unwrap();
+    assert_eq!(hunks.len(), 2);
+    let first = hunks.iter().min_by_key(|h| h.new_start).unwrap();
+    stage::discard_hunk(&s, &first.id).unwrap();
+    let now = std::fs::read_to_string(w.join("f.txt")).unwrap();
+    assert!(now.contains("line 2\n") && now.contains("twenty-five\n"));
+}
+
+#[test]
+fn discard_hunk_reverts_a_staged_hunk_in_index_and_worktree() {
+    let e = env();
+    let s = one_repo_space(&e, &[("f.txt", &numbered(10))]);
+    let w = wt(&s, 0);
+    write(&w, "f.txt", &numbered(10).replace("line 3\n", "three\n"));
+    sh(&w, &["add", "f.txt"]);
+    let staged = diff::staged_hunks(&s).unwrap();
+    stage::discard_hunk(&s, &staged[0].id).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(w.join("f.txt")).unwrap(),
+        numbered(10)
+    );
+    assert!(sh(&w, &["status", "--porcelain"]).trim().is_empty());
+}
+
+#[test]
+fn discard_hunk_refuses_new_files() {
+    let e = env();
+    let s = one_repo_space(&e, &[("f.txt", "a\n")]);
+    write(&wt(&s, 0), "new.txt", "x\n");
+    let h = diff::worktree_hunks(&s).unwrap();
+    let new = h.iter().find(|h| h.path == "new.txt").unwrap();
+    assert!(stage::discard_hunk(&s, &new.id).is_err());
+    assert!(wt(&s, 0).join("new.txt").exists());
+}

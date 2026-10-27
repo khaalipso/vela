@@ -64,3 +64,68 @@ export function logLine(e: AgentEvent): { who: "you" | "agent" | "tool" | "end";
 export function isRunning(a: Agent): boolean {
   return a.status === "working";
 }
+
+// -- chat ---------------------------------------------------------------------
+
+/** One block of the conversation with an agent. */
+export type ChatItem =
+  | { kind: "you"; text: string; ts: string }
+  | { kind: "agent"; text: string; ts: string }
+  /** A run of tool calls between two messages, with the files it changed. */
+  | { kind: "tools"; calls: { name: string; summary: string }[]; files: string[]; ts: string }
+  | { kind: "plan"; steps: string[]; ts: string }
+  | { kind: "question"; text: string; options: string[]; ts: string }
+  | { kind: "end"; ok: boolean; text: string; ts: string };
+
+/**
+ * The event log of an agent as a conversation: your requests and answers, its messages in
+ * full, its tool calls grouped between messages, plans, questions and the end of each run.
+ * A `done` whose summary repeats the last message adds no text.
+ */
+export function chatItems(log: { ts: string; event: AgentEvent }[]): ChatItem[] {
+  const out: ChatItem[] = [];
+  let lastAgent = "";
+  for (const { ts, event: e } of log) {
+    const prev = out[out.length - 1];
+    switch (e.type) {
+      case "prompt":
+        out.push({ kind: "you", text: e.text, ts });
+        break;
+      case "message":
+        if (!e.text.trim()) break;
+        lastAgent = e.text.trim();
+        out.push({ kind: "agent", text: e.text, ts });
+        break;
+      case "toolCall":
+      case "fileChanged": {
+        const group =
+          prev?.kind === "tools" ? prev : (out[out.push({ kind: "tools", calls: [], files: [], ts }) - 1] as Extract<ChatItem, { kind: "tools" }>);
+        if (e.type === "toolCall") group.calls.push({ name: e.name, summary: e.summary });
+        else if (!group.files.includes(e.path)) group.files.push(e.path);
+        break;
+      }
+      case "plan":
+        // A plan that only ticks steps off replaces the one just before it.
+        if (prev?.kind === "plan") prev.steps = e.steps;
+        else out.push({ kind: "plan", steps: e.steps, ts });
+        break;
+      case "question":
+        out.push({ kind: "question", text: e.text, options: e.options, ts });
+        break;
+      case "done": {
+        const s = e.summary.trim();
+        if (s && s !== lastAgent && !lastAgent.endsWith(s)) out.push({ kind: "agent", text: s, ts });
+        out.push({ kind: "end", ok: true, text: "Finished", ts });
+        lastAgent = "";
+        break;
+      }
+      case "failed":
+        out.push({ kind: "end", ok: false, text: e.error === "cancelled" ? "Cancelled" : e.error, ts });
+        lastAgent = "";
+        break;
+      default:
+        break;
+    }
+  }
+  return out;
+}

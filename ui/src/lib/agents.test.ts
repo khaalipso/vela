@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCost, formatTokens, logLine, totalUsage, usageLine } from "./agents";
+import { chatItems, formatCost, formatTokens, logLine, totalUsage, usageLine, type ChatItem } from "./agents";
 import type { Agent } from "./types";
 
 describe("agent numbers", () => {
@@ -41,5 +41,37 @@ describe("log lines", () => {
     expect(logLine({ type: "failed", error: "boom" })?.text).toBe("Failed: boom");
     expect(logLine({ type: "usage", inputTokens: 1, outputTokens: 1, costUsd: null, model: "m" })).toBeNull();
     expect(logLine({ type: "sessionStarted", session: "s" })).toBeNull();
+  });
+});
+
+describe("chatItems", () => {
+  const at = (event: import("./types").AgentEvent) => ({ ts: "t", event });
+  it("turns the log into a conversation with grouped tools", () => {
+    const items = chatItems([
+      at({ type: "prompt", text: "Is the doc up to date?" }),
+      at({ type: "sessionStarted", session: "s" }),
+      at({ type: "toolCall", name: "Read", summary: "docs/SPEC.md" }),
+      at({ type: "toolCall", name: "Grep", summary: "TODO" }),
+      at({ type: "message", text: "Mostly. Two gaps:\n- keys\n- PRs" }),
+      at({ type: "toolCall", name: "Edit", summary: "docs/SPEC.md" }),
+      at({ type: "fileChanged", path: "docs/SPEC.md" }),
+      at({ type: "plan", steps: ["a", "b"] }),
+      at({ type: "plan", steps: ["a", "b", "c"] }),
+      at({ type: "usage", inputTokens: 1, outputTokens: 1, costUsd: null, model: "m" }),
+      at({ type: "done", summary: "Two gaps:\n- keys\n- PRs" }),
+      at({ type: "prompt", text: "Fix them" }),
+      at({ type: "failed", error: "cancelled" }),
+    ]);
+    expect(items.map((i) => i.kind)).toEqual(["you", "tools", "agent", "tools", "plan", "end", "you", "end"]);
+    const tools = items[1] as Extract<ChatItem, { kind: "tools" }>;
+    expect(tools.calls.map((c) => c.name)).toEqual(["Read", "Grep"]);
+    expect((items[3] as Extract<ChatItem, { kind: "tools" }>).files).toEqual(["docs/SPEC.md"]);
+    expect((items[4] as Extract<ChatItem, { kind: "plan" }>).steps).toEqual(["a", "b", "c"]);
+    expect(items[7]).toMatchObject({ ok: false, text: "Cancelled" });
+  });
+
+  it("keeps a final summary that says more than the last message", () => {
+    const items = chatItems([at({ type: "message", text: "Looking." }), at({ type: "done", summary: "The doc is current except for keys." })]);
+    expect(items.map((i) => i.kind)).toEqual(["agent", "agent", "end"]);
   });
 });

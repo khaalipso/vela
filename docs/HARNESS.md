@@ -49,7 +49,7 @@ Updates map to the normalized events: message chunks are joined into one `messag
 
 | Harness | Start | Resume (answer a question) | Read only |
 | --- | --- | --- | --- |
-| Claude Code | `claude -p --output-format stream-json --verbose [--model M] [--effort E] --permission-mode acceptEdits` | adds `--resume <session>` (and `--allowed-tools <t,..>` after a yes to a permission) | `--permission-mode plan` |
+| Claude Code | `claude -p --output-format stream-json --verbose [--model M] [--effort E] --permission-mode acceptEdits` | adds `--resume <session>` (and `--allowed-tools <t,..>` after a yes to a permission) | `--permission-mode dontAsk` with read tools and read-only git and shell commands allowed, writes disallowed |
 | Codex | `codex exec --json --skip-git-repo-check -C <dir> -s workspace-write [-m M] [-c model_reasoning_effort="E"] -` | `codex exec resume --json --skip-git-repo-check -c sandbox_mode="..." [-m M] <thread> -` | `-s read-only` |
 | opencode | `opencode run --format json [-m provider/model] [--variant E] --dir <dir> --agent build <prompt>` | adds `--session <id>` | `--agent plan` |
 
@@ -87,7 +87,9 @@ Each tier also has a reasoning effort per harness (`[agents.effort.<harness>]`),
 
 ## Prompts
 
-Every request is sent as the brief of its role, then `Request: <what you asked>`. The briefs can be edited in the app (Agents view, "Prompts", or Ctrl K "Agent prompts"); they are stored in `[agents.prompts]` of the global config, and a repo can override them in `.vela/config.toml`. The NOTE format is still appended for the reviewer and security roles.
+A request is sent as: Vela's ground rules (`crates/vela-agents/prompts/_common.md`: investigate before answering, cite `file:line`, follow the project's conventions, never commit), the brief of the role (`prompts/<role>.md`: how to work and what the answer must contain), the NOTE format for reviewer and security, a `## Context` section (space, branch, repos and where the agent runs), then `## Request` and what you asked.
+
+Read only roles used to run in Claude Code's plan mode, where Claude writes a plan to investigate instead of investigating ("Here is the plan to verify it"). They now run with `--permission-mode dontAsk`: reading, searching and read-only commands are allowed, writes are refused without a question. The briefs can be edited in the app (Agents view, "Prompts", or Ctrl K "Agent prompts"); they are stored in `[agents.prompts]` of the global config, and a repo can override them in `.vela/config.toml`. The NOTE format is still appended for the reviewer and security roles.
 
 The Agents view takes a follow up on a finished agent (a resumed run of its session, in its own worktree) and reruns a request after editing it (the composer opens with its role, harness, tier and text). The harness picked in the composer stays picked for the next requests and across restarts.
 

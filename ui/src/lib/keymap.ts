@@ -76,6 +76,9 @@ export type Action =
   | { type: "toggle-preview" } // V in the code view: Markdown preview
   | { type: "open-settings" } // agent tiers: model and effort per harness
   | { type: "open-prompts" } // the brief of each agent role
+  | { type: "agent-move"; delta: 1 | -1 } // J / K in the agents view
+  | { type: "change-move"; delta: 1 | -1 } // Ctrl Alt Down / Up in the code view: next, previous change of yours
+  | { type: "toggle-rail" } // Ctrl B: dock or hide the spaces bar (hidden: it floats in on the left edge)
   | { type: "prs-refresh" } // R in the pull requests view
   // review view
   | { type: "rv-file"; delta: 1 | -1 } // J / K: next, previous file
@@ -145,7 +148,14 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
   const alt = !!e.altKey;
   const shift = !!e.shiftKey;
 
-  if (ctrl && (k === "k" || k === "K")) return { type: "palette-toggle" };
+  // Cmd/Ctrl T: the command bar (spaces, files, actions). Cmd/Ctrl K: ask an agent.
+  if (ctrl && !alt && (k === "t" || k === "T")) return { type: "palette-toggle" };
+  if (ctrl && !alt && (k === "k" || k === "K")) {
+    return c.overlay === "composer" ? { type: "close" } : { type: "open-composer" };
+  }
+  if (ctrl && !alt && !shift && (k === "b" || k === "B") && (!c.overlay || c.overlay === "palette")) {
+    return { type: "toggle-rail" };
+  }
   // The terminal toggles from anywhere, the terminal itself included.
   if (ctrl && !alt && (k === "`" || e.code === "Backquote") && (!c.overlay || c.overlay === "palette")) {
     return shift ? { type: "new-terminal" } : { type: "toggle-terminal" };
@@ -231,6 +241,9 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
   // Confirmation and prompt sheets take their own keys.
   if (c.overlay === "sheet" || c.overlay === "settings") return null;
 
+  if (ctrl && alt && !shift && (k === "ArrowDown" || k === "ArrowUp") && !c.overlay && c.view === "code") {
+    return { type: "change-move", delta: k === "ArrowDown" ? 1 : -1 };
+  }
   // In the editor, CodeMirror opens its own search panel on Ctrl F.
   if (ctrl && !alt && !shift && (k === "f" || k === "F") && !c.overlay && c.view === "code" && !c.typing) {
     return { type: "find" };
@@ -272,11 +285,11 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
     case "j":
     case "J":
     case "ArrowDown":
-      return c.view === "agents" || c.view === "prs" ? null : { type: "move", delta: 1 };
+      return c.view === "agents" ? { type: "agent-move", delta: 1 } : c.view === "prs" ? null : { type: "move", delta: 1 };
     case "k":
     case "K":
     case "ArrowUp":
-      return c.view === "agents" || c.view === "prs" ? null : { type: "move", delta: -1 };
+      return c.view === "agents" ? { type: "agent-move", delta: -1 } : c.view === "prs" ? null : { type: "move", delta: -1 };
     case "y":
     case "Y":
       return c.view === "agents" && c.hasQuestion ? { type: "answer", yes: true } : { type: "accept" };
@@ -378,6 +391,7 @@ const HINT_KEYS: KeyLike[] = [
   { key: "Tab", shiftKey: true },
   { key: "p", ctrlKey: true },
   { key: "k", ctrlKey: true },
+  { key: "t", ctrlKey: true },
 ];
 
 /** The text of a hint as the UI writes it: `Y`, `Shift A`, `Ctrl P`, `Space`. */

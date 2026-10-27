@@ -74,7 +74,7 @@
       <span class="sub">
         {app.settingsTab === "tiers"
           ? "Which model and how much reasoning each tier gets, per tool. Empty keeps the tool's default."
-          : "The brief each role gets before your request. Edit it to change how the agents work."}
+          : "The brief each role gets before your request. Vela always puts its ground rules first (investigate before answering, cite files and lines, never commit) and the space context after."}
       </span>
     </header>
 

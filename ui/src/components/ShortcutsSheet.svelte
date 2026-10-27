@@ -6,7 +6,8 @@
     [
       "Anywhere",
       [
-        ["Ctrl K", "Spaces, files, actions"],
+        ["Ctrl T", "Spaces, files, actions"],
+        ["Ctrl K", "Ask an agent (also @)"],
         ["Enter", "Do what is up next"],
         ["Shift Enter", "Next space waiting for you"],
         ["[  ]", "Previous, next space"],
@@ -14,6 +15,7 @@
         ["W", "Open space in its own window"],
         ["1  2  3", "Code, review, agents"],
         ["B", "Files drawer"],
+        ["Ctrl B", "Hide the spaces bar (it floats in on the left edge)"],
         ["Ctrl P", "Go to file"],
         ["/", "Filter files by name"],
         ["S", "Stack and containers"],

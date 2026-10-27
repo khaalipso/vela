@@ -171,6 +171,11 @@ export class AppState {
   /** Menu key / Shift F10 (set by the menus module). */
   onContextMenuKey: () => void = () => {};
 
+  /** The spaces bar is hidden; it then floats in while the pointer is on the left edge. */
+  railHidden = $state(readFlag("vela.railHidden", false));
+  /** The hidden bar is showing, floating over the window. */
+  railPeek = $state(false);
+
   /** The file tree drawer is open. Open by default, remembered per window. */
   filesOpen = $state(readFlag("vela.filesOpen", true));
   overlay = $state<Overlay>(null);
@@ -235,7 +240,7 @@ export class AppState {
   gate = $state<GateState | null>(null);
   /** The links sheet: text in the URL field and the selected row. */
   linksUi = $state({ q: "", i: 0 });
-  toastState = $state<{ id: number; text: string } | null>(null);
+  toastState = $state<{ id: number; text: string; action?: { label: string; run: () => void } } | null>(null);
   /** Hunks accepted with E, to label them "edited by you". */
   edited = $state<Record<string, true>>({});
   /** Bumped when a file changed under the editor (accept, undo, fix), so the editor reloads it. */
@@ -836,12 +841,98 @@ export class AppState {
 
   // -- helpers --------------------------------------------------------------
 
-  toast(text: string) {
+  /** A short message; with an action (Undo...), it stays longer and shows a button. */
+  toast(text: string, action?: { label: string; run: () => void }) {
     const id = ++this.toastSeq;
-    this.toastState = { id, text };
-    setTimeout(() => {
-      if (this.toastState?.id === id) this.toastState = null;
-    }, 2400);
+    this.toastState = { id, text, action };
+    setTimeout(
+      () => {
+        if (this.toastState?.id === id) this.toastState = null;
+      },
+      action ? 8000 : 2400,
+    );
+  }
+
+  // -- your changes in the code view ------------------------------------------
+
+  /** Bumped by Ctrl Alt Up / Down: the code view goes to the previous or next change. */
+  changeMove = $state({ seq: 0, delta: 1 as 1 | -1 });
+
+  /** Your hunks (staged or not) of a file, top to bottom. */
+  myHunksOf(key: string): Hunk[] {
+    return this.sd.hunks
+      .filter((h) => h.origin.type === "you" && h.state !== "rejected" && fileKey(h.repo, h.path) === key)
+      .sort((a, b) => a.newStart - b.newStart);
+  }
+
+  async stageMine(hunkId: string, stage: boolean) {
+    const sid = this.space.id;
+    try {
+      if (stage) await this.backend.stageHunk(sid, hunkId);
+      else await this.backend.unstageHunk(sid, hunkId);
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh(sid);
+  }
+
+  /** Put back the content a revert replaced, then reload. */
+  private undoRevert(sid: string, repo: string, path: string, content: string) {
+    void this.backend
+      .writeFile(sid, repo, path, content)
+      .then(() => this.refresh(sid))
+      .then(() => {
+        this.contentRev[sid] = (this.contentRev[sid] ?? 0) + 1;
+        this.toast("Restored");
+      })
+      .catch((e) => this.fail(e));
+  }
+
+  /** Revert one of your hunks; the file as it was is kept for an Undo. */
+  async revertMine(hunkId: string) {
+    const sid = this.space.id;
+    const h = this.sd.hunks.find((x) => x.id === hunkId);
+    if (!h) return;
+    let before: string | null = null;
+    try {
+      before = (await this.backend.readFile(sid, h.repo, h.path)).content;
+    } catch {
+      /* no undo then */
+    }
+    try {
+      await this.backend.discardHunk(sid, hunkId);
+    } catch (e) {
+      this.fail(e);
+      return;
+    }
+    await this.refresh(sid);
+    this.contentRev[sid] = (this.contentRev[sid] ?? 0) + 1;
+    const n = h.newLines || h.oldLines;
+    const content = before;
+    this.toast(
+      `Reverted ${n} line${n === 1 ? "" : "s"} in ${h.path}`,
+      content === null ? undefined : { label: "Undo", run: () => this.undoRevert(sid, h.repo, h.path, content) },
+    );
+  }
+
+  /** Revert every change of yours in a file (staged or not), with an Undo. */
+  async revertFile(key: string) {
+    const sid = this.space.id;
+    const i = key.indexOf("/");
+    const repo = key.slice(0, i);
+    const path = key.slice(i + 1);
+    let before: string | null = null;
+    try {
+      before = (await this.backend.readFile(sid, repo, path)).content;
+      for (const h of this.myHunksOf(key).filter((x) => x.state === "staged")) await this.backend.unstageHunk(sid, h.id);
+      await this.backend.discardFile(sid, repo, path);
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh(sid);
+    this.contentRev[sid] = (this.contentRev[sid] ?? 0) + 1;
+    const content = before;
+    this.toast(`Reverted ${path}`, content === null ? undefined : { label: "Undo", run: () => this.undoRevert(sid, repo, path, content) });
   }
 
   async refresh(id = this.space.id) {
@@ -1301,7 +1392,32 @@ export class AppState {
     this.tier = TIERS[Math.min(TIERS.length - 1, Math.max(0, i - delta))];
   }
 
+  /** The agent whose conversation is open, per space. */
+  agentSel = $state<Record<string, string>>({});
+  private noticeListeners = new Set<(n: AgentNotice) => void>();
+  /** Every agent event as it happens (the chat appends them live). */
+  onAgentNotice(fn: (n: AgentNotice) => void): () => void {
+    this.noticeListeners.add(fn);
+    return () => this.noticeListeners.delete(fn);
+  }
+  /** The agent shown in the chat: the picked one, else the first at work, else the newest. */
+  get selectedAgent(): Agent | null {
+    const list = this.sd.agents;
+    const id = this.agentSel[this.space.id];
+    return (
+      list.find((a) => a.id === id) ??
+      list.find((a) => a.status === "waiting") ??
+      list.find((a) => a.status === "working") ??
+      list[0] ??
+      null
+    );
+  }
+  selectAgent(id: string) {
+    this.agentSel[this.space.id] = id;
+  }
+
   private onAgentEvent(n: AgentNotice) {
+    for (const l of this.noticeListeners) l(n);
     if (!this.data[n.spaceId]) return;
     clearTimeout(this.agentTimers[n.spaceId]);
     this.agentTimers[n.spaceId] = setTimeout(() => void this.loadAgents(n.spaceId, n), 120);
@@ -1378,6 +1494,7 @@ export class AppState {
     try {
       const harness = this.effectiveHarness;
       const a = await this.backend.askAgent(s.id, this.role, text, { harness, tier: this.tier });
+      this.agentSel[s.id] = a.id;
       this.harness = harness;
       writeStr("vela.harness", harness);
       writeStr("vela.role", this.role);
@@ -1882,6 +1999,24 @@ export class AppState {
         return this.answer(a.yes);
       case "find":
         this.findSeq++;
+        return;
+      case "agent-move": {
+        const list = [
+          ...this.sd.agents.filter((x) => x.status === "working" || x.status === "waiting"),
+          ...this.sd.agents.filter((x) => x.status !== "working" && x.status !== "waiting"),
+        ];
+        if (!list.length) return;
+        const i = list.findIndex((x) => x.id === this.selectedAgent?.id);
+        this.selectAgent(list[Math.max(0, Math.min(list.length - 1, i + a.delta))].id);
+        return;
+      }
+      case "change-move":
+        this.changeMove = { seq: this.changeMove.seq + 1, delta: a.delta };
+        return;
+      case "toggle-rail":
+        this.railHidden = !this.railHidden;
+        this.railPeek = false;
+        writeFlag("vela.railHidden", this.railHidden);
         return;
       case "toggle-terminal":
         return this.toggleTerminal();

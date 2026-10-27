@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { keyText } from "../lib/platform";
+
   let { k }: { k: string } = $props();
 </script>
 
-<kbd>{k}</kbd>
+<kbd>{keyText(k)}</kbd>

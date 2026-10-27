@@ -259,38 +259,70 @@ describe("pull requests", () => {
 });
 
 describe("agents view", () => {
-  it("a finished agent takes a follow up and an edited rerun", async () => {
+  it("Edit and rerun opens the composer with the request", async () => {
     press("3");
     await settle();
-    const done = app.sd.agents.find((a) => a.status === "done");
-    if (!done) return;
+    const done = app.sd.agents.find((a) => a.status === "done")!;
     app.data = {
       ...app.data,
-      [app.space.id]: { ...app.sd, agents: app.sd.agents.map((a) => (a.id === done.id ? { ...a, session: "s1", prompt: "Write the tests" } : a)) },
+      [app.space.id]: { ...app.sd, agents: app.sd.agents.map((a) => (a.id === done.id ? { ...a, prompt: "Write the tests" } : a)) },
     };
+    app.selectAgent(done.id);
     await settle();
-    const card = $(`[data-agent='${done.id}']`)!;
-    [...card.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent === "Follow up")!.click();
+    $$(".chat .ch button").find((b) => b.textContent?.includes("Edit and rerun"))!.click();
     await settle();
-    const input = $(`input[aria-label='Follow up for ${done.id}']`) as HTMLInputElement;
-    expect(document.activeElement).toBe(input);
-    const ans = vi.spyOn(backend, "answerAgentText");
-    input.value = "Also cover refunds";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.form!.requestSubmit();
-    await vi.waitFor(() => expect(ans).toHaveBeenCalledWith(app.space.id, done.id, "Also cover refunds"));
-    ans.mockRestore();
+    expect(app.overlay).toBe("composer");
+    expect(app.role).toBe(done.role);
+    expect(app.harness).toBe(done.tool);
+    expect(app.composerText).toBe("Write the tests");
+    press("Escape");
     await settle();
-    const card2 = $(`[data-agent='${done.id}']`)!;
-    const rerun = [...card2.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent === "Edit and rerun");
-    if (rerun) {
-      rerun.click();
-      await settle();
-      expect(app.overlay).toBe("composer");
-      expect(app.role).toBe(done.role);
-      expect(app.harness).toBe(done.tool);
-      press("Escape");
-      await settle();
-    }
+  });
+});
+
+describe("your changes in the code view", () => {
+  it("bars in the gutter open a peek to stage and revert, with an undo", async () => {
+    press("1");
+    await settle();
+    // A file with no proposal in it, so only your change shows.
+    const f = app.sd.files.find(
+      (x) => !x.path.endsWith(".md") && !app.sd.hunks.some((h) => h.repo === x.repo && h.path === x.path),
+    )!;
+    const repo = f.repo;
+    const file = f.path;
+    app.openFile(app.active, `${repo}/${file}`, true);
+    await vi.waitFor(() => expect($(".cm-editor")).toBeTruthy());
+    await settle();
+    const before = (await backend.readFile(app.space.id, repo, file)).content;
+    await backend.writeFile(app.space.id, repo, file, `// added by hand\n${before}`);
+    await app.refresh();
+    await vi.waitFor(() => expect($$(".cm-change-gutter .cm-chg-unstaged").length).toBeGreaterThan(0));
+    expect($(".chgbar")?.textContent).toContain("1 not staged");
+    // Click the bar: the peek opens under the change.
+    const bar = $(".cm-change-gutter .cm-chg-unstaged")!.parentElement!;
+    bar.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    await vi.waitFor(() => expect($(".cm-peek .peek")).toBeTruthy());
+    expect($(".cm-peek .peek")?.textContent).toContain("Not staged");
+    $$(".cm-peek button").find((b) => b.textContent === "Stage")!.click();
+    await vi.waitFor(() => expect($(".chgbar")?.textContent).toContain("1 staged"));
+    await vi.waitFor(() => expect($$(".cm-change-gutter .cm-chg-staged").length).toBeGreaterThan(0));
+    await vi.waitFor(() => expect($(".cm-peek .peek")?.textContent).toContain("Staged"));
+    $$(".cm-peek button").find((b) => b.textContent === "Revert")!.click();
+    await vi.waitFor(() => expect(app.toastState?.action?.label).toBe("Undo"));
+    expect((await backend.readFile(app.space.id, repo, file)).content).toBe(before);
+    expect($(".chgbar")).toBeNull();
+    app.toastState!.action!.run();
+    await vi.waitFor(async () =>
+      expect((await backend.readFile(app.space.id, repo, file)).content).toContain("// added by hand"),
+    );
+  });
+
+  it("Ctrl Alt Down goes to the next change and opens it", async () => {
+    await vi.waitFor(() => expect($(".chgbar")).toBeTruthy());
+    press("ArrowDown", { ctrlKey: true, altKey: true });
+    await vi.waitFor(() => expect($(".cm-peek .peek")).toBeTruthy());
+    press("Escape", {}, $(".cm-content")!);
+    await settle();
+    expect($(".cm-peek .peek")).toBeNull();
   });
 });

@@ -93,7 +93,7 @@ describe("opening", () => {
   });
 
   it("a text field gets Cut, Copy, Paste and Select all", async () => {
-    press("k", { ctrlKey: true });
+    press("t", { ctrlKey: true });
     await settle();
     const input = $("#pal-in") as HTMLInputElement;
     input.value = "hello";
@@ -531,7 +531,7 @@ describe("the command bar", () => {
     press("1");
     await settle();
     app.openFile(app.active, "api/src/billing/webhook.ts", true);
-    press("k", { ctrlKey: true });
+    press("t", { ctrlKey: true });
     await settle();
     const input = $("#pal-in") as HTMLInputElement;
     input.value = "reveal worktree";

@@ -12,11 +12,11 @@ const ctx = (o: Partial<KeyContext> = {}): KeyContext => ({
 const key = (k: string, o: Partial<KeyLike> = {}): KeyLike => ({ key: k, ...o });
 
 describe("global shortcuts", () => {
-  it("Ctrl K and Cmd K toggle the command bar, even while typing or in an overlay", () => {
-    expect(resolveKey(key("k", { ctrlKey: true }), ctx())).toEqual({ type: "palette-toggle" });
-    expect(resolveKey(key("K", { metaKey: true }), ctx())).toEqual({ type: "palette-toggle" });
-    expect(resolveKey(key("k", { ctrlKey: true }), ctx({ typing: true }))).toEqual({ type: "palette-toggle" });
-    expect(resolveKey(key("k", { ctrlKey: true }), ctx({ overlay: "commit" }))).toEqual({ type: "palette-toggle" });
+  it("Ctrl T and Cmd T toggle the command bar, even while typing or in an overlay", () => {
+    expect(resolveKey(key("t", { ctrlKey: true }), ctx())).toEqual({ type: "palette-toggle" });
+    expect(resolveKey(key("T", { metaKey: true }), ctx())).toEqual({ type: "palette-toggle" });
+    expect(resolveKey(key("t", { ctrlKey: true }), ctx({ typing: true }))).toEqual({ type: "palette-toggle" });
+    expect(resolveKey(key("t", { ctrlKey: true }), ctx({ overlay: "commit" }))).toEqual({ type: "palette-toggle" });
   });
 
   it("Enter does up next, Shift Enter jumps to the next waiting space", () => {
@@ -81,10 +81,10 @@ describe("proposals", () => {
     expect(resolveKey(key("ArrowUp"), ctx({ view: "code" }))).toEqual({ type: "move", delta: -1 });
   });
 
-  it("do not move in the agents view", () => {
-    expect(resolveKey(key("j"), ctx({ view: "agents" }))).toBeNull();
-    expect(resolveKey(key("k"), ctx({ view: "agents" }))).toBeNull();
-    expect(resolveKey(key("ArrowDown"), ctx({ view: "agents" }))).toBeNull();
+  it("pick the agent in the agents view", () => {
+    expect(resolveKey(key("j"), ctx({ view: "agents" }))).toEqual({ type: "agent-move", delta: 1 });
+    expect(resolveKey(key("k"), ctx({ view: "agents" }))).toEqual({ type: "agent-move", delta: -1 });
+    expect(resolveKey(key("j"), ctx({ view: "prs" }))).toBeNull();
   });
 
   it("Y and N accept and reject, or answer the open question in the agents view", () => {
@@ -183,7 +183,7 @@ describe("overlays", () => {
     }
     expect(resolveKey(key("0"), c)).toBeNull();
     expect(resolveKey(key("y"), c)).toBeNull();
-    expect(resolveKey(key("t", { ctrlKey: true }), c)).toBeNull();
+    expect(resolveKey(key("t", { ctrlKey: true }), c)).toEqual({ type: "palette-toggle" });
   });
 
   it("links sheet: arrows work in the field, letters and Backspace only outside it", () => {
@@ -200,7 +200,7 @@ describe("overlays", () => {
     expect(resolveKey(key("Backspace"), idle)).toEqual({ type: "links-remove" });
     expect(resolveKey(key("Delete"), idle)).toEqual({ type: "links-remove" });
     expect(resolveKey(key("y"), idle)).toBeNull();
-    expect(resolveKey(key("k", { ctrlKey: true }), typing)).toEqual({ type: "palette-toggle" });
+    expect(resolveKey(key("t", { ctrlKey: true }), typing)).toEqual({ type: "palette-toggle" });
   });
 
   it("composer: Tab cycles the role, Shift Tab the harness, Ctrl Up/Down the tier, Enter sends", () => {
@@ -304,5 +304,13 @@ describe("find, terminal, preview, split, notes", () => {
   it("the settings sheet takes its own keys", () => {
     expect(resolveKey({ key: "t" }, { ...base, overlay: "settings" })).toBeNull();
     expect(resolveKey({ key: "Escape" }, { ...base, overlay: "settings" })).toEqual({ type: "close" });
+  });
+});
+
+describe("Cmd K asks an agent", () => {
+  it("opens the composer from anywhere and closes it again", () => {
+    expect(resolveKey(key("k", { ctrlKey: true }), ctx())).toEqual({ type: "open-composer" });
+    expect(resolveKey(key("k", { metaKey: true }), ctx({ typing: true }))).toEqual({ type: "open-composer" });
+    expect(resolveKey(key("k", { metaKey: true }), ctx({ overlay: "composer" }))).toEqual({ type: "close" });
   });
 });

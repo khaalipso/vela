@@ -259,6 +259,8 @@ export interface Backend {
   /** Undo an accepted or rejected hunk: back to pending. */
   unstageHunk(spaceId: string, hunkId: string): Promise<Hunk>;
   rejectHunk(spaceId: string, hunkId: string): Promise<Hunk>;
+  /** Throw away one of your hunks (staged or not): its lines go back to what they were. */
+  discardHunk(spaceId: string, hunkId: string): Promise<void>;
   /** Accept, then the caller opens the lines in the editor. */
   editHunk(spaceId: string, hunkId: string): Promise<Hunk>;
 
@@ -396,6 +398,8 @@ interface MFile extends FileRef {
   orig?: string[];
   /** Indices of the lines you typed. */
   mine: Set<number>;
+  /** Of those, the ones you staged (shown as staged hunks of yours). */
+  stagedMine?: Set<number>;
 }
 
 interface MHunk {
@@ -587,33 +591,68 @@ export class MockBackend implements Backend {
   private youHunks(s: MSpace): Hunk[] {
     const out: Hunk[] = [];
     for (const f of s.files) {
-      const idx = [...f.mine].sort((a, b) => a - b);
-      let i = 0;
-      while (i < idx.length) {
-        let j = i;
-        while (j + 1 < idx.length && idx[j + 1] === idx[j] + 1) j++;
-        const start = idx[i];
-        const lines: DiffLine[] = [];
-        for (let k = i; k <= j; k++) {
-          lines.push({ kind: "add", text: f.lines[idx[k]] ?? "", old: null, new: f.firstLine + idx[k] });
+      const staged = f.stagedMine ?? new Set<number>();
+      for (const want of ["pending", "staged"] as const) {
+        const idx = [...f.mine].filter((i) => staged.has(i) === (want === "staged")).sort((a, b) => a - b);
+        let i = 0;
+        while (i < idx.length) {
+          let j = i;
+          while (j + 1 < idx.length && idx[j + 1] === idx[j] + 1) j++;
+          const start = idx[i];
+          const lines: DiffLine[] = [];
+          for (let k = i; k <= j; k++) {
+            lines.push({ kind: "add", text: f.lines[idx[k]] ?? "", old: null, new: f.firstLine + idx[k] });
+          }
+          out.push({
+            id: `you:${fileKey(f.repo, f.path)}#${start}`,
+            repo: f.repo,
+            path: f.path,
+            oldStart: f.firstLine + start,
+            oldLines: 0,
+            newStart: f.firstLine + start,
+            newLines: lines.length,
+            section: "",
+            lines,
+            origin: { type: "you" },
+            state: want,
+          });
+          i = j + 1;
         }
-        out.push({
-          id: `you:${fileKey(f.repo, f.path)}#${start}`,
-          repo: f.repo,
-          path: f.path,
-          oldStart: f.firstLine + start,
-          oldLines: 0,
-          newStart: f.firstLine + start,
-          newLines: lines.length,
-          section: "",
-          lines,
-          origin: { type: "you" },
-          state: "pending",
-        });
-        i = j + 1;
       }
     }
     return out;
+  }
+
+  /** A hunk of yours by id: its file and the line indices it covers. */
+  private youHunk(s: MSpace, hunkId: string): { f: MFile; idx: number[] } | null {
+    const h = this.youHunks(s).find((x) => x.id === hunkId);
+    if (!h) return null;
+    const f = this.file(s, h.repo, h.path);
+    const start = h.newStart - f.firstLine;
+    return { f, idx: Array.from({ length: h.newLines }, (_, k) => start + k) };
+  }
+
+  async discardHunk(spaceId: string, hunkId: string): Promise<void> {
+    const s = this.sp(spaceId);
+    const y = this.youHunk(s, hunkId);
+    if (!y) throw new Error(`Unknown hunk: ${hunkId}`);
+    const { f, idx } = y;
+    if (f.orig && idx.length === f.mine.size) {
+      // The only change of the file: back to what it was.
+      f.lines = f.orig.slice();
+      f.orig = undefined;
+      f.mine = new Set();
+      f.stagedMine = new Set();
+    } else {
+      const start = idx[0];
+      f.lines.splice(start, idx.length);
+      for (const i of idx) {
+        f.mine.delete(i);
+        f.stagedMine?.delete(i);
+      }
+      this.remap(s, f, start, idx.length, 0);
+    }
+    this.emit(spaceId, "state");
   }
 
   /** Replace `removed` lines at `start` by `inserted` lines in the bookkeeping (marks and other hunks). */
@@ -625,6 +664,14 @@ export class MockBackend implements Backend {
       else if (i >= start + removed) next.add(i + delta);
     }
     f.mine = next;
+    if (f.stagedMine) {
+      const st = new Set<number>();
+      for (const i of f.stagedMine) {
+        if (i < start) st.add(i);
+        else if (i >= start + removed) st.add(i + delta);
+      }
+      f.stagedMine = st;
+    }
     for (const o of s.hunks) {
       if (o.id !== except && o.repo === f.repo && o.path === f.path && o.at > start && o.at >= start + removed) {
         o.at += delta;
@@ -791,7 +838,10 @@ export class MockBackend implements Backend {
       return c;
     };
     for (const f of this.stagedFiles(s)) get(f).staged = "modified";
-    for (const f of s.files) if (f.mine.size) get(f).unstaged = "modified";
+    for (const f of s.files) {
+      if ([...f.mine].some((i) => !f.stagedMine?.has(i))) get(f).unstaged = "modified";
+      if (f.stagedMine?.size) get(f).staged = "modified";
+    }
     for (const [k, o] of s.fileStage) {
       const i = k.indexOf("/");
       const c = get({ repo: k.slice(0, i), path: k.slice(i + 1) });
@@ -827,6 +877,14 @@ export class MockBackend implements Backend {
 
   async stageHunk(spaceId: string, hunkId: string): Promise<Hunk> {
     const s = this.sp(spaceId);
+    if (hunkId.startsWith("you:")) {
+      const y = this.youHunk(s, hunkId);
+      if (!y) throw new Error(`Unknown hunk: ${hunkId}`);
+      y.f.stagedMine ??= new Set();
+      for (const i of y.idx) y.f.stagedMine.add(i);
+      this.emit(spaceId);
+      return this.youHunks(s).find((h) => h.id === hunkId)!;
+    }
     const h = this.find(s, hunkId);
     if (h.state === "pending") {
       this.apply(s, h);
@@ -852,6 +910,13 @@ export class MockBackend implements Backend {
 
   async unstageHunk(spaceId: string, hunkId: string): Promise<Hunk> {
     const s = this.sp(spaceId);
+    if (hunkId.startsWith("you:")) {
+      const y = this.youHunk(s, hunkId);
+      if (!y) throw new Error(`Unknown hunk: ${hunkId}`);
+      for (const i of y.idx) y.f.stagedMine?.delete(i);
+      this.emit(spaceId);
+      return this.youHunks(s).find((h) => h.id === hunkId)!;
+    }
     const h = this.find(s, hunkId);
     if (h.state === "staged") this.unapply(s, h);
     if (h.state !== "pending") {
@@ -941,8 +1006,20 @@ export class MockBackend implements Backend {
     }
   }
 
-  async agentLog(): Promise<AgentLogEntry[]> {
-    return [];
+  /** A plausible history built from what the mock knows of the agent. */
+  async agentLog(spaceId: string, agentId: string): Promise<AgentLogEntry[]> {
+    const a = this.sp(spaceId).agents.find((x) => x.id === agentId);
+    if (!a) return [];
+    const ts = a.started ?? new Date().toISOString();
+    const out: AgentLogEntry[] = [];
+    if (a.prompt) out.push({ ts, event: { type: "prompt", text: a.prompt } });
+    out.push({ ts, event: { type: "toolCall", name: "Read", summary: "src/billing/webhook.ts" } });
+    if (a.plan?.length) out.push({ ts, event: { type: "plan", steps: a.plan } });
+    const text = a.lastMessage || a.summary;
+    if (text) out.push({ ts, event: { type: "message", text } });
+    if (a.status === "done") out.push({ ts, event: { type: "done", summary: "" } });
+    if (a.status === "failed") out.push({ ts, event: { type: "failed", error: a.summary || "failed" } });
+    return out;
   }
 
   onAgent(_listener?: (e: AgentNotice) => void): Unsubscribe {
@@ -1976,6 +2053,9 @@ export class TauriBackend implements Backend {
   }
   stageHunk(spaceId: string, hunkId: string) {
     return call<Hunk>("stage_hunk", { spaceId, hunkId });
+  }
+  async discardHunk(spaceId: string, hunkId: string) {
+    await call("discard_hunk", { spaceId, hunkId });
   }
   unstageHunk(spaceId: string, hunkId: string) {
     return call<Hunk>("unstage_hunk", { spaceId, hunkId });

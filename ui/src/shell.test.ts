@@ -75,15 +75,15 @@ describe("shell", () => {
     expect($("h1")?.textContent).toContain("Postgres 17");
     expect(document.documentElement.style.getPropertyValue("--space")).toBe("#7DB8F5");
     // pg opens in the agents view with its question
-    expect($(".ask p")?.textContent).toContain("pg_trgm");
+    await vi.waitFor(() => expect($(".chat .question p")?.textContent).toContain("pg_trgm"));
     expect($(".island b")?.textContent).toBe("Crush is waiting for you");
     press("[");
     await settle();
     expect($("h1")?.textContent).toContain("Stripe v2 billing");
   });
 
-  it("Ctrl K opens the command bar, typing filters, Esc closes", async () => {
-    press("k", { ctrlKey: true });
+  it("Ctrl T opens the command bar, typing filters, Esc closes", async () => {
+    press("t", { ctrlKey: true });
     await settle();
     const input = $("#pal-in") as HTMLInputElement;
     expect(input).toBeTruthy();
@@ -130,7 +130,7 @@ describe("shell", () => {
     view.dispatch({ changes: { from: end, insert: "\n// by hand" }, userEvent: "input.type" });
     await settle();
     await vi.waitFor(() => expect(app.mine.length).toBe(1));
-    expect($$(".cm-mine-gutter .cm-gutterElement").some((e) => e.textContent === "•")).toBe(true);
+    expect($$(".cm-change-gutter .cm-chg-unstaged").length).toBeGreaterThan(0);
     press("b");
     await settle();
     await vi.waitFor(() => expect($$(".files .row").length).toBeGreaterThan(0));
@@ -216,7 +216,7 @@ describe("shell", () => {
     await vi.waitFor(() => expect(app.spaces.length).toBe(4));
     await settle();
     expect($("h1")?.textContent).toContain("Refunds in checkout");
-    expect($$(".agent").length).toBe(1);
+    expect($$(".list .item").length).toBe(1);
     expect($$(".chip").length).toBe(2);
     expect(document.documentElement.style.getPropertyValue("--space")).toBe("#4ADE80");
   });

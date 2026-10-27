@@ -256,6 +256,19 @@ pub async fn unstage_hunk(
 }
 
 #[tauri::command]
+pub async fn discard_hunk(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    hunk_id: String,
+) -> AppResult<()> {
+    let sid = space_id.clone();
+    blocking(&vela, move |v| commands::discard_hunk(v, &sid, &hunk_id)).await?;
+    notify_state(&app, &space_id);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn reject_hunk(
     vela: State<'_, Vela>,
     space_id: String,

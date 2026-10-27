@@ -43,6 +43,7 @@ export function buildPaletteItems(src: PaletteSource): PaletteItem[] {
     ["Add a repo to this space", "", { type: "open-addrepo" }],
     ["Open this space in its own window", "W", { type: "toggle-window" }],
     ["Toggle files", "B", { type: "toggle-files" }],
+    ["Hide or show the spaces bar", "Ctrl B", { type: "toggle-rail" }],
     ["Go to file", "Ctrl P", { type: "quick-open" }],
     ["Show the stack", "S", { type: "open-stack" }],
     ["Terminal", "T", { type: "toggle-terminal" }],

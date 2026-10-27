@@ -298,6 +298,14 @@ pub fn unstage_hunk(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> {
     Ok(h)
 }
 
+/// Throw away one of your hunks, staged or not: its lines go back to HEAD (or the index).
+pub fn discard_hunk(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<()> {
+    let _inv = Invalidate(id);
+    let space = load(vela, id)?;
+    stage::discard_hunk(&space, hunk_id)?;
+    Ok(())
+}
+
 /// Hide a pending hunk for good: its id is stored in `spaces/<id>.rejected.json`.
 pub fn reject_hunk(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> {
     let _inv = Invalidate(id);

@@ -10,7 +10,20 @@
   import { app } from "../lib/app.svelte";
   import type { FileContent } from "../lib/backend";
   import { menu, openAtEvent, isKeyboardEvent } from "../lib/contextmenu.svelte";
-  import { createState, firstLineFacet, focusLine, replaceContent, setHunks, setLanguage, setMine, type HunkSpec } from "../lib/editor";
+  import { mount, unmount } from "svelte";
+  import {
+    changeMarks,
+    createState,
+    firstLineFacet,
+    focusLine,
+    replaceContent,
+    setChanges,
+    setHunks,
+    setLanguage,
+    setPeek,
+    type HunkSpec,
+  } from "../lib/editor";
+  import ChangePeek from "./ChangePeek.svelte";
   import { fileKey } from "../lib/format";
   import { editorMenu, tabMenu } from "../lib/menus";
   import { readClipboard, writeClipboard } from "../lib/ops.svelte";
@@ -56,14 +69,86 @@
     });
   }
 
-  function pushMine(f: FileContent) {
-    if (!view) return;
-    const lines: number[] = [];
-    for (const h of app.mine) {
-      if (h.repo !== f.repo || h.path !== f.path) continue;
-      for (let i = 0; i < h.newLines; i++) lines.push(h.newStart - f.firstLine + 1 + i);
+  /** First line of the file shown (the mock shows snippets of big files). */
+  let firstLine = 1;
+  /** The change of yours opened under its lines, by hunk id. */
+  let peekId = $state<string | null>(null);
+
+  const mine = $derived(current ? app.myHunksOf(current) : []);
+  const stagedN = $derived(mine.filter((h) => h.state === "staged").length);
+
+  function pushChanges() {
+    if (!view || loading) return;
+    view.dispatch({
+      effects: setChanges.of({
+        marks: changeMarks(mine, firstLine, view.state.doc.lines),
+        onClick: (id) => openPeek(peekId === id ? null : id),
+      }),
+    });
+  }
+
+  function openPeek(id: string | null) {
+    peekId = id;
+    pushPeek();
+  }
+
+  function pushPeek() {
+    if (!view || loading) return;
+    const i = mine.findIndex((h) => h.id === peekId);
+    const h = mine[i];
+    if (!h) {
+      if (peekId) peekId = null;
+      view.dispatch({ effects: setPeek.of(null) });
+      return;
     }
-    view.dispatch({ effects: setMine.of(lines) });
+    const last = Math.max(h.newStart, h.newStart + h.newLines - 1) - firstLine + 1;
+    const total = mine.length;
+    view.dispatch({
+      effects: setPeek.of({
+        line: last,
+        key: `${h.id}:${h.state}:${i}:${total}`,
+        mount: (el) => {
+          const c = mount(ChangePeek, {
+            target: el,
+            props: {
+              hunk: h,
+              index: i,
+              total,
+              onstage: () => void app.stageMine(h.id, true),
+              onunstage: () => void app.stageMine(h.id, false),
+              onrevert: () => {
+                peekId = null;
+                void app.revertMine(h.id);
+              },
+              oncopy: () => {
+                void writeClipboard(h.lines.filter((l) => l.kind === "del").map((l) => l.text).join("\n"));
+                app.toast("Original lines copied");
+              },
+              onclose: () => openPeek(null),
+              onmove: (d) => moveChange(d),
+            },
+          });
+          return () => void unmount(c);
+        },
+      }),
+    });
+  }
+
+  /** Go to the next (1) or previous (-1) change of yours from the cursor, and open it. */
+  function moveChange(delta: 1 | -1) {
+    if (!view || !mine.length) return app.toast("No change of yours in this file");
+    const cur = peekId ? mine.findIndex((h) => h.id === peekId) : -1;
+    let next: number;
+    if (cur >= 0) next = (cur + delta + mine.length) % mine.length;
+    else {
+      const line = view.state.doc.lineAt(view.state.selection.main.head).number + firstLine - 1;
+      next = delta === 1 ? mine.findIndex((h) => h.newStart > line) : mine.findLastIndex((h) => h.newStart < line);
+      if (next < 0) next = delta === 1 ? 0 : mine.length - 1;
+    }
+    const h = mine[next];
+    openPeek(h.id);
+    const ln = Math.min(view.state.doc.lines, Math.max(1, h.newStart - firstLine + 1));
+    view.dispatch({ selection: { anchor: view.state.doc.line(ln).from }, effects: EditorView.scrollIntoView(view.state.doc.line(ln).from, { y: "center" }) });
   }
 
   function maybeFocus() {
@@ -100,8 +185,10 @@
       replaceContent(view, f.content);
     }
     text = f.content;
+    firstLine = f.firstLine;
     loading = false;
-    pushMine(f);
+    pushChanges();
+    pushPeek();
     pushHunks();
     maybeFocus();
   }
@@ -183,6 +270,27 @@
     maybeFocus();
   });
 
+  // Your changes moved (stage, revert, refresh): redraw the bars and the open peek.
+  $effect(() => {
+    mine;
+    pushChanges();
+    pushPeek();
+  });
+
+  // A new file closes the peek.
+  $effect(() => {
+    current;
+    peekId = null;
+  });
+
+  let handledMove = 0;
+  $effect(() => {
+    const m = app.changeMove;
+    if (m.seq === handledMove) return;
+    handledMove = m.seq;
+    moveChange(m.delta);
+  });
+
   // Ctrl F from outside the editor: the find bar of the preview, or of the editor.
   $effect(() => {
     const seq = app.findSeq;
@@ -213,6 +321,22 @@
     {#if !app.filesOpen}<button class="btn" onclick={() => app.dispatch({ type: "toggle-files" })}>Show files <kbd>B</kbd></button>{/if}
   </div>
 {/if}
+{#if current && mine.length && !preview}
+  <div class="chgbar" aria-label="Your changes in this file">
+    <span class="cdot unst"></span><span>{mine.length - stagedN} not staged</span>
+    <span class="cdot stg"></span><span>{stagedN} staged</span>
+    <button class="ic" title="Previous change (Ctrl Alt ↑)" aria-label="Previous change" onclick={() => moveChange(-1)}>↑</button>
+    <button class="ic" title="Next change (Ctrl Alt ↓)" aria-label="Next change" onclick={() => moveChange(1)}>↓</button>
+    <span class="sp"></span>
+    {#if mine.length - stagedN}
+      <button class="lnk" onclick={() => { const [r, p] = split(current); void app.backend.stageFile(app.space.id, r, p).then(() => app.refresh()); }}>Stage file</button>
+    {/if}
+    {#if stagedN}
+      <button class="lnk" onclick={() => { const [r, p] = split(current); void app.backend.unstageFile(app.space.id, r, p).then(() => app.refresh()); }}>Unstage file</button>
+    {/if}
+    <button class="lnk danger" onclick={() => app.revertFile(current)} title="Back to the last commit; you can undo it from the notification">Revert file</button>
+  </div>
+{/if}
 {#if current && isMarkdown(current)}
   <div class="mdbar">
     <span>{preview ? "Preview" : "Source"}</span>
@@ -239,7 +363,19 @@
   {/await}
 {/if}
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="code" class:hidden={!current || preview} bind:this={host} oncontextmenu={editorContext}></div>
+<div
+  class="code"
+  class:hidden={!current || preview}
+  bind:this={host}
+  oncontextmenu={editorContext}
+  onkeydowncapture={(e) => {
+    if (e.key === "Escape" && peekId) {
+      e.stopPropagation();
+      e.preventDefault();
+      openPeek(null);
+    }
+  }}
+></div>
 
 <style>
   .nofile {
@@ -315,6 +451,48 @@
   }
   .rp {
     color: color-mix(in srgb, var(--rc) 70%, var(--faint));
+  }
+  .chgbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 16px 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .cdot {
+    width: 4px;
+    height: 12px;
+    border-radius: 2px;
+    margin-left: 4px;
+  }
+  .cdot.unst {
+    background: var(--warn);
+  }
+  .cdot.stg {
+    background: var(--add);
+  }
+  .chgbar .sp {
+    flex: 1;
+  }
+  .chgbar .ic {
+    color: var(--faint);
+    padding: 0 6px;
+    border-radius: 6px;
+  }
+  .chgbar .ic:hover,
+  .chgbar .lnk:hover {
+    background: var(--hover);
+    color: var(--fg);
+  }
+  .chgbar .lnk {
+    color: var(--faint);
+    padding: 2px 8px;
+    border-radius: 6px;
+  }
+  .chgbar .lnk.danger:hover {
+    color: var(--del);
+    background: var(--del-bg);
   }
   .mdbar {
     display: flex;

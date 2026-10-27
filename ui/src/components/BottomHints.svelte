@@ -10,7 +10,7 @@
     agents: [["@", "ask"], ["Y N", "answer"]],
     prs: [["R", "refresh"], ["@", "ask an agent"]],
   };
-  const hints = $derived([...HINTS[app.view], ["C", "commit"], ["L", "links"], ["Right click", "actions"], ["Ctrl K", "everything"]]);
+  const hints = $derived([...HINTS[app.view], ["C", "commit"], ["L", "links"], ["Right click", "actions"], ["Ctrl K", "ask an agent"], ["Ctrl T", "everything"]]);
   const stack = $derived(app.sd.stack);
   const starting = $derived(stack.filter((s) => s.state === "starting").length);
   const label = (s: { name: string; version: string | null }) => (s.version ? `${s.name} ${s.version}` : s.name);

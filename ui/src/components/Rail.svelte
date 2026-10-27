@@ -6,22 +6,34 @@
   import { ops } from "../lib/ops.svelte";
   import Kbd from "./Kbd.svelte";
 
+  let { floating = false }: { floating?: boolean } = $props();
   let showArchived = $state(false);
 </script>
 
-<nav class="rail" aria-label="Spaces">
+<nav class="rail" class:floating aria-label="Spaces" onmouseleave={() => floating && (app.railPeek = false)}>
   <div class="brand">
     <svg width="20" height="20" viewBox="0 0 256 256" fill="none" stroke="var(--space)" stroke-width="18" stroke-linejoin="round" aria-hidden="true"
       ><path d="M128 28v172M128 40c40 30 64 76 64 140H128M120 64c-30 24-48 62-48 116h48" /><path d="M40 212h176" /></svg
     >
     Vela<small>Window 1</small>
+    <button
+      class="hide"
+      title={app.railHidden ? "Keep the spaces bar open (Ctrl B)" : "Hide the spaces bar; it shows when the pointer touches the left edge (Ctrl B)"}
+      aria-label={app.railHidden ? "Keep the spaces bar open" : "Hide the spaces bar"}
+      onclick={() => app.dispatch({ type: "toggle-rail" })}
+    >
+      <svg width="16" height="16" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="32" y="48" width="192" height="160" rx="16" /><path d="M96 48v160" />
+        {#if app.railHidden}<path d="M136 104l24 24-24 24" />{:else}<path d="M160 104l-24 24 24 24" />{/if}
+      </svg>
+    </button>
   </div>
   <button class="find" onclick={() => app.dispatch({ type: "open-palette" })}>
     <svg width="16" height="16" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="20" stroke-linecap="round" aria-hidden="true"
       ><circle cx="112" cy="112" r="72" /><path d="M163 163l53 53" /></svg
     >
     <span>Spaces, files, actions</span>
-    <Kbd k="Ctrl K" />
+    <Kbd k="Ctrl T" />
   </button>
   <div class="label">Spaces</div>
   <div class="spaces">
@@ -83,6 +95,35 @@
     flex-direction: column;
     gap: 12px;
     transition: background-color 400ms var(--ease);
+    overflow-y: auto;
+  }
+  .rail.floating {
+    position: fixed;
+    top: 8px;
+    bottom: 8px;
+    left: 8px;
+    z-index: 40;
+    box-shadow:
+      0 0 0 1px var(--line),
+      0 24px 64px rgba(0, 0, 0, 0.45);
+    animation: slidein 180ms var(--ease);
+  }
+  @keyframes slidein {
+    from {
+      transform: translateX(-24px);
+      opacity: 0;
+    }
+  }
+  .hide {
+    margin-left: auto;
+    color: var(--faint);
+    display: inline-flex;
+    padding: 4px;
+    border-radius: 6px;
+  }
+  .hide:hover {
+    color: var(--fg);
+    background: var(--hover);
   }
   .brand {
     display: flex;

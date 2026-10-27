@@ -251,7 +251,7 @@ fn a_reviewer_runs_read_only_in_the_users_worktree_without_a_worktree() {
     assert!(a.worktrees.is_empty());
     idle(&m);
     let args = read(&e.bin.join("call-1.args"));
-    assert!(args.contains("--permission-mode plan"), "{args}");
+    assert!(args.contains("--permission-mode dontAsk"), "{args}");
     assert_eq!(
         fs::canonicalize(read(&e.bin.join("call-1.cwd")).trim()).unwrap(),
         fs::canonicalize(&e.space.repos[0].worktree).unwrap()
@@ -433,7 +433,7 @@ fn codex_runs_through_its_driver() {
     );
     assert!(args.contains("-s workspace-write"), "{args}");
     assert!(args.trim_end().ends_with(" -"), "{args}");
-    assert!(read(&e.bin.join("stdin")).contains("Request: refunds"));
+    assert!(read(&e.bin.join("stdin")).contains("## Request\nrefunds"));
 }
 
 #[test]
@@ -466,7 +466,7 @@ fn opencode_runs_through_its_driver() {
     let args = read(&e.bin.join("args"));
     assert!(args.starts_with("run --format json "), "{args}");
     assert!(args.contains("--agent plan"), "{args}");
-    assert!(args.contains("Request: plan refunds"), "{args}");
+    assert!(args.contains("## Request\nplan refunds"), "{args}");
 }
 
 /// A manager whose global config layer holds `toml`.

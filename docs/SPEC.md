@@ -8,7 +8,7 @@ Arc replaced tabs with spaces. Vela replaces the open folder with the **space**:
 
 1. **One focused surface.** A space shows one view at a time: Code, Review or Agents. Nothing is docked unless you ask for it.
 2. **The IDE tells you what is next.** The "Up next" island always holds the single most useful action (answer an agent, review proposals, commit). `Enter` does it. `Shift Enter` jumps to the next space waiting for you.
-3. **Keyboard first.** Every action has a key. Hints at the bottom change with the view. `Ctrl K` reaches everything.
+3. **Keyboard first.** Every action has a key. Hints at the bottom change with the view. `Cmd/Ctrl T` reaches everything, `Cmd/Ctrl K` asks an agent. On macOS the hints show ⌘ ⇧ ⌥.
 4. **You stay the author.** Agents never write in your worktree. They propose hunks from their own worktrees; you accept, reject or edit each one. Typing by hand always works.
 5. **Plain git underneath.** Spaces are branches and standard `git worktree`s. Uninstall Vela and nothing is lost.
 6. **One AI config, many tools.** Instructions, MCP servers, skills and agent roles are set in layers (global, space, repo, folder) and written out to `AGENTS.md`, `CLAUDE.md`, `.mcp.json`, `opencode.json`, `.codex/config.toml`, `crush.json`.
@@ -54,6 +54,14 @@ The composer's gate lists the results of these checks (a failing one needs an ov
 - **Repo colors**: each repo of a space has a soft color in the family of the space color (analogous hues 32° apart, calm saturation, `lib/colors.ts`). Editor tabs, top bar chips, the file tree and the review groups use it.
 - **Desktop notifications** when an agent asks a question, is done or fails, while no Vela window has the focus.
 
+## Agents view
+
+A conversation per agent: the list on the left (at work first, `J` `K` to move), the chat on the right. The chat shows your requests, the agent's full answers rendered as Markdown, its tool calls grouped between answers (click to unfold, with the files it edited), its plan, its questions with their answer buttons, and the end of each run. It updates live. The field at the bottom answers a question or gives a finished agent more work in the same session and worktree. "Edit and rerun" opens the composer with the request; "Review its changes" goes to the Review.
+
+## Your changes in the code view
+
+Each line you changed has a bar in the gutter, between the line numbers and the code: amber when not staged, green when staged, a red wedge where lines were deleted; striped bars are changed lines, plain ones added. Lines you type show at once. Clicking a bar opens the change in place, under its lines: before and after, Stage or Unstage, Revert (with Undo in the notification, which puts the file back as it was), Copy original. A strip above the file counts the changes, moves between them (`Ctrl Alt ↓` `Ctrl Alt ↑`) and stages, unstages or reverts the whole file. Reverting a hunk is `discard_hunk`: `git apply -R` on the worktree, and on the index too for a staged hunk, checked first so nothing is half applied.
+
 ## Pull requests
 
 The Pull requests view (`4`) shows, for each repo of the space, the PR of the space branch through the GitHub CLI (`gh`, logged in): state, review decision, reviews, review comments on lines with their replies, the conversation, and the checks. A line comment opens the file at its line or goes to a developer agent ("Ask an agent to fix", on the remembered harness); a review that requests changes too. Comments are posted with `gh pr comment`. A repo without a PR offers to push the branch and open one (`gh pr create --fill`, or as a draft); its URL is added to the links. `R` refreshes; a fetch is reused for a minute. The switch shows how many PRs want something from you (changes requested or a failing check).
@@ -66,7 +74,10 @@ Before a commit, run in parallel on the staged diff only: reviewer agent (non in
 
 | Key | Action |
 | --- | --- |
-| `Ctrl K` | Command bar: spaces, files, actions |
+| `Ctrl T` | Command bar: spaces, files, actions |
+| `Ctrl K`, `@` | Ask an agent (`Ctrl K` again closes) |
+| `Ctrl B` | Hide the spaces bar; it floats in when the pointer touches the left edge |
+| `Ctrl Alt ↓` `Ctrl Alt ↑` | Code view: next, previous change of yours, opened in place |
 | `Enter` / `Shift Enter` | Up next / next space waiting |
 | `[` `]`, `Alt 1..9` | Previous, next space / jump to space |
 | `1` `2` `3` `4` | Code, Review, Agents, Pull requests |

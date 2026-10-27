@@ -136,66 +136,75 @@ pub fn is_read_only(role: AgentRole) -> bool {
     )
 }
 
-/// The built in brief of a role, sent before every request. `[agents.prompts]` replaces it.
+/// Ground rules every role gets, before its own brief (`prompts/_common.md`).
+pub const COMMON_BRIEF: &str = include_str!("../prompts/_common.md");
+
+/// The built in brief of a role (`prompts/<role>.md`). `[agents.prompts]` replaces it; the
+/// common rules stay.
 pub fn role_brief(role: AgentRole) -> &'static str {
     match role {
-        AgentRole::Developer => {
-            "You are the developer agent of a Vela space. Make the requested change in this \
-             working directory. Do not commit and do not touch files outside it. When done, say in \
-             one or two sentences what you changed and why."
-        }
-        AgentRole::Tester => {
-            "You are the tester agent of a Vela space. Write or run tests for the request in this \
-             working directory. Do not commit. When done, say in one or two sentences what you \
-             found."
-        }
-        AgentRole::Debugger => {
-            "You are the debugger agent of a Vela space. Find the cause of the problem and fix it \
-             in this working directory. Do not commit. When done, say in one or two sentences what \
-             was wrong."
-        }
-        AgentRole::Reviewer => {
-            "You are the reviewer agent of a Vela space. You only read: do not change any file. \
-             Review the uncommitted changes (git diff, git status) against the request and report \
-             concrete problems, most important first."
-        }
-        AgentRole::Planner => {
-            "You are the planner agent of a Vela space. You only read: do not change any file. \
-             Write a short plan as a list of steps for the request."
-        }
-        AgentRole::Product => {
-            "You are the product agent of a Vela space. You only read: do not change any file. \
-             Look at the request and the code as a product manager: restate the goal, the user \
-             stories and acceptance criteria, the edge cases and what is out of scope, and the \
-             open questions to settle before building. Be short and concrete."
-        }
-        AgentRole::Security => {
-            "You are the security agent of a Vela space. You only read: do not change any file. \
-             Review the code and the uncommitted changes (git diff, git status) for security \
-             problems: injection, authentication and authorization, secrets, unsafe input \
-             handling, dependencies, data exposure. Report concrete findings with file and line, \
-             most severe first."
-        }
+        AgentRole::Developer => include_str!("../prompts/developer.md"),
+        AgentRole::Tester => include_str!("../prompts/tester.md"),
+        AgentRole::Debugger => include_str!("../prompts/debugger.md"),
+        AgentRole::Reviewer => include_str!("../prompts/reviewer.md"),
+        AgentRole::Planner => include_str!("../prompts/planner.md"),
+        AgentRole::Product => include_str!("../prompts/product.md"),
+        AgentRole::Security => include_str!("../prompts/security.md"),
     }
+    .trim()
 }
 
-/// The brief of the role (the custom one when set), the notes format for the roles that
-/// report notes, then the request.
-pub fn compose_prompt(role: AgentRole, prompt: &str, custom: Option<&str>) -> String {
+/// Where the agent is and what the space is about, for the prompt.
+pub fn space_context(space: &Space, read_only: bool, worktrees: &[(String, String)]) -> String {
+    let repos: Vec<String> = space
+        .repos
+        .iter()
+        .map(|r| {
+            let wt = worktrees
+                .iter()
+                .find(|(n, _)| n == &r.name)
+                .map(|(_, p)| p.as_str())
+                .unwrap_or(&r.worktree);
+            format!("- `{}`: {}", r.name, wt)
+        })
+        .collect();
+    format!(
+        "Space: \"{}\", branch `{}`.\n{}\nRepos:\n{}",
+        space.name,
+        space.branch,
+        if read_only {
+            "You run in the person's own worktree, read only."
+        } else {
+            "You run in your own worktree of each repo, on a branch made from the last commit of the space; the person's uncommitted changes are not in it."
+        },
+        repos.join("\n")
+    )
+}
+
+/// The prompt of a request: the common rules, the brief of the role (the custom one when
+/// set), the notes format for the roles that report notes, the context, then the request.
+pub fn compose_prompt(
+    role: AgentRole,
+    prompt: &str,
+    custom: Option<&str>,
+    context: &str,
+) -> String {
     let brief = custom
         .map(str::trim)
         .filter(|c| !c.is_empty())
         .unwrap_or_else(|| role_brief(role));
+    let mut out = format!("{}\n\n{}", COMMON_BRIEF.trim(), brief);
     if crate::notes::reports_notes(role) {
-        format!(
-            "{} {}\n\nRequest: {}",
-            brief,
-            crate::notes::FORMAT,
-            prompt.trim()
-        )
-    } else {
-        format!("{}\n\nRequest: {}", brief, prompt.trim())
+        out.push_str("\n\n");
+        out.push_str(crate::notes::FORMAT);
     }
+    if !context.trim().is_empty() {
+        out.push_str("\n\n## Context\n");
+        out.push_str(context.trim());
+    }
+    out.push_str("\n\n## Request\n");
+    out.push_str(prompt.trim());
+    out
 }
 
 /// Does the answer mean yes to a permission question?
@@ -508,6 +517,7 @@ impl AgentManager {
                 req.role,
                 &req.prompt,
                 cfg.prompts.get(req.role.as_str()).map(String::as_str),
+                &space_context(space, read_only, &wts),
             ),
             cwd,
             session: None,

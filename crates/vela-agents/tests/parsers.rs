@@ -188,7 +188,14 @@ fn claude_args() {
     s.extra_args = vec!["--allowed-tools".into(), "Bash".into()];
     let a = claude::args(&s);
     assert!(a.windows(2).any(|w| w == ["--model", "opus"]));
-    assert!(a.windows(2).any(|w| w == ["--permission-mode", "plan"]));
+    assert!(a.windows(2).any(|w| w == ["--permission-mode", "dontAsk"]));
+    let allowed = a.iter().position(|x| x == "--allowed-tools").unwrap();
+    assert!(a[allowed + 1].contains("Read") && a[allowed + 1].contains("Bash(git diff:*)"));
+    assert!(!a[allowed + 1].contains("Edit"));
+    assert!(
+        a.windows(2)
+            .any(|w| w[0] == "--disallowed-tools" && w[1].contains("Write"))
+    );
     assert!(a.windows(2).any(|w| w == ["--resume", "sess-1"]));
     assert!(a.windows(2).any(|w| w == ["--allowed-tools", "Bash"]));
 }

@@ -136,28 +136,90 @@ const hunkField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-// -- gutter mark on your lines -------------------------------------------------
+// -- change bars: your changes in the gutter, staged or not ---------------------
 
-class MineMarker extends GutterMarker {
+export type ChangeKind = "add" | "mod" | "del";
+export type ChangeState = "staged" | "unstaged";
+
+/** One line of the document with a change of yours (1-based document line). */
+export interface ChangeMark {
+  line: number;
+  kind: ChangeKind;
+  state: ChangeState;
+  /** The hunk it belongs to; null for lines typed since the last refresh. */
+  hunkId: string | null;
+}
+
+class ChangeMarker extends GutterMarker {
+  constructor(
+    readonly kind: ChangeKind,
+    readonly state: ChangeState,
+    readonly hunkId: string | null,
+  ) {
+    super();
+  }
+  eq(o: ChangeMarker): boolean {
+    return o.kind === this.kind && o.state === this.state && o.hunkId === this.hunkId;
+  }
   toDOM(): Node {
-    return document.createTextNode("•");
+    const el = document.createElement("div");
+    el.className = `cm-chg cm-chg-${this.kind} cm-chg-${this.state}`;
+    el.title = `${this.state === "staged" ? "Staged" : "Not staged"} ${this.kind === "add" ? "addition" : this.kind === "del" ? "deletion" : "change"}: click to see it, stage it or revert it`;
+    return el;
   }
 }
-const mine = new MineMarker();
+const spacer = new ChangeMarker("mod", "unstaged", null);
 
-/** Replace the marks with these (1-based) line numbers. */
-export const setMine = StateEffect.define<number[]>();
+/** The change bars of the hunks of yours in this file, line by line. Unstaged wins on a line. */
+export function changeMarks(
+  hunks: { id: string; state: string; newStart: number; newLines: number; oldLines: number; lines: { kind: string }[] }[],
+  firstLine: number,
+  docLines: number,
+): ChangeMark[] {
+  const byLine = new Map<number, ChangeMark>();
+  const sorted = [...hunks].sort((a, b) => (a.state === "staged" ? -1 : 1) - (b.state === "staged" ? -1 : 1));
+  for (const h of sorted) {
+    const state: ChangeState = h.state === "staged" ? "staged" : "unstaged";
+    const removes = h.lines.some((l) => l.kind === "del") || h.oldLines > 0;
+    if (h.newLines === 0) {
+      const line = Math.min(docLines, Math.max(1, h.newStart - firstLine + 1));
+      if (!byLine.has(line) || state === "unstaged") byLine.set(line, { line, kind: "del", state, hunkId: h.id });
+      continue;
+    }
+    for (let k = 0; k < h.newLines; k++) {
+      const line = h.newStart - firstLine + 1 + k;
+      if (line < 1 || line > docLines) continue;
+      byLine.set(line, { line, kind: removes ? "mod" : "add", state, hunkId: h.id });
+    }
+  }
+  return [...byLine.values()].sort((a, b) => a.line - b.line);
+}
 
-const mineField = StateField.define<RangeSet<GutterMarker>>({
-  create: () => RangeSet.empty,
+interface ChangeSet {
+  marks: RangeSet<GutterMarker>;
+  onClick: ((hunkId: string) => void) | null;
+}
+
+/** Replace the change bars with these, and say what a click on one does. */
+export const setChanges = StateEffect.define<{ marks: ChangeMark[]; onClick: (hunkId: string) => void }>();
+
+const changeField = StateField.define<ChangeSet>({
+  create: () => ({ marks: RangeSet.empty, onClick: null }),
   update(value, tr) {
-    value = value.map(tr.changes);
+    let marks = value.marks.map(tr.changes);
+    let onClick = value.onClick;
     for (const e of tr.effects) {
-      if (e.is(setMine)) {
-        const lines = [...new Set(e.value)].filter((n) => n >= 1 && n <= tr.state.doc.lines).sort((a, b) => a - b);
-        value = RangeSet.of(lines.map((n) => mine.range(tr.state.doc.line(n).from)));
+      if (e.is(setChanges)) {
+        onClick = e.value.onClick;
+        marks = RangeSet.of(
+          e.value.marks
+            .filter((m) => m.line >= 1 && m.line <= tr.state.doc.lines)
+            .map((m) => new ChangeMarker(m.kind, m.state, m.hunkId).range(tr.state.doc.line(m.line).from)),
+          true,
+        );
       }
     }
+    // What you type shows at once as an unstaged change, until the next refresh.
     if (tr.docChanged && !tr.annotation(External)) {
       const add: Range<GutterMarker>[] = [];
       tr.changes.iterChangedRanges((_fa, _ta, fromB, toB) => {
@@ -166,16 +228,96 @@ const mineField = StateField.define<RangeSet<GutterMarker>>({
         for (let n = a; n <= b; n++) {
           const pos = tr.state.doc.line(n).from;
           let has = false;
-          value.between(pos, pos, () => {
-            has = true;
+          marks.between(pos, pos, (_f, _t, m) => {
+            if ((m as ChangeMarker).state === "unstaged") has = true;
           });
-          if (!has && !add.some((r) => r.from === pos)) add.push(mine.range(pos));
+          if (!has && !add.some((r) => r.from === pos)) add.push(new ChangeMarker("mod", "unstaged", null).range(pos));
         }
       });
-      if (add.length) value = value.update({ add, sort: true });
+      if (add.length) marks = marks.update({ add, sort: true, filter: (from) => !add.some((r) => r.from === from) });
+    }
+    return { marks, onClick };
+  },
+});
+
+/** The hunk of the change bar on a line, if any. */
+export function changeAt(state: EditorState, pos: number): string | null {
+  let id: string | null = null;
+  state.field(changeField).marks.between(pos, pos, (_f, _t, m) => {
+    id = (m as ChangeMarker).hunkId ?? id;
+  });
+  return id;
+}
+
+const changeGutter = gutter({
+  class: "cm-change-gutter",
+  markers: (v) => v.state.field(changeField).marks,
+  initialSpacer: () => spacer,
+  domEventHandlers: {
+    mousedown(view, line) {
+      const id = changeAt(view.state, line.from);
+      const set = view.state.field(changeField);
+      if (id && set.onClick) {
+        set.onClick(id);
+        return true;
+      }
+      return false;
+    },
+  },
+});
+
+// -- the peek: one change of yours, inline under its lines ---------------------
+
+export interface PeekSpec {
+  /** Document line the peek goes under. */
+  line: number;
+  mount: (el: HTMLElement) => () => void;
+  key: string;
+}
+
+class PeekWidget extends WidgetType {
+  private cleanup: (() => void) | null = null;
+  constructor(readonly spec: PeekSpec) {
+    super();
+  }
+  eq(o: PeekWidget): boolean {
+    return o.spec.key === this.spec.key;
+  }
+  toDOM(): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "cm-peek";
+    this.cleanup = this.spec.mount(el);
+    return el;
+  }
+  destroy(): void {
+    this.cleanup?.();
+    this.cleanup = null;
+  }
+  ignoreEvent(): boolean {
+    return true;
+  }
+}
+
+/** Show the peek under a line, or none (null). */
+export const setPeek = StateEffect.define<PeekSpec | null>();
+
+const peekField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    value = value.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(setPeek)) {
+        const spec = e.value;
+        if (!spec) value = Decoration.none;
+        else {
+          const n = Math.min(tr.state.doc.lines, Math.max(1, spec.line));
+          value = Decoration.set([Decoration.widget({ widget: new PeekWidget(spec), block: true, side: 1 }).range(tr.state.doc.line(n).to)]);
+        }
+      }
     }
     return value;
   },
+  provide: (f) => EditorView.decorations.from(f),
 });
 
 // -- theme ---------------------------------------------------------------------
@@ -194,8 +336,27 @@ const theme = EditorView.theme({
   "&.cm-focused .cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--space) 9%, transparent)" },
   ".cm-gutters": { backgroundColor: "transparent", color: "var(--gutter)", border: "none", userSelect: "none" },
   ".cm-lineNumbers .cm-gutterElement": { minWidth: "44px", padding: "0 0 0 0", textAlign: "right" },
-  ".cm-mine-gutter": { width: "22px", paddingLeft: "12px" },
-  ".cm-mine-gutter .cm-gutterElement": { color: "var(--info)", width: "10px" },
+  ".cm-change-gutter": { width: "14px", paddingLeft: "8px" },
+  ".cm-change-gutter .cm-gutterElement": { width: "6px", cursor: "pointer", position: "relative" },
+  ".cm-chg": { position: "absolute", left: "1px", top: "1px", bottom: "1px", width: "4px", borderRadius: "2px" },
+  ".cm-chg:hover": { width: "6px", left: "0" },
+  ".cm-chg-unstaged.cm-chg-add, .cm-chg-unstaged.cm-chg-mod": { background: "var(--warn)" },
+  ".cm-chg-staged.cm-chg-add, .cm-chg-staged.cm-chg-mod": { background: "var(--add)" },
+  ".cm-chg-staged.cm-chg-mod": { backgroundImage: "repeating-linear-gradient(180deg, transparent 0 3px, rgba(0,0,0,0.25) 3px 4px)" },
+  ".cm-chg-unstaged.cm-chg-mod": { backgroundImage: "repeating-linear-gradient(180deg, transparent 0 3px, rgba(0,0,0,0.25) 3px 4px)" },
+  ".cm-chg-del": {
+    top: "auto",
+    bottom: "-4px",
+    width: "0",
+    height: "0",
+    borderRadius: "0",
+    borderTop: "4px solid transparent",
+    borderBottom: "4px solid transparent",
+    borderLeft: "6px solid var(--del)",
+    zIndex: "2",
+  },
+  ".cm-chg-del.cm-chg-staged": { borderLeftColor: "color-mix(in srgb, var(--del) 60%, var(--add))" },
+  ".cm-peek": { fontFamily: "var(--ui)", padding: "4px 12px 8px 0" },
   ".cm-activeLineGutter": { backgroundColor: "transparent" },
   "&.cm-focused .cm-matchingBracket": { backgroundColor: "color-mix(in srgb, var(--space) 22%, transparent)" },
   ".cm-hunk": { fontFamily: "var(--ui)" },
@@ -277,7 +438,7 @@ export function createState(f: FileContent, onUserChange: (content: string) => v
     extensions: [
       firstLineFacet.of(f.firstLine),
       lineNumbers({ formatNumber: (n, s) => String(n + s.facet(firstLineFacet) - 1) }),
-      gutter({ class: "cm-mine-gutter", markers: (v) => v.state.field(mineField), initialSpacer: () => mine }),
+      changeGutter,
       history(),
       drawSelection(),
       indentOnInput(),
@@ -290,7 +451,8 @@ export function createState(f: FileContent, onUserChange: (content: string) => v
       syntaxHighlighting(highlight),
       theme,
       hunkField,
-      mineField,
+      changeField,
+      peekField,
       EditorView.updateListener.of((u) => {
         if (u.docChanged && !u.transactions.some((tr) => tr.annotation(External))) onUserChange(u.state.doc.toString());
       }),

@@ -124,7 +124,7 @@ describe("links", () => {
   });
 
   it("the command bar opens a link by its key", async () => {
-    press("k", { ctrlKey: true });
+    press("t", { ctrlKey: true });
     await settle();
     await typeInto($("#pal-in") as HTMLInputElement, "pay-412");
     expect($$(".pit").map((e) => e.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("Open PAY-412")]));

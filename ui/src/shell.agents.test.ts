@@ -157,47 +157,77 @@ describe("agents view", () => {
     expect($$(".ag button").some((b) => b.textContent?.includes("Ask an agent"))).toBe(true);
   });
 
-  it("a running agent shows its status, streaming message, plan, usage and Cancel", async () => {
+  it("a running agent opens as a conversation with its plan, usage and Cancel", async () => {
     const cancel = vi.spyOn(backend, "cancelAgent");
-    press("3");
-    await settle();
-    withAgents([live]);
-    await settle();
-    const card = $(".agent")!;
-    expect(card.textContent).toContain("working");
-    expect($$(".agent .tag").map((t) => t.textContent)).toEqual(["Claude Code", "opus", "high"]);
-    expect($(".stream")?.textContent).toContain("then adding the refund branch");
-    expect($$(".plan li").map((e) => e.textContent)).toEqual(["Read the webhook", "Add the refund branch"]);
-    expect(card.textContent).toContain("2.0k in · 340 out · $0.04");
-    expect($(".ag .total")?.textContent).toContain("1 agent ·");
-    const btn = $$(".agent .actions button").find((b) => b.textContent?.trim() === "Cancel")!;
-    btn.click();
-    await settle();
-    expect(cancel).toHaveBeenCalledWith(app.space.id, "developer-1");
-    cancel.mockRestore();
-  });
-
-  it("a finished agent has no Cancel; View log loads and shows its history", async () => {
     const log = vi.spyOn(backend, "agentLog").mockResolvedValue([
       { ts: "t", event: { type: "prompt", text: "Handle charge.refunded" } },
-      { ts: "t", event: { type: "toolCall", name: "Edit", summary: "src/webhook.ts" } },
-      { ts: "t", event: { type: "usage", inputTokens: 1, outputTokens: 1, costUsd: null, model: "m" } },
-      { ts: "t", event: { type: "done", summary: "ok" } },
+      { ts: "t", event: { type: "toolCall", name: "Read", summary: "src/webhook.ts" } },
+      { ts: "t", event: { type: "message", text: "Reading the webhook\n\nthen adding the **refund** branch" } },
+      { ts: "t", event: { type: "plan", steps: ["Read the webhook", "Add the refund branch"] } },
     ]);
     press("3");
     await settle();
-    withAgents([{ ...live, status: "done" }]);
+    withAgents([live]);
+    await vi.waitFor(() => expect($(".chat .agent-msg")).toBeTruthy());
+    const chat = $(".chat")!;
+    expect(chat.querySelector(".stt")?.textContent).toBe("working");
+    expect([...chat.querySelectorAll(".tag")].map((t) => t.textContent)).toEqual(["Claude Code", "opus", "high"]);
+    expect(chat.querySelector(".you .bubble")?.textContent).toBe("Handle charge.refunded");
+    // The whole answer, rendered.
+    expect(chat.querySelector(".agent-msg strong")?.textContent).toBe("refund");
+    expect($$(".chat .plan li").map((e) => e.textContent)).toEqual(["Read the webhook", "Add the refund branch"]);
+    expect(chat.querySelector(".tsum")?.textContent).toContain("1 tool call (Read)");
+    expect(chat.querySelector(".meta")?.textContent).toContain("2.0k in · 340 out · $0.04");
+    expect(chat.querySelector(".typing")).toBeTruthy();
+    expect((chat.querySelector("textarea") as HTMLTextAreaElement).disabled).toBe(true);
+    expect($(".ag .total")?.textContent).toContain("1 agent ·");
+    [...chat.querySelectorAll<HTMLElement>(".ch button")].find((b) => b.textContent?.trim() === "Cancel")!.click();
     await settle();
-    expect($$(".agent .actions button").map((b) => b.textContent?.trim())).toEqual(["View log"]);
-    expect($(".stream")).toBeNull();
-    $$(".agent .actions button")[0].click();
-    await settle();
-    expect(log).toHaveBeenCalledWith(app.space.id, "developer-1");
-    expect($$(".log .line").map((e) => e.textContent)).toEqual(["Handle charge.refunded", "Edit src/webhook.ts", "Finished"]);
-    $$(".agent .actions button")[0].click();
-    await settle();
-    expect($(".log")).toBeNull();
+    expect(cancel).toHaveBeenCalledWith(app.space.id, "developer-1");
+    cancel.mockRestore();
     log.mockRestore();
+  });
+
+  it("a finished agent takes more work in the same session; tools unfold", async () => {
+    const log = vi.spyOn(backend, "agentLog").mockResolvedValue([
+      { ts: "t", event: { type: "prompt", text: "Handle charge.refunded" } },
+      { ts: "t", event: { type: "toolCall", name: "Edit", summary: "src/webhook.ts" } },
+      { ts: "t", event: { type: "fileChanged", path: "src/webhook.ts" } },
+      { ts: "t", event: { type: "done", summary: "Added the refund branch." } },
+    ]);
+    const ans = vi.spyOn(backend, "answerAgentText").mockResolvedValue();
+    press("3");
+    await settle();
+    withAgents([{ ...live, status: "done", session: "s1" }]);
+    await vi.waitFor(() => expect($(".chat .end")).toBeTruthy());
+    expect($(".chat .typing")).toBeNull();
+    expect($(".chat .agent-msg")?.textContent).toContain("Added the refund branch.");
+    $(".chat .tsum")!.click();
+    await settle();
+    expect($$(".chat .tools li").map((l) => l.textContent?.replace(/\s+/g, " ").trim())).toEqual(["Edit src/webhook.ts", "edited src/webhook.ts"]);
+    const ta = $(".chat textarea") as HTMLTextAreaElement;
+    expect(ta.disabled).toBe(false);
+    ta.value = "Also log the event id";
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(ans).toHaveBeenCalledWith(app.space.id, "developer-1", "Also log the event id"));
+    ans.mockRestore();
+    log.mockRestore();
+  });
+
+  it("J and K pick the agent of the conversation", async () => {
+    press("3");
+    await settle();
+    withAgents([live, { ...live, id: "tester-1", role: "tester", status: "done" }]);
+    await settle();
+    expect(app.selectedAgent?.id).toBe("developer-1");
+    press("j");
+    await settle();
+    expect(app.selectedAgent?.id).toBe("tester-1");
+    expect($(".list .item.on")?.dataset.agent).toBe("tester-1");
+    press("k");
+    await settle();
+    expect(app.selectedAgent?.id).toBe("developer-1");
   });
 
   it("shows the total once there are agents with usage", async () => {

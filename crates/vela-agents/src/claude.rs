@@ -44,6 +44,35 @@ impl Default for ClaudeDriver {
     }
 }
 
+/// What a read only run (reviewer, planner, product, security) may use: reading, searching,
+/// the web, and git and shell commands that only read.
+pub const READ_ONLY_TOOLS: &[&str] = &[
+    "Read",
+    "Grep",
+    "Glob",
+    "LS",
+    "WebFetch",
+    "WebSearch",
+    "TodoWrite",
+    "Task",
+    "Bash(git status:*)",
+    "Bash(git diff:*)",
+    "Bash(git log:*)",
+    "Bash(git show:*)",
+    "Bash(git blame:*)",
+    "Bash(git branch:*)",
+    "Bash(git ls-files:*)",
+    "Bash(git grep:*)",
+    "Bash(ls:*)",
+    "Bash(rg:*)",
+    "Bash(grep:*)",
+    "Bash(wc:*)",
+    "Bash(head:*)",
+    "Bash(tail:*)",
+    "Bash(cat:*)",
+    "Bash(tree:*)",
+];
+
 /// The arguments of `claude` for a run (the prompt is sent on stdin).
 pub fn args(spec: &RunSpec) -> Vec<String> {
     let mut a: Vec<String> = ["-p", "--output-format", "stream-json", "--verbose"]
@@ -56,15 +85,20 @@ pub fn args(spec: &RunSpec) -> Vec<String> {
     if let Some(e) = &spec.effort {
         a.extend(["--effort".to_string(), e.clone()]);
     }
-    a.extend([
-        "--permission-mode".to_string(),
-        if spec.read_only {
-            "plan"
-        } else {
-            "acceptEdits"
-        }
-        .to_string(),
-    ]);
+    if spec.read_only {
+        // Not `plan`: in plan mode Claude writes a plan to investigate instead of
+        // investigating. `dontAsk` refuses, without asking, anything not allowed here.
+        a.extend([
+            "--permission-mode".to_string(),
+            "dontAsk".to_string(),
+            "--allowed-tools".to_string(),
+            READ_ONLY_TOOLS.join(","),
+            "--disallowed-tools".to_string(),
+            "Edit,Write,MultiEdit,NotebookEdit".to_string(),
+        ]);
+    } else {
+        a.extend(["--permission-mode".to_string(), "acceptEdits".to_string()]);
+    }
     if let Some(s) = &spec.session {
         a.extend(["--resume".to_string(), s.clone()]);
     }
@@ -82,7 +116,8 @@ impl AgentDriver for ClaudeDriver {
             .bin
             .as_deref()
             .ok_or_else(|| Error::Invalid("claude is not installed".to_string()))?;
-        let parser = ClaudeParser::new(&run.cwd, run.model.as_deref());
+        let mut parser = ClaudeParser::new(&run.cwd, run.model.as_deref());
+        parser.read_only = run.read_only;
         launch(
             bin,
             &args(&run),
@@ -97,6 +132,8 @@ pub struct ClaudeParser {
     cwd: PathBuf,
     model: String,
     session_sent: bool,
+    /// A read only run: refused writes are expected, not questions for the user.
+    pub read_only: bool,
 }
 
 impl ClaudeParser {
@@ -105,6 +142,7 @@ impl ClaudeParser {
             cwd: cwd.to_path_buf(),
             model: model.unwrap_or("claude").to_string(),
             session_sent: false,
+            read_only: false,
         }
     }
 
@@ -198,10 +236,13 @@ impl ClaudeParser {
             .map(|a| {
                 a.iter()
                     .filter(|d| {
-                        !matches!(
-                            d["tool_name"].as_str(),
-                            Some("AskUserQuestion" | "ExitPlanMode") | None
-                        )
+                        let tool = d["tool_name"].as_str();
+                        !matches!(tool, Some("AskUserQuestion" | "ExitPlanMode") | None)
+                            && !(self.read_only
+                                && matches!(
+                                    tool,
+                                    Some("Edit" | "Write" | "MultiEdit" | "NotebookEdit")
+                                ))
                     })
                     .collect()
             })

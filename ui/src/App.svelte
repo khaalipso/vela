@@ -86,8 +86,14 @@
   <ContextMenu />
   <Toast />
 {:else if app.ready}
-  <div class="app">
-    <Rail />
+  <div class="app" class:norail={app.railHidden}>
+    {#if !app.railHidden}
+      <Rail />
+    {:else}
+      <!-- The hidden spaces bar floats in while the pointer touches the left edge. -->
+      <div class="edge" role="presentation" onmouseenter={() => (app.railPeek = true)}></div>
+      {#if app.railPeek}<Rail floating />{/if}
+    {/if}
     <div class="main" style:--termh={app.termOpen && !app.elsewhere ? `${app.termHeight + 8}px` : "0px"}>
       <TopBar />
       <div class="body">
@@ -167,6 +173,17 @@
     display: flex;
     gap: 8px;
     padding: 8px 16px;
+  }
+  .edge {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 8px;
+    z-index: 39;
+  }
+  .app.norail {
+    padding-left: 12px;
   }
   .main {
     flex: 1;

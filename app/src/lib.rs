@@ -121,6 +121,7 @@ pub fn run() {
             c::agent_usage,
             c::accept_proposal,
             c::notes,
+            c::discard_hunk,
             c::ask_fix,
             c::resolve_note,
             c::agent_tiers,
