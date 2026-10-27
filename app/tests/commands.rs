@@ -67,7 +67,14 @@ fn env() -> Env {
 /// A space "Fix it" on one repo "api" with a 20 line file.
 fn space(e: &Env) -> Space {
     let api = repo(&e.root, "api", &[("a.txt", BODY), ("src/b.txt", "b\n")]);
-    commands::create_space(&e.vela, "Fix it", &[api.to_string_lossy().into_owned()]).unwrap()
+    commands::create_space(
+        &e.vela,
+        "Fix it",
+        &[api.to_string_lossy().into_owned()],
+        None,
+        None,
+    )
+    .unwrap()
 }
 
 fn wt(s: &Space) -> PathBuf {
@@ -85,9 +92,11 @@ fn creates_and_lists_spaces() {
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].id, "fix-it");
     // Same name again, and an unknown repo, come back as typed errors.
-    let again = commands::create_space(&e.vela, "Fix it", &["/nope".to_string()]).unwrap_err();
+    let again =
+        commands::create_space(&e.vela, "Fix it", &["/nope".to_string()], None, None).unwrap_err();
     assert_eq!(again.kind, "space_exists");
-    let bad = commands::create_space(&e.vela, "Other", &["/nope".to_string()]).unwrap_err();
+    let bad =
+        commands::create_space(&e.vela, "Other", &["/nope".to_string()], None, None).unwrap_err();
     assert_eq!(bad.kind, "not_a_repo");
     let json = serde_json::to_value(&bad).unwrap();
     assert_eq!(json["kind"], "not_a_repo");
@@ -570,7 +579,14 @@ fn creates_a_repo_and_a_space_on_it() {
     assert!(Path::new(&path).join("README.md").is_file());
     assert_eq!(commands::list_repos(&e.vela).unwrap()[0], path);
     // A worktree can branch from it right away.
-    let s = commands::create_space(&e.vela, "Fresh start", std::slice::from_ref(&path)).unwrap();
+    let s = commands::create_space(
+        &e.vela,
+        "Fresh start",
+        std::slice::from_ref(&path),
+        None,
+        None,
+    )
+    .unwrap();
     assert_eq!(s.repos.len(), 1);
     // Bad names and existing folders are refused.
     for bad in ["", ".hidden", "a/b"] {

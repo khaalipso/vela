@@ -96,6 +96,29 @@ export interface HarnessTiers {
   file: string | null;
 }
 
+export interface BranchInfo {
+  /** `main`, or `origin/feat/x` for a remote one. */
+  name: string;
+  remote: boolean;
+  current: boolean;
+  /** "3 days ago". */
+  when: string;
+  subject: string;
+}
+
+export interface BranchNaming {
+  template: string;
+  preview: string;
+}
+
+/** The branch name a template gives for a space name (same rules as the core). */
+export function renderBranch(template: string, name: string, user = "me", date = new Date().toISOString().slice(0, 10)): string {
+  const slug = (name ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40).replace(/-$/, "");
+  const t = (template ?? "").trim() || "feat/{slug}";
+  const out = t.replaceAll("{slug}", slug).replaceAll("{name}", slug).replaceAll("{user}", user).replaceAll("{date}", date);
+  return out.replace(/[\s~^:?*[\\]/g, "-").replace(/\.\./g, ".").replace(/^[/.-]+|[/.-]+$/g, "");
+}
+
 /** The brief a role gets before each request. */
 export interface RolePrompt {
   role: AgentRole;
@@ -241,7 +264,17 @@ export interface Backend {
   /** Folder where new repos go by default (the first repo root, ~/Work by default). */
   defaultRepoParent(): Promise<string>;
   listSpaces(): Promise<Space[]>;
-  createSpace(name: string, repos: string[]): Promise<Space>;
+  /** `branch`: an existing local or remote branch is used as is; left out, the naming template. */
+  createSpace(name: string, repos: string[], opts?: { branch?: string | null; base?: string | null }): Promise<Space>;
+  /** The branches of a repo (path), local ones newest first, then remote ones. */
+  repoBranches(path: string): Promise<BranchInfo[]>;
+  /** The naming template of new branches and what it gives for `name`. */
+  branchNaming(name: string): Promise<BranchNaming>;
+  setBranchTemplate(template: string): Promise<BranchNaming>;
+  /** Rename the branch of a space (and of its agents) in every repo. */
+  renameBranch(spaceId: string, branch: string): Promise<Space>;
+  /** `git push -u origin <branch>` in every repo; returns the repos pushed. */
+  pushBranch(spaceId: string): Promise<string[]>;
   /** Add a repo (path) to a space: one more worktree on the space branch. */
   addRepoToSpace(spaceId: string, path: string): Promise<Space>;
   /** Remove a repo from a space; refused when its worktree has uncommitted changes. */
@@ -773,7 +806,41 @@ export class MockBackend implements Backend {
     return { ...s.space };
   }
 
-  async createSpace(name: string, repos: string[]): Promise<Space> {
+  private branchTemplate = "feat/{slug}";
+  async repoBranches(path: string): Promise<BranchInfo[]> {
+    const repo = path.split("/").pop() ?? path;
+    const own = [...this.spaces.values()].filter((s) => s.space.repos.some((r) => r.name === repo)).map((s) => s.space.branch);
+    return [
+      { name: "main", remote: false, current: true, when: "2 hours ago", subject: "Merge pull request #401" },
+      ...own.map((b) => ({ name: b, remote: false, current: false, when: "yesterday", subject: "wip" })),
+      { name: "develop", remote: false, current: false, when: "3 days ago", subject: "Bump deps" },
+      { name: "origin/feat/teammate-pr", remote: true, current: false, when: "5 hours ago", subject: "Add export button" },
+    ];
+  }
+  async branchNaming(name: string): Promise<BranchNaming> {
+    return { template: this.branchTemplate, preview: renderBranch(this.branchTemplate, name || "my task") };
+  }
+  async setBranchTemplate(template: string): Promise<BranchNaming> {
+    this.branchTemplate = template.trim() || "feat/{slug}";
+    return this.branchNaming("my task");
+  }
+  async renameBranch(spaceId: string, branch: string): Promise<Space> {
+    const s = this.sp(spaceId);
+    const b = branch.trim();
+    if (!b || /[\s~^:?*[\\]|\.\./.test(b)) throw new Error(`${b} is not a valid branch name`);
+    if ([...this.spaces.values()].some((o) => o !== s && o.space.branch === b)) throw new Error(`api already has a branch ${b}`);
+    s.space.branch = b;
+    this.emit(spaceId);
+    return structuredClone(s.space);
+  }
+  readonly pushed: string[] = [];
+  async pushBranch(spaceId: string): Promise<string[]> {
+    const s = this.sp(spaceId);
+    this.pushed.push(s.space.branch);
+    return s.space.repos.map((r) => r.name);
+  }
+
+  async createSpace(name: string, repos: string[], opts: { branch?: string | null; base?: string | null } = {}): Promise<Space> {
     const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "task";
     let slug = base;
     for (let n = 2; this.spaces.has(slug); n++) slug = `${base}-${n}`;
@@ -781,8 +848,8 @@ export class MockBackend implements Backend {
       id: slug,
       name,
       color: PALETTE[this.spaces.size % PALETTE.length],
-      branch: `feat/${slug}`,
-      repos: repos.map((r) => ({ name: r, source: `~/Work/${r}`, worktree: `wt/${slug}`, base: "main" })),
+      branch: opts.branch?.trim() || renderBranch(this.branchTemplate, name),
+      repos: repos.map((r) => ({ name: r, source: `~/Work/${r}`, worktree: `wt/${slug}`, base: opts.base?.trim() || "main" })),
       createdAt: new Date().toISOString(),
       window: null,
     };
@@ -2033,8 +2100,23 @@ export class TauriBackend implements Backend {
   listSpaces() {
     return call<Space[]>("list_spaces");
   }
-  createSpace(name: string, repos: string[]) {
-    return call<Space>("create_space", { name, repos });
+  createSpace(name: string, repos: string[], opts: { branch?: string | null; base?: string | null } = {}) {
+    return call<Space>("create_space", { name, repos, branch: opts.branch?.trim() || null, base: opts.base?.trim() || null });
+  }
+  repoBranches(path: string) {
+    return call<BranchInfo[]>("repo_branches", { path });
+  }
+  branchNaming(name: string) {
+    return call<BranchNaming>("branch_naming", { name });
+  }
+  setBranchTemplate(template: string) {
+    return call<BranchNaming>("set_branch_template", { template });
+  }
+  renameBranch(spaceId: string, branch: string) {
+    return call<Space>("rename_branch", { spaceId, branch });
+  }
+  pushBranch(spaceId: string) {
+    return call<string[]>("push_branch", { spaceId });
   }
   /** A window number opens the space in its own window (the app picks the number); null closes it. */
   async setWindow(spaceId: string, window: number | null) {

@@ -54,6 +54,12 @@ The composer's gate lists the results of these checks (a failing one needs an ov
 - **Repo colors**: each repo of a space has a soft color in the family of the space color (analogous hues 32° apart, calm saturation, `lib/colors.ts`). Editor tabs, top bar chips, the file tree and the review groups use it.
 - **Desktop notifications** when an agent asks a question, is done or fails, while no Vela window has the focus.
 
+## Branches
+
+A space has one branch, the same name in every repo. When you create a space you can type it, or leave it empty for the naming pattern (`[spaces] branch`, `feat/{slug}` by default, edited in Settings, Branches), and pick the base it starts from (each repo's current branch by default). A name that already exists is used as it is: a local branch gets the worktree, a remote one (`origin/<branch>`, a PR or a teammate's branch) gets a local branch that tracks it. A branch checked out in another worktree is refused with the path of that checkout. A failed creation removes only the branches it made.
+
+The branch chip in the top bar renames the branch (`git branch -m` in every repo, the agents' `<branch>--<agent>` branches too; worktrees stay where they are), copies its name, pushes it (`git push -u origin`) and opens the pull requests. From the CLI: `vela space new --branch <b> --base <ref>`, `vela space rename-branch <space> <b>`.
+
 ## Agents view
 
 A conversation per agent: the list on the left (at work first, `J` `K` to move), the chat on the right. The chat shows your requests, the agent's full answers rendered as Markdown, its tool calls grouped between answers (click to unfold, with the files it edited), its plan, its questions with their answer buttons, and the end of each run. It updates live. The field at the bottom answers a question or gives a finished agent more work in the same session and worktree. "Edit and rerun" opens the composer with the request; "Review its changes" goes to the Review.

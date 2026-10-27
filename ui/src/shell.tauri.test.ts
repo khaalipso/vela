@@ -188,7 +188,7 @@ describe("shell on the Tauri backend", () => {
     await settle();
     await app.dispatch({ type: "newspace-submit" });
     await settle();
-    expect(calls.find((c) => c[0] === "create_space")![1]).toEqual({ name: "Fix it", repos: ["/w/api"] });
+    expect(calls.find((c) => c[0] === "create_space")![1]).toEqual({ name: "Fix it", repos: ["/w/api"], branch: null, base: null });
     expect($("h1")?.textContent).toContain("Fix it");
     expect(app.view).toBe("code");
     expect(document.documentElement.style.getPropertyValue("--space")).toBe("#E8A14A");

@@ -134,6 +134,18 @@ function repoItems(repo: string): MenuEntry[] {
 }
 
 /** The repo chips of the top bar. */
+/** The branch of the space, from its chip in the top bar. */
+export function branchMenu(): MenuEntry[] {
+  const b = app.space.branch;
+  return tidy([
+    it("Rename branch…", { icon: "rename", run: () => ops.askRenameBranch() }),
+    it("Copy branch name", { icon: "copy", run: () => void writeClipboard(b).then(() => app.toast(`Copied ${b}`)) }),
+    SEP,
+    it("Push branch", { run: () => void app.pushBranch() }),
+    it("Pull requests", { run: () => app.setView("prs") }),
+  ]);
+}
+
 export function repoChipMenu(repo: string): MenuEntry[] {
   return tidy([
     it("Show files", { icon: "tree", run: () => ops.showRepoFiles(repo) }),

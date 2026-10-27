@@ -87,6 +87,19 @@ linear = "https://linear.app/acme/issue/{key}"
 
 Repo links (prod URL, runbook, dashboard) live next to it in `<repo>/.vela/links.toml`.
 
+## `[spaces]`
+
+How new spaces are made.
+
+```toml
+[spaces]
+branch = "{user}/{slug}"   # default "feat/{slug}"
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `spaces.branch` | `feat/{slug}` | Branch of a new space. `{slug}` (the space name as a slug), `{user}` (`$USER`), `{date}` (YYYY-MM-DD). Whatever it gives is cleaned into a name git takes. Edited in Settings, Branches. |
+
 ## `[agents]`
 
 Which harness and model each role uses. See `docs/HARNESS.md`.

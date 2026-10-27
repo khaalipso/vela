@@ -106,8 +106,13 @@ pub async fn create_space(
     watchers: State<'_, Arc<Watchers>>,
     name: String,
     repos: Vec<String>,
+    branch: Option<String>,
+    base: Option<String>,
 ) -> AppResult<Space> {
-    let space = blocking(&vela, move |v| commands::create_space(v, &name, &repos)).await?;
+    let space = blocking(&vela, move |v| {
+        commands::create_space(v, &name, &repos, branch.as_deref(), base.as_deref())
+    })
+    .await?;
     let (v, w, e) = (
         vela.inner().clone(),
         watchers.inner().clone(),
@@ -916,4 +921,45 @@ pub async fn comment_pull_request(
         crate::prs::comment_pr(&space, &repo, &body)
     })
     .await
+}
+
+// -- branches ----------------------------------------------------------------
+
+#[tauri::command]
+pub async fn repo_branches(
+    vela: State<'_, Vela>,
+    path: String,
+) -> AppResult<Vec<vela_core::branches::BranchInfo>> {
+    blocking(&vela, move |_| commands::repo_branches(&path)).await
+}
+
+#[tauri::command]
+pub fn branch_naming(agents: State<'_, Arc<AgentManager>>, name: String) -> commands::BranchNaming {
+    commands::branch_naming(agents.config_dir(), &name)
+}
+
+#[tauri::command]
+pub fn set_branch_template(
+    agents: State<'_, Arc<AgentManager>>,
+    template: String,
+) -> AppResult<commands::BranchNaming> {
+    commands::set_branch_template(agents.config_dir(), &template)
+}
+
+#[tauri::command]
+pub async fn rename_branch(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    branch: String,
+) -> AppResult<Space> {
+    let sid = space_id.clone();
+    let s = blocking(&vela, move |v| commands::rename_branch(v, &sid, &branch)).await?;
+    notify_state(&app, &space_id);
+    Ok(s)
+}
+
+#[tauri::command]
+pub async fn push_branch(vela: State<'_, Vela>, space_id: String) -> AppResult<Vec<String>> {
+    blocking(&vela, move |v| commands::push_branch(v, &space_id)).await
 }

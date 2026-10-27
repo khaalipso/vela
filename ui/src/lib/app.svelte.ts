@@ -9,6 +9,7 @@ import type {
   BackendEvent,
   CheckEvent,
   FileRef,
+  BranchInfo,
   GateCheck,
   HarnessTiers,
   RepoPr,
@@ -192,7 +193,70 @@ export class AppState {
   /** The tier picked in the composer; null keeps the role's default. */
   tier = $state<Tier | null>(null);
   pal = $state({ q: "", i: 0 });
-  newSp = $state<{ name: string; repos: string[]; missingName: boolean }>({ name: "", repos: [], missingName: false });
+  newSp = $state<{ name: string; repos: string[]; missingName: boolean; branch: string; base: string }>({
+    name: "",
+    repos: [],
+    missingName: false,
+    branch: "",
+    base: "",
+  });
+  /** The naming template of new branches (`[spaces] branch`). */
+  branchTemplate = $state("feat/{slug}");
+  /** Branches of the first repo picked in the new space sheet, for its suggestions. */
+  sheetBranches = $state.raw<BranchInfo[]>([]);
+
+  /** Load the template and the branches the new space sheet suggests. */
+  async loadBranchChoices(repo: string | null) {
+    try {
+      const t = (await this.backend.branchNaming(""))?.template;
+      if (typeof t === "string" && t.trim()) this.branchTemplate = t;
+    } catch {
+      /* keep the default */
+    }
+    if (!repo) {
+      this.sheetBranches = [];
+      return;
+    }
+    try {
+      const list = await this.backend.repoBranches(repo);
+      this.sheetBranches = Array.isArray(list) ? list : [];
+    } catch {
+      this.sheetBranches = [];
+    }
+  }
+
+  async renameBranch(branch: string): Promise<boolean> {
+    const sid = this.space.id;
+    try {
+      const s = await this.backend.renameBranch(sid, branch);
+      await this.syncSpaces();
+      this.toast(`Now on ${s.branch}`);
+      return true;
+    } catch (e) {
+      this.fail(e);
+      return false;
+    }
+  }
+
+  async pushBranch() {
+    const b = this.space.branch;
+    this.toast(`Pushing ${b}…`);
+    try {
+      const repos = await this.backend.pushBranch(this.space.id);
+      this.toast(`Pushed ${b} (${repos.join(", ")})`);
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  async setBranchTemplate(t: string) {
+    try {
+      this.branchTemplate = (await this.backend.setBranchTemplate(t)).template;
+      this.toast("Branch naming saved");
+    } catch (e) {
+      this.fail(e);
+    }
+  }
   /** The repo sheet creates a space ("new") or adds repos to the current one ("add"). */
   sheetMode = $state<"new" | "add">("new");
 
@@ -280,7 +344,7 @@ export class AppState {
   /** Tier settings of every harness (overlay "settings"). */
   tierSettings = $state.raw<HarnessTiers[]>([]);
   /** The tab of the settings sheet. */
-  settingsTab = $state<"tiers" | "prompts">("tiers");
+  settingsTab = $state<"tiers" | "prompts" | "branches">("tiers");
   /** The settings were fetched at least once (the sheet shows the cached ones meanwhile). */
   settingsLoaded = $state(false);
   /** Model names per harness, loaded after the sheet is open. */
@@ -1188,7 +1252,7 @@ export class AppState {
   // -- agent tier settings --------------------------------------------------
 
   /** Open the agent settings at once; the data comes in behind (cached values first). */
-  openSettings(tab: "tiers" | "prompts" = "tiers") {
+  openSettings(tab: "tiers" | "prompts" | "branches" = "tiers") {
     this.settingsTab = tab;
     this.overlay = "settings";
     void this.loadSettings();
@@ -1837,13 +1901,14 @@ export class AppState {
       return;
     }
     try {
-      const s = await this.backend.createSpace(name, [...this.newSp.repos]);
+      const branch = this.newSp.branch.trim().replace(/^origin\//, "");
+      const s = await this.backend.createSpace(name, [...this.newSp.repos], { branch: branch || null, base: this.newSp.base.trim() || null });
       await this.syncSpaces();
       await this.load(s.id);
       this.ui[s.id].view = this.data[s.id].agents.length ? "agents" : "code";
       this.active = Math.max(0, this.spaces.findIndex((x) => x.id === s.id));
       this.overlay = null;
-      this.newSp = { name: "", repos: this.defaultRepos(), missingName: false };
+      this.newSp = { name: "", repos: this.defaultRepos(), missingName: false, branch: "", base: "" };
       this.toast(`Created ${plural(s.repos.length, "worktree", "worktrees")} on ${s.branch}`);
     } catch (e) {
       this.fail(e);
@@ -2034,6 +2099,9 @@ export class AppState {
         return this.openSettings("tiers");
       case "open-prompts":
         return this.openSettings("prompts");
+      case "open-branch-settings":
+        void this.loadBranchChoices(null);
+        return this.openSettings("branches");
       case "prs-refresh":
         return this.loadPrs(true);
       case "rv-split":

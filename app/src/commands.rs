@@ -63,9 +63,24 @@ pub fn list_spaces(vela: &Vela) -> AppResult<Vec<Space>> {
         .collect())
 }
 
-/// Create a space with a branch and a worktree per repo path.
-pub fn create_space(vela: &Vela, name: &str, repos: &[String]) -> AppResult<Space> {
-    Ok(space::create(vela, name, repos, None)?)
+/// Create a space with a branch and a worktree per repo path. `branch` and `base` left out
+/// take the defaults: the `[spaces] branch` template, each repo's current branch.
+pub fn create_space(
+    vela: &Vela,
+    name: &str,
+    repos: &[String],
+    branch: Option<&str>,
+    base: Option<&str>,
+) -> AppResult<Space> {
+    Ok(space::create_with(
+        vela,
+        name,
+        repos,
+        &space::CreateOptions {
+            branch: branch.map(str::to_string),
+            base: base.map(str::to_string),
+        },
+    )?)
 }
 
 /// Add a repo (by path) to an existing space: one more worktree on the space branch.
@@ -1257,4 +1272,71 @@ pub fn set_agent_prompt(agents: &AgentManager, role: &str, text: Option<&str>) -
         .map(|t| toml::Value::String(t.to_string()));
     config::set_global_value(dir, &["agents", "prompts", role.as_str()], value)?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Branches
+// ---------------------------------------------------------------------------
+
+/// The branches of a repo (a path, `~` allowed): local ones newest first, then remote ones.
+pub fn repo_branches(path: &str) -> AppResult<Vec<vela_core::branches::BranchInfo>> {
+    let p = expand_home(path);
+    Ok(vela_core::branches::list(&p)?)
+}
+
+/// The branch template and what it gives for `name`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchNaming {
+    pub template: String,
+    pub preview: String,
+}
+
+pub fn branch_naming(dir: Option<&Path>, name: &str) -> BranchNaming {
+    let template = config::load_global(dir)
+        .config
+        .spaces
+        .branch
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or_else(|| vela_core::branches::DEFAULT_TEMPLATE.to_string());
+    let preview = vela_core::branches::render(
+        &template,
+        if name.trim().is_empty() {
+            "my task"
+        } else {
+            name
+        },
+    );
+    BranchNaming { template, preview }
+}
+
+/// Save the branch template of new spaces (empty: back to `feat/{slug}`).
+pub fn set_branch_template(dir: Option<&Path>, template: &str) -> AppResult<BranchNaming> {
+    let dir =
+        dir.ok_or_else(|| AppError::invalid("no config directory (set XDG_CONFIG_HOME or HOME)"))?;
+    let t = template.trim();
+    let value = (!t.is_empty() && t != vela_core::branches::DEFAULT_TEMPLATE)
+        .then(|| toml::Value::String(t.to_string()));
+    config::set_global_value(dir, &["spaces", "branch"], value)?;
+    Ok(branch_naming(Some(dir), "my task"))
+}
+
+/// Rename the branch of a space (and of its agents) in every repo.
+pub fn rename_branch(vela: &Vela, id: &str, branch: &str) -> AppResult<Space> {
+    let _inv = Invalidate(id);
+    Ok(vela_core::branches::rename(vela, id, branch)?)
+}
+
+/// Push the branch of the space in every repo (`git push -u origin <branch>`). Returns the
+/// repos pushed; the first failure stops with its message.
+pub fn push_branch(vela: &Vela, id: &str) -> AppResult<Vec<String>> {
+    let space = load(vela, id)?;
+    let mut done = Vec::new();
+    for r in &space.repos {
+        let wt = Path::new(&r.worktree);
+        git(wt, &["push", "-u", "origin", &space.branch])
+            .map_err(|e| AppError::new("git", format!("{}: push failed: {e}", r.name)))?;
+        done.push(r.name.clone());
+    }
+    Ok(done)
 }

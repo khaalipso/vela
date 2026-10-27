@@ -58,16 +58,31 @@ struct Created {
     source: PathBuf,
     worktree: PathBuf,
     branch: String,
+    /// The branch was made for this space (a rollback deletes it); an existing one is kept.
+    made: bool,
 }
 
 fn rollback(created: &[Created], root: &Path) {
     for c in created.iter().rev() {
         let wt = c.worktree.to_string_lossy();
         let _ = git(&c.source, &["worktree", "remove", "--force", wt.as_ref()]);
-        let _ = git(&c.source, &["branch", "-D", &c.branch]);
+        if c.made {
+            let _ = git(&c.source, &["branch", "-D", &c.branch]);
+        }
         let _ = git(&c.source, &["worktree", "prune"]);
     }
     let _ = fs::remove_dir_all(root);
+}
+
+/// What a new space is made from. Everything left out takes the default.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CreateOptions {
+    /// The ref new branches start from; defaults to each repo's current branch.
+    pub base: Option<String>,
+    /// The branch of the space. An existing local branch is used as it is; a remote one
+    /// (`origin/<branch>`) gets a local branch tracking it; otherwise it is created from
+    /// `base`. Defaults to the `[spaces] branch` template (`feat/{slug}`).
+    pub branch: Option<String>,
 }
 
 fn dir_name(p: &Path) -> String {
@@ -76,16 +91,34 @@ fn dir_name(p: &Path) -> String {
         .unwrap_or_else(|| "repo".to_string())
 }
 
-/// Create a space: branch `feat/<slug>` and one worktree per repo.
-///
-/// `base` is the ref to branch from; defaults to each repo's current branch.
-/// If any repo fails, worktrees and branches created so far are removed.
+/// Create a space: branch `feat/<slug>` (or the `[spaces] branch` template) and one worktree
+/// per repo. `base` is the ref to branch from; defaults to each repo's current branch.
 pub fn create<P: AsRef<Path>>(
     vela: &Vela,
     name: &str,
     repo_paths: &[P],
     base: Option<&str>,
 ) -> Result<Space> {
+    create_with(
+        vela,
+        name,
+        repo_paths,
+        &CreateOptions {
+            base: base.map(str::to_string),
+            branch: None,
+        },
+    )
+}
+
+/// Create a space with the branch and base of `opts` (see [`CreateOptions`]).
+/// If any repo fails, worktrees and branches created so far are removed.
+pub fn create_with<P: AsRef<Path>>(
+    vela: &Vela,
+    name: &str,
+    repo_paths: &[P],
+    opts: &CreateOptions,
+) -> Result<Space> {
+    let base = opts.base.as_deref().filter(|b| !b.trim().is_empty());
     let id = slugify(name);
     if id.is_empty() {
         return Err(Error::InvalidName(name.to_string()));
@@ -120,7 +153,28 @@ pub fn create<P: AsRef<Path>>(
         sources.push((repo_name, top, base_ref));
     }
 
-    let branch = format!("feat/{id}");
+    let branch = match opts
+        .branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+    {
+        Some(b) => {
+            if !crate::branches::is_valid(b) {
+                return Err(Error::Invalid(format!("{b} is not a valid branch name")));
+            }
+            b.to_string()
+        }
+        None => crate::branches::render(&crate::branches::template_from_env(), name),
+    };
+    // An existing branch checked out elsewhere cannot get a second worktree: say where.
+    for (repo_name, source, _) in &sources {
+        if let Some(path) = crate::branches::checked_out_in(source, &branch) {
+            return Err(Error::Invalid(format!(
+                "{branch} is checked out in {path} ({repo_name}): switch that checkout to another branch first"
+            )));
+        }
+    }
     let root = paths::space_root(&vela.home, &id);
     fs::create_dir_all(&root)?;
     let mut created: Vec<Created> = Vec::new();
@@ -128,14 +182,35 @@ pub fn create<P: AsRef<Path>>(
     for (repo_name, source, base_ref) in &sources {
         let worktree = paths::space_worktree(&vela.home, &id, repo_name);
         let wt = worktree.to_string_lossy();
-        match git(
-            source,
-            &["worktree", "add", "-b", &branch, wt.as_ref(), base_ref],
-        ) {
+        let src = crate::branches::source_of(source, &branch, base_ref);
+        let made = !matches!(src, crate::branches::Source::Local);
+        let added = match &src {
+            crate::branches::Source::Local => {
+                git(source, &["worktree", "add", wt.as_ref(), &branch])
+            }
+            crate::branches::Source::Remote { upstream } => git(
+                source,
+                &[
+                    "worktree",
+                    "add",
+                    "--track",
+                    "-b",
+                    &branch,
+                    wt.as_ref(),
+                    upstream,
+                ],
+            ),
+            crate::branches::Source::New { base } => git(
+                source,
+                &["worktree", "add", "-b", &branch, wt.as_ref(), base],
+            ),
+        };
+        match added {
             Ok(_) => created.push(Created {
                 source: source.clone(),
                 worktree: worktree.clone(),
                 branch: branch.clone(),
+                made,
             }),
             Err(e) => {
                 rollback(&created, &root);

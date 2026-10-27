@@ -59,7 +59,14 @@ fn space(e: &Env) -> Space {
     write(&dir, "src/b.txt", "b\n");
     sh(&dir, &["add", "-A"]);
     sh(&dir, &["commit", "-q", "-m", "init"]);
-    commands::create_space(&e.vela, "Menu", &[dir.to_string_lossy().into_owned()]).unwrap()
+    commands::create_space(
+        &e.vela,
+        "Menu",
+        &[dir.to_string_lossy().into_owned()],
+        None,
+        None,
+    )
+    .unwrap()
 }
 
 fn wt(s: &Space) -> PathBuf {

@@ -2,7 +2,7 @@
   import { colorOfRepo } from "../lib/colors";
   import { app } from "../lib/app.svelte";
   import { openAtEvent } from "../lib/contextmenu.svelte";
-  import { linkMenu, repoChipMenu } from "../lib/menus";
+  import { branchMenu, linkMenu, repoChipMenu } from "../lib/menus";
   import LinkMark from "./LinkMark.svelte";
   import ViewSwitch from "./ViewSwitch.svelte";
 
@@ -11,6 +11,10 @@
 
 <div class="top">
   <h1><span class="dot"></span>{app.space.name}</h1>
+  <button class="branch mono" title="Branch of this space: rename, copy, push" aria-label="Branch {app.space.branch}" onclick={(e) => openAtEvent(e, branchMenu(), app.space.branch)} oncontextmenu={(e) => openAtEvent(e, branchMenu(), app.space.branch)}>
+    <svg width="13" height="13" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="20" stroke-linecap="round" aria-hidden="true"><circle cx="72" cy="56" r="24" /><circle cx="72" cy="200" r="24" /><circle cx="184" cy="88" r="24" /><path d="M72 80v96M184 112c0 48-112 32-112 64" /></svg>
+    {app.space.branch}
+  </button>
   {#if chips.shown.length}
     <div class="lks" aria-label="Links">
       {#each chips.shown as l (l.id)}
@@ -36,7 +40,7 @@
     {#each app.space.repos as r (r.name)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <span class="chip" style:--rc={colorOfRepo(app.space, r.name)} oncontextmenu={(e) => openAtEvent(e, repoChipMenu(r.name), r.name)}>
-        <button class="chipb" title={r.worktree} onclick={() => { if (!app.filesOpen) app.dispatch({ type: "toggle-files" }); }}><b>{r.name}</b><span class="mono">{app.space.branch}</span></button>
+        <button class="chipb" title={r.worktree} onclick={() => { if (!app.filesOpen) app.dispatch({ type: "toggle-files" }); }}><b>{r.name}</b></button>
         {#if app.space.repos.length > 1}
           <button class="rm" aria-label={`Remove ${r.name} from this space`} title="Remove from this space (its worktree must be clean)" onclick={() => app.dispatch({ type: "remove-repo", repo: r.name })}>×</button>
         {/if}
@@ -130,6 +134,25 @@
     display: flex;
     gap: 6px;
     flex-wrap: wrap;
+  }
+  .branch {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--panel);
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .branch:hover {
+    color: var(--fg);
+    background: var(--hover);
   }
   .chip {
     display: flex;

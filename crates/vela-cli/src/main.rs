@@ -74,7 +74,13 @@ enum SpaceCmd {
         repos: Vec<PathBuf>,
         #[arg(long)]
         base: Option<String>,
+        /// The branch of the space: an existing local or remote branch is used as it is.
+        /// Default: the `[spaces] branch` template (feat/{slug}).
+        #[arg(long)]
+        branch: Option<String>,
     },
+    /// Rename the branch of a space (and of its agents) in every repo.
+    RenameBranch { id: String, branch: String },
     /// List spaces.
     Ls,
     /// Remove a space and its worktrees.
@@ -129,8 +135,22 @@ fn run(cli: Cli) -> Result<()> {
     let load = |id: &str| -> Result<Space> { Ok(store::load(&vela, id)?) };
     match cli.command {
         Command::Space { action } => match action {
-            SpaceCmd::New { name, repos, base } => {
-                let s = space::create(&vela, &name, &repos, base.as_deref())?;
+            SpaceCmd::RenameBranch { id, branch } => {
+                let s = vela_core::branches::rename(&vela, &id, &branch)?;
+                println!("{} is now on {}", s.id, s.branch);
+            }
+            SpaceCmd::New {
+                name,
+                repos,
+                base,
+                branch,
+            } => {
+                let s = space::create_with(
+                    &vela,
+                    &name,
+                    &repos,
+                    &space::CreateOptions { base, branch },
+                )?;
                 if cli.json {
                     print_json(&s)?;
                 } else {

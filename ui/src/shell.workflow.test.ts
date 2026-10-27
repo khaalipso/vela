@@ -326,3 +326,73 @@ describe("your changes in the code view", () => {
     expect($(".cm-peek .peek")).toBeNull();
   });
 });
+
+describe("branches", () => {
+  it("a new space takes the branch you type and a base, or an existing branch", async () => {
+    const create = vi.spyOn(backend, "createSpace");
+    await app.dispatch({ type: "open-newspace" });
+    await settle();
+    app.newSp.name = "Export button";
+    app.newSp.repos = ["api"];
+    await settle();
+    // The default comes from the pattern.
+    expect($$(".link").some((b) => b.textContent?.includes("feat/export-button"))).toBe(true);
+    $$(".link").find((b) => b.textContent?.includes("feat/export-button"))!.click();
+    await settle();
+    const br = $("#ns-branch") as HTMLInputElement;
+    br.value = "origin/feat/teammate-pr";
+    br.dispatchEvent(new Event("input", { bubbles: true }));
+    await vi.waitFor(() => expect($("[data-branch-hint]")?.textContent).toContain("local branch that tracks it"));
+    expect(($("#ns-base") as HTMLInputElement).disabled).toBe(true);
+    br.value = "louis/export";
+    br.dispatchEvent(new Event("input", { bubbles: true }));
+    const base = $("#ns-base") as HTMLInputElement;
+    base.value = "develop";
+    base.dispatchEvent(new Event("input", { bubbles: true }));
+    await settle();
+    expect($("[data-branch-hint]")?.textContent).toContain("A new branch louis/export, from develop");
+    await app.dispatch({ type: "newspace-submit" });
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0][2]).toEqual({ branch: "louis/export", base: "develop" });
+    await vi.waitFor(() => expect(app.space.branch).toBe("louis/export"));
+    expect($(".top .branch")?.textContent).toContain("louis/export");
+    create.mockRestore();
+  });
+
+  it("the branch chip renames the branch and pushes it", async () => {
+    $(".top .branch")!.click();
+    await settle();
+    [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find((m) => m.textContent?.includes("Rename branch"))!.click();
+    await settle();
+    const input = document.querySelector<HTMLInputElement>(".sheet input")!;
+    input.value = "bad name";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.form!.requestSubmit();
+    await settle();
+    expect(document.querySelector(".sheet")?.textContent).toContain("Git does not take this name");
+    expect(app.space.branch).toBe("louis/export");
+    input.value = "louis/export-csv";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await settle();
+    input.form!.requestSubmit();
+    await vi.waitFor(() => expect(app.space.branch).toBe("louis/export-csv"));
+    $(".top .branch")!.click();
+    await settle();
+    [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find((m) => m.textContent?.includes("Push branch"))!.click();
+    await vi.waitFor(() => expect(backend.pushed).toContain("louis/export-csv"));
+  });
+
+  it("the Branches settings change the pattern of new spaces", async () => {
+    await app.dispatch({ type: "open-branch-settings" });
+    await vi.waitFor(() => expect($("[aria-label='Branch pattern']")).toBeTruthy());
+    const p = $("[aria-label='Branch pattern']") as HTMLInputElement;
+    p.value = "{user}/{slug}";
+    p.dispatchEvent(new Event("input", { bubbles: true }));
+    await settle();
+    expect($(".preview")?.textContent).toContain("/refunds-in-checkout");
+    $$(".branches .btn.p")[0].click();
+    await vi.waitFor(() => expect(app.branchTemplate).toBe("{user}/{slug}"));
+    press("Escape");
+    await settle();
+  });
+});

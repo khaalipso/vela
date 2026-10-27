@@ -1,7 +1,20 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { app } from "../lib/app.svelte";
+  import { renderBranch } from "../lib/backend";
   import Kbd from "./Kbd.svelte";
+
+  /** The repo whose branches are suggested: the first one picked. */
+  const firstRepo = $derived(app.newSp.repos[0] ?? null);
+  $effect(() => {
+    if (app.sheetMode === "new") void app.loadBranchChoices(firstRepo);
+  });
+  const defaultBranch = $derived(renderBranch(app.branchTemplate, app.newSp.name || (firstRepo?.split("/").pop() ?? "my task")));
+  const typed = $derived(app.newSp.branch.trim());
+  const match = $derived(
+    typed ? app.sheetBranches.find((b) => b.name === typed || (b.remote && b.name.split("/").slice(1).join("/") === typed)) : undefined,
+  );
+  let showBranch = $state(false);
 
   let name: HTMLInputElement | undefined = $state();
   onMount(() => name?.focus());
@@ -82,6 +95,55 @@
           {/each}
         </div>
       </div>
+      {#if app.sheetMode === "new"}
+        <div class="grp">
+          <div class="lblrow">
+            <label class="lbl" for="ns-branch">Branch</label>
+            <button type="button" class="link" aria-expanded={showBranch} onclick={() => (showBranch = !showBranch)}>
+              {showBranch ? "Hide" : typed ? typed : defaultBranch}
+            </button>
+          </div>
+          {#if showBranch || typed}
+            <div class="brow">
+              <input
+                class="field small mono"
+                id="ns-branch"
+                list="ns-branches"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder={defaultBranch}
+                bind:value={app.newSp.branch}
+              />
+              <input
+                class="field small mono base"
+                id="ns-base"
+                list="ns-bases"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="from: current branch"
+                aria-label="Base branch"
+                disabled={!!match}
+                bind:value={app.newSp.base}
+              />
+            </div>
+            <datalist id="ns-branches">
+              {#each app.sheetBranches as b (b.name)}<option value={b.name}>{b.when} · {b.subject}</option>{/each}
+            </datalist>
+            <datalist id="ns-bases">
+              {#each app.sheetBranches as b (b.name)}<option value={b.name}>{b.when}</option>{/each}
+            </datalist>
+            <span class="hint" data-branch-hint>
+              {#if match}
+                {match.remote ? `Takes ${match.name} as a local branch that tracks it` : `Uses the existing branch ${match.name} as it is`}{match.when ? ` (last commit ${match.when})` : ""}.
+              {:else if typed}
+                A new branch {typed}, from {app.newSp.base.trim() || "the current branch of each repo"}.
+              {:else}
+                Empty: {defaultBranch} (pattern <span class="mono">{app.branchTemplate}</span>, change it in Settings). Pick an existing or remote branch to work on it.
+              {/if}
+            </span>
+          {/if}
+        </div>
+      {/if}
       <div class="cost">{app.sheetMode === "add" ? `Each repo gets a worktree on ${app.space.branch}.` : "Vela creates one branch and one worktree per repo, then starts the stack from mise.toml and compose.yml."}</div>
       <div class="actions">
         <button type="button" class="btn" onclick={() => app.closeOverlay()}>Cancel</button>
@@ -112,6 +174,24 @@
     gap: 6px;
     max-height: 168px;
     overflow: auto;
+  }
+  .brow {
+    display: flex;
+    gap: 8px;
+  }
+  .brow .field {
+    flex: 1;
+    min-width: 0;
+  }
+  .brow .base {
+    flex: 0 0 38%;
+  }
+  .hint {
+    font-size: 12px;
+    color: var(--faint);
+  }
+  .mono {
+    font-family: var(--code);
   }
   .lblrow {
     display: flex;

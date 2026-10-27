@@ -69,8 +69,14 @@ fn env() -> Env {
     fs::write(api.join("notes.txt"), NOTES).unwrap();
     sh(&api, &["add", "-A"]);
     sh(&api, &["commit", "-q", "-m", "init"]);
-    let space =
-        commands::create_space(&vela, "Refunds", &[api.to_string_lossy().into_owned()]).unwrap();
+    let space = commands::create_space(
+        &vela,
+        "Refunds",
+        &[api.to_string_lossy().into_owned()],
+        None,
+        None,
+    )
+    .unwrap();
     let bin = root.join("bin");
     fs::create_dir_all(&bin).unwrap();
     let claude = bin.join("claude");

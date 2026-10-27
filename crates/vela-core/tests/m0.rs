@@ -128,10 +128,14 @@ fn creation_rolls_back_when_a_later_repo_fails() {
     let e = env();
     let a = repo(&e.root, "api", &[("a", "a\n")]);
     let b = repo(&e.root, "web", &[("b", "b\n")]);
-    sh(&b, &["branch", "feat/boom"]); // the branch already exists in the second repo
+    // The second repo already has the branch (it is reused, and must survive the rollback),
+    // and its worktree path is taken, so git refuses it.
+    sh(&b, &["branch", "feat/boom"]);
+    write(&e.vela.home.join("worktrees/boom/web"), "taken", "x\n");
     let err = space::create(&e.vela, "boom", &[&a, &b], None).unwrap_err();
     assert!(matches!(err, Error::Git { .. }), "{err}");
     assert!(sh(&a, &["branch", "--list", "feat/boom"]).trim().is_empty());
+    assert!(!sh(&b, &["branch", "--list", "feat/boom"]).trim().is_empty());
     assert!(!sh(&a, &["worktree", "list"]).contains("boom"));
     assert!(!e.vela.home.join("worktrees/boom").exists());
     assert!(store::list(&e.vela).unwrap().is_empty());
@@ -687,4 +691,120 @@ fn discard_hunk_refuses_new_files() {
     let new = h.iter().find(|h| h.path == "new.txt").unwrap();
     assert!(stage::discard_hunk(&s, &new.id).is_err());
     assert!(wt(&s, 0).join("new.txt").exists());
+}
+
+fn opts(branch: Option<&str>, base: Option<&str>) -> space::CreateOptions {
+    space::CreateOptions {
+        branch: branch.map(str::to_string),
+        base: base.map(str::to_string),
+    }
+}
+
+#[test]
+fn create_with_a_branch_of_your_choice_and_a_base() {
+    let e = env();
+    let a = repo(&e.root, "api", &[("a", "a\n")]);
+    sh(&a, &["checkout", "-q", "-b", "develop"]);
+    write(&a, "d", "develop only\n");
+    sh(&a, &["add", "d"]);
+    sh(&a, &["commit", "-qm", "develop"]);
+    sh(&a, &["checkout", "-q", "-"]);
+    let s = space::create_with(
+        &e.vela,
+        "Refunds",
+        &[&a],
+        &opts(Some("louis/refunds"), Some("develop")),
+    )
+    .unwrap();
+    assert_eq!(s.branch, "louis/refunds");
+    assert_eq!(
+        sh(&wt(&s, 0), &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "louis/refunds"
+    );
+    assert!(wt(&s, 0).join("d").exists(), "branched from develop");
+}
+
+#[test]
+fn create_with_an_existing_branch_uses_it_and_keeps_it_on_failure() {
+    let e = env();
+    let a = repo(&e.root, "api", &[("a", "a\n")]);
+    sh(&a, &["branch", "wip/old-work"]);
+    let s = space::create_with(
+        &e.vela,
+        "Old work",
+        &[&a],
+        &opts(Some("wip/old-work"), None),
+    )
+    .unwrap();
+    assert_eq!(
+        sh(&wt(&s, 0), &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "wip/old-work"
+    );
+    // Removing the space keeps a branch that was not made for it... and merged ones go.
+    space::remove(&e.vela, &s.id).unwrap();
+}
+
+#[test]
+fn create_with_a_remote_branch_tracks_it() {
+    let e = env();
+    let origin = repo(&e.root, "origin", &[("a", "a\n")]);
+    sh(&origin, &["checkout", "-q", "-b", "feat/from-pr"]);
+    write(&origin, "pr", "pr\n");
+    sh(&origin, &["add", "pr"]);
+    sh(&origin, &["commit", "-qm", "pr"]);
+    sh(&origin, &["checkout", "-q", "-"]);
+    let clone = e.root.join("clone");
+    Command::new("git")
+        .args([
+            "clone",
+            "-q",
+            &origin.to_string_lossy(),
+            &clone.to_string_lossy(),
+        ])
+        .status()
+        .unwrap();
+    let s =
+        space::create_with(&e.vela, "PR", &[&clone], &opts(Some("feat/from-pr"), None)).unwrap();
+    let w = wt(&s, 0);
+    assert!(w.join("pr").exists());
+    assert_eq!(
+        sh(&w, &["rev-parse", "--abbrev-ref", "@{upstream}"]).trim(),
+        "origin/feat/from-pr"
+    );
+}
+
+#[test]
+fn a_branch_checked_out_elsewhere_is_refused_with_where() {
+    let e = env();
+    let a = repo(&e.root, "api", &[("a", "a\n")]);
+    let current = sh(&a, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .trim()
+        .to_string();
+    let err = space::create_with(&e.vela, "X", &[&a], &opts(Some(&current), None)).unwrap_err();
+    assert!(err.to_string().contains("checked out in"), "{err}");
+    assert!(!vela_core::store::exists(&e.vela, "x"));
+}
+
+#[test]
+fn renaming_the_branch_renames_the_agent_branches_too() {
+    let e = env();
+    let a = repo(&e.root, "api", &[("a", "a\n")]);
+    let s = space::create(&e.vela, "Billing", &[&a], None).unwrap();
+    sh(&a, &["branch", &format!("{}--developer-1", s.branch)]);
+    let s2 = vela_core::branches::rename(&e.vela, &s.id, "louis/billing").unwrap();
+    assert_eq!(s2.branch, "louis/billing");
+    assert_eq!(
+        sh(&wt(&s2, 0), &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "louis/billing"
+    );
+    let branches = sh(&a, &["branch", "--list"]);
+    assert!(
+        branches.contains("louis/billing--developer-1"),
+        "{branches}"
+    );
+    assert!(!branches.contains(&s.branch), "{branches}");
+    assert!(vela_core::branches::rename(&e.vela, &s.id, "bad name").is_err());
+    let listed = vela_core::branches::list(&a).unwrap();
+    assert!(listed.iter().any(|b| b.name == "louis/billing"));
+    assert!(!listed.iter().any(|b| b.name.contains("--")));
 }

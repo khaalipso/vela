@@ -155,12 +155,21 @@ pub struct IssuesConfig {
     pub linear: Option<String>,
 }
 
+/// `[spaces]`: how new spaces are made.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SpacesConfig {
+    /// Template of the branch of a new space: `{slug}`, `{name}`, `{user}`, `{date}`.
+    pub branch: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub checks: ChecksConfig,
     pub issues: IssuesConfig,
     pub agents: AgentsConfig,
+    pub spaces: SpacesConfig,
     /// Top level keys the schema does not know, kept as written.
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -232,6 +241,7 @@ fn is_known(path: &str) -> bool {
             | ["agents", "roles", _, "tier" | "harness"]
             | ["agents", "transport", _]
             | ["agents", "prompts", _]
+            | ["spaces", "branch"]
     )
 }
 

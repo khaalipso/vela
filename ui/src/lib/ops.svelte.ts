@@ -465,6 +465,28 @@ class Ops {
 
   // -- spaces ---------------------------------------------------------------------
 
+  askRenameBranch() {
+    const space = app.space;
+    app.sheet = {
+      kind: "prompt",
+      title: "Rename the branch",
+      label: "Branch",
+      value: space.branch,
+      submitLabel: "Rename",
+      hint: `Renamed in ${space.repos.map((r) => r.name).join(", ")}, with the branches of its agents. The worktrees stay where they are; a pushed branch keeps its upstream until you push again.`,
+      validate: (v) => {
+        const b = v.trim();
+        if (!b) return "Give the branch a name";
+        if (/[\s~^:?*[\\]|\.\.|^[-/]|\/$|\.lock$/.test(b)) return "Git does not take this name";
+        return null;
+      },
+      run: async (v) => {
+        await app.renameBranch(v.trim());
+      },
+    };
+    app.overlay = "sheet";
+  }
+
   askRenameSpace(space: Space) {
     app.sheet = {
       kind: "prompt",

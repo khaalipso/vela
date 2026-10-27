@@ -77,6 +77,8 @@ fn space(e: &Env) -> Space {
         &e.vela,
         "Fix it",
         &[e.source.to_string_lossy().into_owned()],
+        None,
+        None,
     )
     .unwrap()
 }

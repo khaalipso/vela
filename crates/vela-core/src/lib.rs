@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+pub mod branches;
 pub mod checks;
 pub mod commit;
 pub mod commitplan;

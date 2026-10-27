@@ -6,7 +6,7 @@
   // once with what was loaded last; fresh values replace them when they arrive.
   import { tick } from "svelte";
   import { app } from "../lib/app.svelte";
-  import type { HarnessTiers, TierSetting } from "../lib/backend";
+  import { renderBranch, type HarnessTiers, type TierSetting } from "../lib/backend";
   import { ROLE_COLORS, roleLabel, ROLES } from "../lib/format";
   import type { AgentRole, Tier } from "../lib/types";
 
@@ -28,6 +28,14 @@
   }
   function saveEffort(h: HarnessTiers, t: TierSetting, value: string) {
     void app.setTier(h.harness, t.tier, { effort: value || null });
+  }
+
+  // -- branches --
+  let tplDraft = $state<string | null>(null);
+  async function saveTpl() {
+    if (tplDraft === null) return;
+    await app.setBranchTemplate(tplDraft);
+    tplDraft = null;
   }
 
   // -- prompts --
@@ -70,15 +78,54 @@
       <div class="tabs" role="tablist">
         <button role="tab" aria-selected={app.settingsTab === "tiers"} onclick={() => (app.settingsTab = "tiers")}>Tiers</button>
         <button role="tab" aria-selected={app.settingsTab === "prompts"} onclick={() => (app.settingsTab = "prompts")}>Prompts</button>
+        <button
+          role="tab"
+          aria-selected={app.settingsTab === "branches"}
+          onclick={() => {
+            app.settingsTab = "branches";
+            void app.loadBranchChoices(null);
+          }}>Branches</button
+        >
       </div>
       <span class="sub">
-        {app.settingsTab === "tiers"
+        {app.settingsTab === "branches"
+          ? "How the branch of a new space is named. You can still type any branch, or pick an existing one, when you create a space."
+          : app.settingsTab === "tiers"
           ? "Which model and how much reasoning each tier gets, per tool. Empty keeps the tool's default."
           : "The brief each role gets before your request. Vela always puts its ground rules first (investigate before answering, cite files and lines, never commit) and the space context after."}
       </span>
     </header>
 
-    {#if app.settingsTab === "tiers"}
+    {#if app.settingsTab === "branches"}
+      <div class="list branches" aria-label="Branch naming">
+        <label>
+          <span>Pattern</span>
+          <input
+            value={tplDraft ?? app.branchTemplate}
+            aria-label="Branch pattern"
+            spellcheck="false"
+            oninput={(e) => (tplDraft = (e.currentTarget as HTMLInputElement).value)}
+            onkeydown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void saveTpl();
+              }
+            }}
+          />
+        </label>
+        <p class="hint">
+          <code>{"{slug}"}</code> the space name as a slug · <code>{"{user}"}</code> your user name · <code>{"{date}"}</code> today (YYYY-MM-DD).
+          Examples: <button class="ex" onclick={() => (tplDraft = "feat/{slug}")}>feat/{"{slug}"}</button>
+          <button class="ex" onclick={() => (tplDraft = "{user}/{slug}")}>{"{user}"}/{"{slug}"}</button>
+          <button class="ex" onclick={() => (tplDraft = "{date}-{slug}")}>{"{date}"}-{"{slug}"}</button>
+        </p>
+        <p class="preview">"Refunds in checkout" → <b class="mono">{renderBranch(tplDraft ?? app.branchTemplate, "Refunds in checkout")}</b></p>
+        <div class="acts">
+          <span class="hint">The branch of an existing space: click it in the top bar to rename it.</span>
+          <button class="btn p" disabled={tplDraft === null || tplDraft === app.branchTemplate} onclick={saveTpl}>Save</button>
+        </div>
+      </div>
+    {:else if app.settingsTab === "tiers"}
       <div class="list" aria-label="Agent tiers">
         {#if !app.tierSettings.length}
           {#each [0, 1, 2] as i (i)}<div class="skel"></div>{/each}
@@ -281,6 +328,37 @@
   textarea:focus {
     border-color: var(--space);
   }
+  .branches {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 12px;
+  }
+  .branches input {
+    font-size: 14px;
+    padding: 7px 10px;
+  }
+  .branches code {
+    font-family: var(--code);
+    font-size: 12px;
+    background: var(--raised);
+    padding: 1px 4px;
+    border-radius: 4px;
+  }
+  .ex {
+    font-family: var(--code);
+    font-size: 12px;
+    color: var(--info);
+    padding: 0 4px;
+  }
+  .preview {
+    margin: 0;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .mono {
+    font-family: var(--code);
+  }
   .prompts {
     display: grid;
     grid-template-columns: 170px minmax(0, 1fr);
@@ -349,7 +427,38 @@
   }
   @media (max-width: 640px) {
     .row,
-    .prompts {
+    .branches {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 12px;
+  }
+  .branches input {
+    font-size: 14px;
+    padding: 7px 10px;
+  }
+  .branches code {
+    font-family: var(--code);
+    font-size: 12px;
+    background: var(--raised);
+    padding: 1px 4px;
+    border-radius: 4px;
+  }
+  .ex {
+    font-family: var(--code);
+    font-size: 12px;
+    color: var(--info);
+    padding: 0 4px;
+  }
+  .preview {
+    margin: 0;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .mono {
+    font-family: var(--code);
+  }
+  .prompts {
       grid-template-columns: 1fr;
     }
   }
