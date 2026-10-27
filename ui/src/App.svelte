@@ -17,6 +17,7 @@
   import ReviewView from "./components/ReviewView.svelte";
   import ShortcutsSheet from "./components/ShortcutsSheet.svelte";
   import StackPopover from "./components/StackPopover.svelte";
+  import AgentSettings from "./components/AgentSettings.svelte";
   import Toast from "./components/Toast.svelte";
   import TopBar from "./components/TopBar.svelte";
   import { app } from "./lib/app.svelte";
@@ -87,7 +88,7 @@
 {:else if app.ready}
   <div class="app">
     <Rail />
-    <div class="main">
+    <div class="main" style:--termh={app.termOpen && !app.elsewhere ? `${app.termHeight + 8}px` : "0px"}>
       <TopBar />
       <div class="body">
         {#if app.filesOpen}<FilesDrawer />{/if}
@@ -108,6 +109,10 @@
           {/if}
         {/key}
       </div>
+      {#if app.termOpen && !app.elsewhere}
+        <!-- xterm.js is loaded the first time a terminal opens. -->
+        {#await import("./components/TerminalPanel.svelte") then { default: TerminalPanel }}<TerminalPanel />{/await}
+      {/if}
       {#if app.overlay !== "composer"}<Island />{/if}
       <BottomHints />
       {#if app.stackOpen}<StackPopover />{/if}
@@ -120,6 +125,7 @@
   {#if app.overlay === "commit"}<CommitSheet />{/if}
   {#if app.overlay === "links"}<LinksSheet />{/if}
   {#if app.overlay === "help"}<ShortcutsSheet />{/if}
+  {#if app.overlay === "settings"}<AgentSettings />{/if}
   {#if app.overlay === "sheet"}<SheetModal />{/if}
   <ContextMenu />
   <Toast />

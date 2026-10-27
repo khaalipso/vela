@@ -4,7 +4,7 @@ export const uniq = <T>(a: T[]): T[] => a.filter((x, i) => a.indexOf(x) === i);
 
 export const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
-export const ROLES: AgentRole[] = ["developer", "reviewer", "tester", "planner", "debugger"];
+export const ROLES: AgentRole[] = ["developer", "reviewer", "tester", "planner", "debugger", "product", "security"];
 
 export function roleLabel(role: AgentRole): string {
   return role.charAt(0).toUpperCase() + role.slice(1);
@@ -33,6 +33,8 @@ export const ROLE_COLORS: Record<AgentRole, string> = {
   tester: "var(--add)",
   planner: "var(--syn-alt)",
   debugger: "var(--del)",
+  product: "var(--space)",
+  security: "var(--warn)",
 };
 
 export function agentStatusColor(s: AgentStatus): string {

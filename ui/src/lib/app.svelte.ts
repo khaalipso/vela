@@ -10,7 +10,9 @@ import type {
   CheckEvent,
   FileRef,
   GateCheck,
+  HarnessTiers,
   ReviewNote,
+  TermEvent,
   Unsubscribe,
 } from "./backend";
 import { composeMessage, cycleType, mergeAll, moveHunk, splitHunk } from "./commitplan";
@@ -63,6 +65,8 @@ export const DEFAULT_TIERS: Record<AgentRole, Tier> = {
   debugger: "high",
   developer: "medium",
   tester: "low",
+  product: "high",
+  security: "high",
 };
 
 export interface SpaceData {
@@ -242,6 +246,31 @@ export class AppState {
   checkLogs = $state.raw<Record<string, Logs>>({});
   /** Width in px of the file column; 0 means the default (about 34%). */
   rvWidth = $state(0);
+  /** The Review diff shows before and after side by side (V), remembered per window. */
+  rvSplit = $state(readFlag("vela.rvSplit", false));
+
+  /** Markdown files shown as source instead of the preview (key `space:repo/path`). */
+  mdSource = $state<Record<string, true>>({});
+  /** Bumped by Ctrl F so the code view opens its find bar. */
+  findSeq = $state(0);
+
+  /** The terminal panel is open, remembered per window. */
+  termOpen = $state(readFlag("vela.termOpen", false));
+  /** Terminals of every space, in the order they were opened. */
+  terms = $state<TermTab[]>([]);
+  /** The terminal shown, per space. */
+  termActive = $state<Record<string, number>>({});
+  /** Height of the panel in px. */
+  termHeight = $state(260);
+  /** Bumped when a terminal should take the focus. */
+  termFocusSeq = $state(0);
+  /** Where the output of each terminal goes once its view is up; buffered until then. */
+  private termSinks = new Map<number, (data: string) => void>();
+  private termBuf = new Map<number, string[]>();
+  private offTerm: Unsubscribe | null = null;
+
+  /** Tier settings of every harness (overlay "settings"). */
+  tierSettings = $state.raw<HarnessTiers[]>([]);
 
   private off: Unsubscribe | null = null;
   private offCheck: Unsubscribe | null = null;
@@ -263,6 +292,8 @@ export class AppState {
     this.offCheck = backend.onCheck((e) => this.onCheckEvent(e));
     this.offAgent?.();
     this.offAgent = backend.onAgent((n) => this.onAgentEvent(n));
+    this.offTerm?.();
+    this.offTerm = backend.onTerm((e) => this.onTermEvent(e));
     void this.loadHarnesses();
     this.repos = await backend.listRepos();
     this.newSp.repos = this.defaultRepos();
@@ -285,6 +316,8 @@ export class AppState {
     this.off?.();
     this.offCheck?.();
     this.offAgent?.();
+    this.offTerm?.();
+    for (const t of this.terms) void this.backend.termClose(t.id).catch(() => {});
     for (const t of Object.values(this.agentTimers)) clearTimeout(t);
   }
 
@@ -661,7 +694,7 @@ export class AppState {
           role: agent?.role ?? "developer",
           tool: agent?.tool ?? "claude",
           why: d.reasons[hunk.id] ?? "",
-          note: d.notes.find((n) => n.hunkId === hunk.id) ?? null,
+          note: d.notes.find((n) => n.hunkId === hunk.id && !n.resolved) ?? d.notes.find((n) => n.hunkId === hunk.id) ?? null,
           edited: !!this.edited[`${s.id}:${hunk.id}`],
         },
       ];
@@ -925,15 +958,154 @@ export class AppState {
     if (this.view === "review") this.rvLocate(f.hunk.id);
   }
 
-  async askFix(hunkId?: string) {
-    const p = hunkId ? this.proposals.find((x) => x.hunk.id === hunkId) : this.focused;
-    if (!p?.note || p.note.resolved || p.note.busy) return;
+  /** Notes of a file, by line. */
+  notesOf(repo: string, path: string): ReviewNote[] {
+    return this.sd.notes.filter((n) => n.repo === repo && n.path === path).sort((a, b) => a.line - b.line);
+  }
+  /** The open note under the cursor: of the hunk in the Review view, else of the focused proposal. */
+  private currentNote(): ReviewNote | null {
+    if (this.view === "review") {
+      const h = this.currentHunk;
+      const open = this.sd.notes.filter((n) => !n.resolved);
+      if (h) {
+        const n = open.find((x) => x.hunkId === h.id);
+        if (n) return n;
+      }
+      const hi = this.cui.hi;
+      const byFocus = hi ? open.find((x) => x.hunkId === hi) : undefined;
+      if (byFocus) return byFocus;
+      const r = this.selectedRow;
+      if (r) return open.find((x) => x.repo === r.repo && x.path === r.path && !x.hunkId) ?? null;
+      return null;
+    }
+    const p = this.focused;
+    return p?.note && !p.note.resolved ? p.note : null;
+  }
+
+  /** F: send a note to its author (or a developer agent) for a fix. */
+  async askFix(noteId?: string) {
+    const n = noteId ? this.sd.notes.find((x) => x.id === noteId) : this.currentNote();
+    if (!n) return this.toast("No open note here");
+    if (n.resolved || n.busy) return;
     try {
-      await this.backend.askFix(this.space.id, p.hunk.id);
+      await this.backend.askFix(this.space.id, n.id);
+      this.toast("Sent for a fix");
     } catch (e) {
       this.fail(e);
     }
     await this.refresh();
+  }
+
+  /** Shift Y: resolve a note (or open it again). */
+  async resolveNote(noteId?: string, resolved = true) {
+    const n = noteId ? this.sd.notes.find((x) => x.id === noteId) : this.currentNote();
+    if (!n) return this.toast("No open note here");
+    try {
+      await this.backend.resolveNote(this.space.id, n.id, resolved);
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh();
+  }
+
+  // -- terminals ------------------------------------------------------------
+
+  /** Terminals of the current space. */
+  get spaceTerms(): TermTab[] {
+    return this.terms.filter((t) => t.spaceId === this.space.id);
+  }
+  get activeTerm(): TermTab | null {
+    const list = this.spaceTerms;
+    return list.find((t) => t.id === this.termActive[this.space.id]) ?? list[list.length - 1] ?? null;
+  }
+  /** The view of a terminal takes its output: what came before is replayed first. */
+  attachTerm(id: number, write: (data: string) => void): () => void {
+    for (const d of this.termBuf.get(id) ?? []) write(d);
+    this.termBuf.delete(id);
+    this.termSinks.set(id, write);
+    return () => {
+      if (this.termSinks.get(id) === write) this.termSinks.delete(id);
+    };
+  }
+  private onTermEvent(e: TermEvent) {
+    if (e.type === "data") {
+      const sink = this.termSinks.get(e.id);
+      if (sink) sink(e.data);
+      else {
+        const b = this.termBuf.get(e.id) ?? [];
+        b.push(e.data);
+        this.termBuf.set(e.id, b);
+      }
+      return;
+    }
+    const t = this.terms.find((x) => x.id === e.id);
+    if (t) t.exited = true;
+    this.termSinks.get(e.id)?.(`\r\n[process exited${e.code === null ? "" : ` with ${e.code}`}]\r\n`);
+  }
+  toggleTerminal() {
+    this.termOpen = !this.termOpen;
+    writeFlag("vela.termOpen", this.termOpen);
+    if (this.termOpen) {
+      if (!this.spaceTerms.length) void this.newTerminal();
+      else this.termFocusSeq++;
+    }
+  }
+  /** Open one more shell in the current space (in `repo`, or the first repo). */
+  async newTerminal(repo: string | null = null, cols = 100, rows = 24) {
+    const sid = this.space.id;
+    if (!this.termOpen) {
+      this.termOpen = true;
+      writeFlag("vela.termOpen", true);
+    }
+    try {
+      const id = await this.backend.termOpen(sid, repo, cols, rows);
+      const n = this.terms.filter((t) => t.spaceId === sid).length + 1;
+      const name = repo ?? this.spaces.find((x) => x.id === sid)?.repos[0]?.name ?? "shell";
+      this.terms.push({ id, spaceId: sid, title: n > 1 ? `${name} ${n}` : name, exited: false });
+      this.termActive[sid] = id;
+      this.termFocusSeq++;
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+  async closeTerminal(id: number) {
+    const t = this.terms.find((x) => x.id === id);
+    this.terms = this.terms.filter((x) => x.id !== id);
+    this.termSinks.delete(id);
+    this.termBuf.delete(id);
+    if (t && !t.exited) await this.backend.termClose(id).catch(() => {});
+    if (t && !this.terms.some((x) => x.spaceId === t.spaceId) && t.spaceId === this.space.id) {
+      this.termOpen = false;
+      writeFlag("vela.termOpen", false);
+    }
+  }
+
+  // -- agent tier settings --------------------------------------------------
+
+  async openSettings() {
+    try {
+      this.tierSettings = await this.backend.agentTiers();
+      this.overlay = "settings";
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+  /** Change the model and/or the effort of a tier; what is left out keeps its latest value. */
+  async setTier(harness: string, tier: Tier, patch: { model?: string | null; effort?: string | null }) {
+    const cur = this.tierSettings.find((h) => h.harness === harness)?.tiers.find((t) => t.tier === tier);
+    const model = patch.model !== undefined ? patch.model?.trim() || null : (cur?.model ?? null);
+    const effort = patch.effort !== undefined ? patch.effort || null : (cur?.effort ?? null);
+    // Shown at once, so a second change made before the backend answers builds on this one.
+    this.tierSettings = this.tierSettings.map((h) =>
+      h.harness !== harness ? h : { ...h, tiers: h.tiers.map((t) => (t.tier === tier ? { ...t, model, effort } : t)) },
+    );
+    try {
+      await this.backend.setAgentTier(harness, tier, model, effort);
+      this.tierSettings = await this.backend.agentTiers();
+      await this.loadRoleDefaults(this.space.id).catch(() => {});
+    } catch (e) {
+      this.fail(e);
+    }
   }
 
   async answer(yes: boolean) {
@@ -1567,6 +1739,29 @@ export class AppState {
         return this.askFix();
       case "answer":
         return this.answer(a.yes);
+      case "find":
+        this.findSeq++;
+        return;
+      case "toggle-terminal":
+        return this.toggleTerminal();
+      case "new-terminal":
+        return this.newTerminal();
+      case "toggle-preview": {
+        const f = this.cui.file;
+        if (!f || !isMarkdown(f)) return this.toast("Preview is for Markdown files");
+        const k = `${this.space.id}:${f}`;
+        if (this.mdSource[k]) delete this.mdSource[k];
+        else this.mdSource[k] = true;
+        return;
+      }
+      case "open-settings":
+        return this.openSettings();
+      case "rv-split":
+        this.rvSplit = !this.rvSplit;
+        writeFlag("vela.rvSplit", this.rvSplit);
+        return;
+      case "rv-note-resolve":
+        return this.resolveNote();
       case "toggle-files":
         this.filesOpen = !this.filesOpen;
         writeFlag("vela.filesOpen", this.filesOpen);
@@ -1672,6 +1867,18 @@ export class AppState {
 }
 
 export const app = new AppState();
+
+/** A terminal tab of the panel. */
+export interface TermTab {
+  id: number;
+  spaceId: string;
+  title: string;
+  exited: boolean;
+}
+
+export function isMarkdown(key: string): boolean {
+  return /\.(md|markdown|mdx)$/i.test(key);
+}
 
 function readFlag(key: string, fallback: boolean): boolean {
   try {

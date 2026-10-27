@@ -20,6 +20,8 @@
         ["@", "Ask an agent"],
         ["C", "Commit composer"],
         ["L", "Links of this space"],
+        ["T  Ctrl `", "Terminal panel"],
+        ["Ctrl Shift `", "One more terminal"],
         ["Right click", "Actions of what is under the pointer"],
         ["Menu  Shift F10", "The same from the keyboard, on the focused item"],
         ["?", "This sheet"],
@@ -65,6 +67,17 @@
       [
         ["Click", "Type anywhere, your lines get a blue mark"],
         ["Esc", "Leave the line, keys work again"],
+        ["Ctrl F", "Find and replace in the file (Enter next, Shift Enter previous)"],
+        ["Ctrl G", "Next match"],
+        ["V", "Markdown: preview or source"],
+      ],
+    ],
+    [
+      "In the review",
+      [
+        ["V", "Before and after side by side, or unified"],
+        ["F", "Ask for a fix of the note on the hunk"],
+        ["Shift Y", "Resolve the note"],
       ],
     ],
   ];

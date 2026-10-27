@@ -104,49 +104,23 @@ describe("TauriBackend agents", () => {
     expect(unlisten).toHaveBeenCalled();
   });
 
-  describe("askFix", () => {
-    const hunk = (origin: Hunk["origin"]): Hunk => ({
-      id: "h1",
-      repo: "api",
-      path: "src/webhook.ts",
-      oldStart: 1,
-      oldLines: 1,
-      newStart: 1,
-      newLines: 1,
-      section: "",
-      lines: [],
-      origin,
-      state: "pending",
-    });
-    const note = { hunkId: "h1", by: "Reviewer · Codex", text: "Return 400 on a bad signature", resolved: false, busy: false };
-
-    it("sends the reviewer note to the author of the proposal, on the author's harness", async () => {
-      invoke.mockImplementation(async (cmd: string) => {
-        if (cmd === "hunks") return [hunk({ type: "agent", agent: "developer-1" })];
-        if (cmd === "notes") return [note];
-        if (cmd === "agents") return [agent({ tool: "codex" })];
-        return agent();
-      });
-      await b.askFix("s", "h1");
-      const ask = invoke.mock.calls.find((c) => c[0] === "ask_agent");
-      expect(ask?.[1]).toMatchObject({ spaceId: "s", role: "developer", harness: "codex", tier: null });
-      expect(ask?.[1].prompt).toContain("Return 400 on a bad signature");
-      expect(ask?.[1].prompt).toContain("src/webhook.ts");
+  describe("notes", () => {
+    it("askFix and resolveNote go to their commands with the note id", async () => {
+      invoke.mockResolvedValue(undefined);
+      await b.askFix("s", "n1");
+      await b.resolveNote("s", "n1", true);
+      expect(invoke).toHaveBeenCalledWith("ask_fix", { spaceId: "s", noteId: "n1" });
+      expect(invoke).toHaveBeenCalledWith("resolve_note", { spaceId: "s", noteId: "n1", resolved: true });
     });
 
-    it("refuses a hunk of yours and a proposal without a note", async () => {
-      invoke.mockImplementation(async (cmd: string) => {
-        if (cmd === "hunks") return [hunk({ type: "you" })];
-        if (cmd === "notes") return [];
-        return [];
-      });
-      await expect(b.askFix("s", "h1")).rejects.toThrow(/agent's proposal/);
-      invoke.mockImplementation(async (cmd: string) => {
-        if (cmd === "hunks") return [hunk({ type: "agent", agent: "developer-1" })];
-        return [];
-      });
-      await expect(b.askFix("s", "h1")).rejects.toThrow(/no reviewer note/);
-      expect(invoke.mock.calls.some((c) => c[0] === "ask_agent")).toBe(false);
+    it("tier settings and terminals map to their commands", async () => {
+      invoke.mockResolvedValue(7);
+      await b.setAgentTier("claude", "high", "opus", "max");
+      expect(invoke).toHaveBeenCalledWith("set_agent_tier", { harness: "claude", tier: "high", model: "opus", effort: "max" });
+      expect(await b.termOpen("s", null, 80, 24)).toBe(7);
+      expect(invoke).toHaveBeenCalledWith("term_open", { spaceId: "s", repo: null, cols: 80, rows: 24 });
+      await b.termWrite(7, "ls\r");
+      expect(invoke).toHaveBeenCalledWith("term_write", { id: 7, data: "ls\r" });
     });
   });
 });

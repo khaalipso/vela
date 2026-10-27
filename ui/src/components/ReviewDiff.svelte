@@ -5,8 +5,10 @@
   import { hunkMenu } from "../lib/menus";
   import { ROLE_COLORS, roleLabel, toolLabel } from "../lib/format";
   import { SECTION_TITLES } from "../lib/review";
+  import type { ReviewNote } from "../lib/backend";
   import DiffBlock from "./DiffBlock.svelte";
   import Kbd from "./Kbd.svelte";
+  import SplitDiff from "./SplitDiff.svelte";
 
   const row = $derived(app.selectedRow);
   const hunks = $derived(app.selectedHunks);
@@ -22,6 +24,12 @@
   });
 
   const proposalOf = (id: string) => app.proposals.find((p) => p.hunk.id === id);
+  const notes = $derived(row ? app.notesOf(row.repo, row.path) : []);
+  const hunkIds = $derived(new Set(hunks.map((h) => h.id)));
+  /** Notes of the file that fall in none of the hunks shown. */
+  const fileNotes = $derived(notes.filter((n) => !n.hunkId || !hunkIds.has(n.hunkId)));
+  const notesOfHunk = (id: string) => notes.filter((n) => n.hunkId === id);
+  const LEVEL_COLOR: Record<ReviewNote["level"], string> = { blocking: "var(--del)", warning: "var(--warn)", info: "var(--info)" };
 </script>
 
 <section class="diff" bind:this={root} class:focused={app.rvs.focus === "diff"} aria-label="Diff">
@@ -37,8 +45,14 @@
       {#if total}
         <span class="prog">{done} of {total} proposals reviewed</span>
       {/if}
+      <button class="mode" onclick={() => app.dispatch({ type: "rv-split" })} title="Before and after side by side, or one column">
+        {app.rvSplit ? "Side by side" : "Unified"} <Kbd k="V" />
+      </button>
       <span class="keys"><Kbd k="Tab" /> next hunk <Kbd k="Y" /> stage <Kbd k="U" /> unstage</span>
     </header>
+    {#each fileNotes as n (n.id)}
+      {@render note(n)}
+    {/each}
     {#if !hunks.length}
       <div class="allclear">
         <h3>No hunks to show</h3>
@@ -83,26 +97,51 @@
           </span>
         </div>
         {#if p?.why}<div class="why">{p.why}</div>{/if}
-        <DiffBlock hunk={h} />
-        {#if p?.note && !p.note.resolved}
-          <div class="note">
-            <span class="dot" style:--c="var(--del)"></span>
-            <div><small>{p.note.by} · blocking</small><span>{p.note.text}</span></div>
-            <button
-              class="btn"
-              onclick={(e) => {
-                e.stopPropagation();
-                void app.askFix(h.id);
-              }}
-            >
-              {#if p.note.busy}<span class="pulse">Fixing…</span>{:else}Ask to fix <Kbd k="F" />{/if}
-            </button>
-          </div>
-        {/if}
+        {#if app.rvSplit}<SplitDiff hunk={h} />{:else}<DiffBlock hunk={h} />{/if}
+        {#each notesOfHunk(h.id) as n (n.id)}
+          {@render note(n)}
+        {/each}
       </article>
     {/each}
   {/if}
 </section>
+
+{#snippet note(n: ReviewNote)}
+  <div class="note" class:resolved={n.resolved} data-note={n.id}>
+    <span class="dot" style:--c={n.resolved ? "var(--add)" : LEVEL_COLOR[n.level]}></span>
+    <div>
+      <small>{n.by} · {n.resolved ? "resolved" : n.level} · line {n.line}</small>
+      <span>{n.text}</span>
+    </div>
+    {#if !n.resolved}
+      <button
+        class="btn"
+        disabled={n.busy}
+        onclick={(e) => {
+          e.stopPropagation();
+          void app.askFix(n.id);
+        }}
+      >
+        {#if n.busy}<span class="pulse">Fixing…</span>{:else}Ask to fix <Kbd k="F" />{/if}
+      </button>
+      <button
+        class="btn"
+        onclick={(e) => {
+          e.stopPropagation();
+          void app.resolveNote(n.id, true);
+        }}>Resolve <Kbd k="Shift Y" /></button
+      >
+    {:else}
+      <button
+        class="btn"
+        onclick={(e) => {
+          e.stopPropagation();
+          void app.resolveNote(n.id, false);
+        }}>Reopen</button
+      >
+    {/if}
+  </div>
+{/snippet}
 
 <style>
   .diff {
@@ -209,6 +248,22 @@
   }
   .note .dot {
     margin-top: 6px;
+  }
+  .note.resolved {
+    opacity: 0.6;
+  }
+  .mode {
+    font-size: 12px;
+    color: var(--muted);
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 8px;
+  }
+  .mode:hover {
+    background: var(--hover);
+    color: var(--fg);
   }
   .note div {
     flex: 1;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { colorOfRepo } from "../lib/colors";
   import { tick } from "svelte";
   import { app } from "../lib/app.svelte";
   import { openAtEvent } from "../lib/contextmenu.svelte";
@@ -55,7 +56,7 @@
           </div>
         {/if}
         {#each groups(sec) as g (g.repo)}
-          <div class="repo">{g.repo}<span>{plural(g.files.length, "file", "files")}</span></div>
+          <div class="repo" style:--rc={colorOfRepo(app.space, g.repo)}><b><i class="rdot"></i>{g.repo}</b><span>{plural(g.files.length, "file", "files")}</span></div>
           {#each g.files as r (r.id)}
             {@const [dir, name] = split(r.path)}
             <button
@@ -165,6 +166,19 @@
     gap: 6px;
     align-items: center;
     flex-wrap: wrap;
+  }
+  .repo b {
+    font-weight: inherit;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: color-mix(in srgb, var(--rc) 75%, var(--faint));
+  }
+  .rdot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--rc);
   }
   .repo {
     display: flex;

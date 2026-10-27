@@ -1,5 +1,15 @@
 export type View = "code" | "review" | "agents";
-export type Overlay = "palette" | "quickopen" | "newspace" | "commit" | "composer" | "links" | "help" | "sheet" | null;
+export type Overlay =
+  | "palette"
+  | "quickopen"
+  | "newspace"
+  | "commit"
+  | "composer"
+  | "links"
+  | "help"
+  | "sheet"
+  | "settings"
+  | null;
 
 /** Everything that can happen in the shell. Keys, buttons and the command bar all produce these. */
 export type Action =
@@ -60,6 +70,11 @@ export type Action =
   | { type: "open-help" }
   | { type: "open-file"; space: number; file: string }
   | { type: "context-menu" } // Menu key / Shift F10: the right-click menu of the focused item
+  | { type: "find" } // Ctrl F: find in the open file
+  | { type: "toggle-terminal" } // Ctrl ` or T: the terminal panel
+  | { type: "new-terminal" } // Ctrl Shift `: one more terminal
+  | { type: "toggle-preview" } // V in the code view: Markdown preview
+  | { type: "open-settings" } // agent tiers: model and effort per harness
   // review view
   | { type: "rv-file"; delta: 1 | -1 } // J / K: next, previous file
   | { type: "rv-check"; delta: 1 | -1 } // Shift J / Shift K: next, previous check
@@ -72,7 +87,9 @@ export type Action =
   | { type: "rv-hunk-unstage" } // U
   | { type: "rv-run-all" } // R
   | { type: "rv-run-focused" } // Shift R
-  | { type: "rv-toggle-log" }; // O
+  | { type: "rv-toggle-log" } // O
+  | { type: "rv-split" } // V: side by side or unified diff
+  | { type: "rv-note-resolve" }; // Shift Y: resolve the note of the hunk
 
 /** The part of a KeyboardEvent the resolver reads. */
 export interface KeyLike {
@@ -127,6 +144,10 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
   const shift = !!e.shiftKey;
 
   if (ctrl && (k === "k" || k === "K")) return { type: "palette-toggle" };
+  // The terminal toggles from anywhere, the terminal itself included.
+  if (ctrl && !alt && (k === "`" || e.code === "Backquote") && (!c.overlay || c.overlay === "palette")) {
+    return shift ? { type: "new-terminal" } : { type: "toggle-terminal" };
+  }
   // The menu key works everywhere, even in a text field or the editor.
   if (k === "ContextMenu" || (shift && !ctrl && !alt && k === "F10")) return { type: "context-menu" };
   if (ctrl && !alt && (k === "p" || k === "P") && !c.overlay?.match(/^(newspace|commit|composer|links|help)$/)) {
@@ -206,7 +227,12 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
   }
   if (c.overlay === "help") return k === "?" ? { type: "close" } : null;
   // Confirmation and prompt sheets take their own keys.
-  if (c.overlay === "sheet") return null;
+  if (c.overlay === "sheet" || c.overlay === "settings") return null;
+
+  // In the editor, CodeMirror opens its own search panel on Ctrl F.
+  if (ctrl && !alt && !shift && (k === "f" || k === "F") && !c.overlay && c.view === "code" && !c.typing) {
+    return { type: "find" };
+  }
 
   if (c.typing) return null;
 
@@ -278,6 +304,12 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
       return { type: "toggle-window" };
     case "@":
       return { type: "open-composer" };
+    case "t":
+    case "T":
+      return { type: "toggle-terminal" };
+    case "v":
+    case "V":
+      return c.view === "code" ? { type: "toggle-preview" } : null;
     case "?":
       return { type: "open-help" };
     default:
@@ -307,10 +339,14 @@ export function resolveReviewKey(k: string, shift: boolean): Action | null {
     case "Tab":
       return { type: "rv-hunk", delta: shift ? -1 : 1 };
     case "y":
-    case "Y":
       return { type: "rv-hunk-stage" };
+    case "Y":
+      return shift ? { type: "rv-note-resolve" } : { type: "rv-hunk-stage" };
     case "u":
       return { type: "rv-hunk-unstage" };
+    case "v":
+    case "V":
+      return { type: "rv-split" };
     case "r":
       return { type: "rv-run-all" };
     case "R":

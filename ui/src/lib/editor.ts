@@ -7,6 +7,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { rust } from "@codemirror/lang-rust";
 import { sql } from "@codemirror/lang-sql";
 import { yaml } from "@codemirror/lang-yaml";
+import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
 import { HighlightStyle, bracketMatching, indentOnInput, syntaxHighlighting } from "@codemirror/language";
 import {
   Annotation,
@@ -201,6 +202,33 @@ const theme = EditorView.theme({
   ".cm-activeLineGutter": { backgroundColor: "transparent" },
   "&.cm-focused .cm-matchingBracket": { backgroundColor: "color-mix(in srgb, var(--space) 22%, transparent)" },
   ".cm-hunk": { fontFamily: "var(--ui)" },
+  // Find bar (Ctrl F)
+  ".cm-panels": { backgroundColor: "var(--panel)", color: "var(--fg)", zIndex: "3" },
+  ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--line)" },
+  ".cm-search": { fontFamily: "var(--ui)", fontSize: "12px", padding: "6px 12px", display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center" },
+  ".cm-search input, .cm-search button": { fontFamily: "var(--ui)", fontSize: "12px" },
+  ".cm-search .cm-textfield": {
+    background: "var(--raised)",
+    color: "var(--fg)",
+    border: "1px solid var(--line)",
+    borderRadius: "6px",
+    padding: "3px 8px",
+    outline: "none",
+  },
+  ".cm-search .cm-textfield:focus": { borderColor: "var(--space)" },
+  ".cm-search .cm-button": {
+    background: "var(--hover)",
+    backgroundImage: "none",
+    color: "var(--fg)",
+    border: "none",
+    borderRadius: "6px",
+    padding: "3px 10px",
+  },
+  ".cm-search label": { color: "var(--muted)", display: "inline-flex", gap: "4px", alignItems: "center" },
+  ".cm-search [name=close]": { color: "var(--faint)", fontSize: "16px", padding: "0 6px" },
+  ".cm-searchMatch": { backgroundColor: "color-mix(in srgb, var(--warn) 22%, transparent)", borderRadius: "2px" },
+  ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "color-mix(in srgb, var(--warn) 50%, transparent)" },
+  ".cm-selectionMatch": { backgroundColor: "color-mix(in srgb, var(--space) 14%, transparent)" },
 });
 
 const highlight = HighlightStyle.define([
@@ -248,7 +276,9 @@ export function createState(f: FileContent, onUserChange: (content: string) => v
       indentOnInput(),
       bracketMatching(),
       highlightActiveLine(),
-      keymap.of([...defaultKeymap, ...historyKeymap]),
+      search({ top: true }),
+      highlightSelectionMatches(),
+      keymap.of([...searchKeymap, ...defaultKeymap, ...historyKeymap]),
       languageExt(f.language),
       syntaxHighlighting(highlight),
       theme,

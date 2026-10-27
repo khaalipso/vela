@@ -44,6 +44,11 @@ export function buildPaletteItems(src: PaletteSource): PaletteItem[] {
     ["Toggle files", "B", { type: "toggle-files" }],
     ["Go to file", "Ctrl P", { type: "quick-open" }],
     ["Show the stack", "S", { type: "open-stack" }],
+    ["Terminal", "T", { type: "toggle-terminal" }],
+    ["New terminal", "Ctrl Shift `", { type: "new-terminal" }],
+    ["Find in file", "Ctrl F", { type: "find" }],
+    ["Markdown preview or source", "V", { type: "toggle-preview" }],
+    ["Agent tiers: model and effort per tool", "", { type: "open-settings" }],
     ["All shortcuts", "?", { type: "open-help" }],
   ];
   const items: PaletteItem[] = actions.map(([title, key, action]) => ({ sec: "Actions", title, key, action }));

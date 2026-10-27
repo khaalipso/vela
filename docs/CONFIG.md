@@ -100,15 +100,25 @@ low = "haiku"
 [agents.tiers.codex]
 high = "<model>"
 
+[agents.effort.claude]
+high = "max"                             # reasoning effort of the tier
+
 [agents.roles]
 planner = { tier = "high", harness = "claude" }
 tester = { harness = "opencode" }        # either key can be left out
+
+[agents.transport]
+opencode = "cli"                         # acp or cli
 ```
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `agents.tiers.<harness>.<high\|medium\|low>` | none | Model passed to that harness for the tier (`--model` / `-m`). Not set: no model flag, the harness picks its own default. opencode wants `provider/model`. |
-| `agents.roles.<role>.tier` | planner, reviewer, debugger `high`; developer `medium`; tester `low` | Tier of the role. |
+| `agents.effort.<harness>.<high\|medium\|low>` | none | Reasoning effort of the tier: `--effort` (Claude Code), `model_reasoning_effort` (Codex), `--variant` / `thought_level` (opencode). Not set: the harness default. |
+| `agents.transport.<harness>` | ACP when installed | `acp` or `cli`. See `docs/HARNESS.md`. |
+| `agents.roles.<role>.tier` | planner, reviewer, debugger, product, security `high`; developer `medium`; tester `low` | Tier of the role. |
 | `agents.roles.<role>.harness` | `claude` | Harness of the role. If it is not installed, the first installed one (claude, codex, opencode) is used. |
+
+The "Agent tiers" sheet of the app (Ctrl K, "Agent tiers") edits `agents.tiers` and `agents.effort` in the global layer; clearing a field removes the key.
 
 A request can override both: the composer's harness picker (`Shift Tab`) and tier (`Ctrl ↑` / `Ctrl ↓`). An agent asks for the layers of the first repo of its space.
