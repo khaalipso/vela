@@ -48,6 +48,7 @@
       hasQuestion: app.spaces.length > 0 && !!app.sd.question,
       filesOpen: app.filesOpen,
       inFiles: !!(e.target as HTMLElement | null)?.closest?.("[data-files]"),
+      inTerm: !!(e.target as HTMLElement | null)?.closest?.(".xterm"),
     });
     if (action) {
       e.preventDefault();

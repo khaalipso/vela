@@ -512,7 +512,7 @@ done
 "#;
 
 #[test]
-fn acp_runs_and_takes_an_answer_in_the_live_run() {
+fn acp_runs_and_grants_a_writer_its_permissions_without_asking() {
     let e = env();
     script(&e.bin, "opencode", FAKE_ACP);
     let m = manager_cfg(&e, "[agents.effort.opencode]\nmedium = \"high\"\n");
@@ -527,21 +527,7 @@ fn acp_runs_and_takes_an_answer_in_the_live_run() {
         &emit,
     )
     .unwrap();
-    // Wait for the permission question; the process stays alive meanwhile.
-    let end = std::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        let a = m.list(&e.vela, "refunds").unwrap().remove(0);
-        if a.status == AgentStatus::Waiting {
-            assert_eq!(a.question.as_deref(), Some("Allow rm -rf build?"));
-            assert_eq!(a.options, vec!["Allow once", "Reject"]);
-            assert!(m.is_live("refunds", &a.id));
-            break;
-        }
-        assert!(std::time::Instant::now() < end, "no question");
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    let id = m.list(&e.vela, "refunds").unwrap().remove(0).id;
-    m.answer(&e.vela, &e.space, &id, "yes", &emit).unwrap();
+    // A developer works in its own worktree: the permission is granted without asking.
     idle(&m);
     let a = m.list(&e.vela, "refunds").unwrap().remove(0);
     assert_eq!(a.status, AgentStatus::Done, "{a:?}");

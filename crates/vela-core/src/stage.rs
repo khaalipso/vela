@@ -66,6 +66,62 @@ pub fn unstage_hunk(space: &Space, hunk_id: &str) -> Result<()> {
     Err(Error::HunkNotFound(hunk_id.to_string()))
 }
 
+/// Stage several unstaged hunks with one diff of the space and one `git apply` per file.
+/// Returns the ids that were not found among the unstaged hunks.
+pub fn stage_hunks(space: &Space, hunk_ids: &[String]) -> Result<Vec<String>> {
+    let mut missing: Vec<String> = hunk_ids.to_vec();
+    for f in unstaged_files(space)? {
+        let picked: Vec<_> = f
+            .hunks
+            .iter()
+            .filter(|h| hunk_ids.contains(&h.hunk.id))
+            .collect();
+        if picked.is_empty() {
+            continue;
+        }
+        missing.retain(|id| !picked.iter().any(|h| &h.hunk.id == id));
+        let dir = repo_dir(space, &f.repo)?;
+        if picked.iter().any(|h| h.untracked) {
+            git(dir, &["add", "--", &f.path])?;
+            continue;
+        }
+        let body: String = picked.iter().map(|h| h.raw.as_str()).collect();
+        apply(dir, &[], &format!("{}{}", f.header, body))?;
+    }
+    Ok(missing)
+}
+
+/// Stage every change of several files: one `git add` per repo.
+pub fn stage_files(space: &Space, files: &[(String, String)]) -> Result<()> {
+    for (repo, paths) in by_repo(files) {
+        let mut args = vec!["add", "-A", "--"];
+        args.extend(paths.iter().map(String::as_str));
+        git(repo_dir(space, &repo)?, &args)?;
+    }
+    Ok(())
+}
+
+/// Unstage every staged change of several files: one `git restore` per repo.
+pub fn unstage_files(space: &Space, files: &[(String, String)]) -> Result<()> {
+    for (repo, paths) in by_repo(files) {
+        let mut args = vec!["restore", "--staged", "--"];
+        args.extend(paths.iter().map(String::as_str));
+        git(repo_dir(space, &repo)?, &args)?;
+    }
+    Ok(())
+}
+
+fn by_repo(files: &[(String, String)]) -> Vec<(String, Vec<String>)> {
+    let mut out: Vec<(String, Vec<String>)> = Vec::new();
+    for (repo, path) in files {
+        match out.iter_mut().find(|(r, _)| r == repo) {
+            Some((_, v)) => v.push(path.clone()),
+            None => out.push((repo.clone(), vec![path.clone()])),
+        }
+    }
+    out
+}
+
 /// Stage every change of one file (including deletion and untracked).
 pub fn stage_file(space: &Space, repo: &str, path: &str) -> Result<()> {
     git(repo_dir(space, repo)?, &["add", "-A", "--", path])?;

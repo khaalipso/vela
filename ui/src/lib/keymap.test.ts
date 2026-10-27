@@ -246,9 +246,10 @@ describe("review view", () => {
     expect(r("K", { shiftKey: true })).toEqual({ type: "rv-check", delta: -1 });
   });
 
-  it("Space stages the file, Shift A and Shift U do all", () => {
+  it("Space stages the file, Shift A approves everything, Shift U unstages all, M comments", () => {
     expect(r(" ")).toEqual({ type: "rv-toggle-file" });
-    expect(r("A", { shiftKey: true })).toEqual({ type: "rv-stage-all" });
+    expect(r("A", { shiftKey: true })).toEqual({ type: "rv-approve-all" });
+    expect(r("m")).toEqual({ type: "rv-comment" });
     expect(r("U", { shiftKey: true })).toEqual({ type: "rv-unstage-all" });
   });
 

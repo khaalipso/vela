@@ -75,6 +75,38 @@ export interface ReviewNote {
   fixer?: string | null;
 }
 
+/** A comment of yours on a line of the diff, and the answers of the agent it went to. */
+export interface ReviewComment {
+  id: string;
+  repo: string;
+  path: string;
+  line: number;
+  /** The hunk it was left on; empty when none. */
+  hunkId: string;
+  role: AgentRole;
+  /** The agent answering the thread. */
+  agent: string;
+  /** e.g. "Reviewer · Claude Code". */
+  by: string;
+  resolved: boolean;
+  /** The agent is writing its answer. */
+  busy: boolean;
+  /** The agent asks something (a permission): answer it in the agents view. */
+  waiting: boolean;
+  messages: { from: "you" | "agent"; text: string }[];
+}
+
+/** Where a new comment goes and what it says. */
+export interface NewComment {
+  repo: string;
+  path: string;
+  line: number;
+  hunkId: string;
+  text: string;
+  /** The reviewer answers; the developer answers and may change the code. */
+  role: "reviewer" | "developer";
+}
+
 /** Model and reasoning effort of one tier of a harness; null is the harness default. */
 export interface TierSetting {
   tier: Tier;
@@ -303,6 +335,11 @@ export interface Backend {
   /** Stage every change of one file (tracked, deleted or untracked). */
   stageFile(spaceId: string, repo: string, path: string): Promise<void>;
   unstageFile(spaceId: string, repo: string, path: string): Promise<void>;
+  /** Stage several files at once (one git call per repo). */
+  stageFiles(spaceId: string, files: FileRef[]): Promise<void>;
+  unstageFiles(spaceId: string, files: FileRef[]): Promise<void>;
+  /** Accept several hunks at once; returns why the ones that did not apply failed. */
+  acceptHunks(spaceId: string, hunkIds: string[]): Promise<string[]>;
   readFile(spaceId: string, repo: string, path: string): Promise<FileContent>;
   writeFile(spaceId: string, repo: string, path: string, content: string): Promise<void>;
 
@@ -327,6 +364,13 @@ export interface Backend {
   askFix(spaceId: string, noteId: string): Promise<void>;
   /** Mark a note resolved, or open it again. */
   resolveNote(spaceId: string, noteId: string, resolved: boolean): Promise<void>;
+  /** Your comment threads, with the answers of the agents. */
+  comments(spaceId: string): Promise<ReviewComment[]>;
+  /** Comment a line: a reviewer answers, or a developer answers and changes the code. */
+  addComment(spaceId: string, c: NewComment): Promise<void>;
+  replyComment(spaceId: string, thread: string, text: string): Promise<void>;
+  resolveComment(spaceId: string, thread: string, resolved: boolean): Promise<void>;
+  deleteComment(spaceId: string, thread: string): Promise<void>;
   /** Model and effort of each tier, per harness. */
   agentTiers(): Promise<HarnessTiers[]>;
   /** Set one tier of a harness; null or "" goes back to the harness default. */
@@ -1105,6 +1149,74 @@ export class MockBackend implements Backend {
     return structuredClone([...this.sp(spaceId).notes.values()].map((n) => n.note));
   }
 
+  private threads = new Map<string, ReviewComment[]>();
+
+  async comments(spaceId: string): Promise<ReviewComment[]> {
+    return structuredClone(this.threads.get(spaceId) ?? []);
+  }
+
+  /** The demo agent answers after a moment. */
+  private answerLater(spaceId: string, t: ReviewComment, asked: string) {
+    t.busy = true;
+    this.later(900, () => {
+      t.busy = false;
+      t.messages.push({
+        from: "agent",
+        text:
+          t.role === "developer"
+            ? `Done: I changed ${t.path} as asked ("${asked.slice(0, 60)}"). The change is waiting in Proposed.`
+            : `Good point. Line ${t.line} of ${t.path} does what the hunk says, but "${asked.slice(0, 60)}" deserves a test: the error path is not covered.`,
+      });
+      this.emit(spaceId);
+    });
+  }
+
+  async addComment(spaceId: string, c: NewComment): Promise<void> {
+    if (!c.text.trim()) throw new Error("write the comment first");
+    const list = this.threads.get(spaceId) ?? [];
+    const t: ReviewComment = {
+      id: `c${list.length + 1}`,
+      repo: c.repo,
+      path: c.path,
+      line: c.line,
+      hunkId: c.hunkId,
+      role: c.role,
+      agent: `${spaceId}-${c.role}-c${list.length + 1}`,
+      by: c.role === "developer" ? "Developer · Claude Code" : "Reviewer · Codex",
+      resolved: false,
+      busy: true,
+      waiting: false,
+      messages: [{ from: "you", text: c.text.trim() }],
+    };
+    this.threads.set(spaceId, [...list, t]);
+    this.emit(spaceId);
+    this.answerLater(spaceId, t, c.text.trim());
+  }
+
+  async replyComment(spaceId: string, thread: string, text: string): Promise<void> {
+    const t = (this.threads.get(spaceId) ?? []).find((x) => x.id === thread);
+    if (!t) throw new Error("this comment is gone");
+    if (t.busy) throw new Error(`${t.agent} is still working`);
+    t.messages.push({ from: "you", text: text.trim() });
+    t.resolved = false;
+    this.emit(spaceId);
+    this.answerLater(spaceId, t, text.trim());
+  }
+
+  async resolveComment(spaceId: string, thread: string, resolved: boolean): Promise<void> {
+    const t = (this.threads.get(spaceId) ?? []).find((x) => x.id === thread);
+    if (t) t.resolved = resolved;
+    this.emit(spaceId);
+  }
+
+  async deleteComment(spaceId: string, thread: string): Promise<void> {
+    this.threads.set(
+      spaceId,
+      (this.threads.get(spaceId) ?? []).filter((x) => x.id !== thread),
+    );
+    this.emit(spaceId);
+  }
+
   async askAgent(spaceId: string, role: AgentRole, prompt: string, opts?: AskOptions): Promise<Agent> {
     const s = this.sp(spaceId);
     const tool = opts?.harness ?? toolForRole(role);
@@ -1599,6 +1711,20 @@ export class MockBackend implements Backend {
       if (!s.baseStaged.some((x) => x.repo === repo && x.path === path)) s.baseStaged.push({ repo, path });
     }
     this.emit(spaceId);
+  }
+
+  async stageFiles(spaceId: string, files: FileRef[]): Promise<void> {
+    for (const f of files) await this.stageFile(spaceId, f.repo, f.path);
+  }
+
+  async unstageFiles(spaceId: string, files: FileRef[]): Promise<void> {
+    for (const f of files) await this.unstageFile(spaceId, f.repo, f.path);
+  }
+
+  async acceptHunks(spaceId: string, hunkIds: string[]): Promise<string[]> {
+    const failed: string[] = [];
+    for (const id of hunkIds) await this.stageHunk(spaceId, id).catch((e: unknown) => failed.push(e instanceof Error ? e.message : String(e)));
+    return failed;
   }
 
   async unstageFile(spaceId: string, repo: string, path: string): Promise<void> {
@@ -2160,6 +2286,15 @@ export class TauriBackend implements Backend {
   unstageFile(spaceId: string, repo: string, path: string) {
     return call<void>("unstage_file", { spaceId, repo, path });
   }
+  stageFiles(spaceId: string, files: FileRef[]) {
+    return call<void>("stage_files", { spaceId, files: files.map((f) => [f.repo, f.path]) });
+  }
+  unstageFiles(spaceId: string, files: FileRef[]) {
+    return call<void>("unstage_files", { spaceId, files: files.map((f) => [f.repo, f.path]) });
+  }
+  acceptHunks(spaceId: string, hunkIds: string[]) {
+    return call<string[]>("accept_hunks", { spaceId, hunkIds });
+  }
   async readFile(spaceId: string, repo: string, path: string): Promise<FileContent> {
     const content = await call<string>("read_file", { spaceId, repo, path });
     return { repo, path, content, firstLine: 1, language: languageOf(path) };
@@ -2215,6 +2350,21 @@ export class TauriBackend implements Backend {
   }
   async resolveNote(spaceId: string, noteId: string, resolved: boolean) {
     await call("resolve_note", { spaceId, noteId, resolved });
+  }
+  comments(spaceId: string) {
+    return call<ReviewComment[]>("comments", { spaceId });
+  }
+  async addComment(spaceId: string, comment: NewComment) {
+    await call("add_comment", { spaceId, comment });
+  }
+  async replyComment(spaceId: string, thread: string, text: string) {
+    await call("reply_comment", { spaceId, thread, text });
+  }
+  async resolveComment(spaceId: string, thread: string, resolved: boolean) {
+    await call("resolve_comment", { spaceId, thread, resolved });
+  }
+  async deleteComment(spaceId: string, thread: string) {
+    await call("delete_comment", { spaceId, thread });
   }
   agentTiers() {
     return call<HarnessTiers[]>("agent_tiers");

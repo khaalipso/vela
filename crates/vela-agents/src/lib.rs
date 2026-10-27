@@ -3,6 +3,7 @@
 //! - [`driver`]: the [`AgentDriver`] contract, [`RunSpec`], [`RunHandle`] and the process plumbing.
 //! - [`claude`], [`codex`], [`opencode`]: one CLI driver and one stream parser each.
 //! - [`acp`]: the ACP client driver, used when the harness has an ACP server.
+//! - [`comments`]: review comments of the user, answered by an agent in a thread.
 //! - [`notes`]: reviewer and security findings as notes on the hunks.
 //! - [`event`]: the normalized [`AgentEvent`] every driver produces.
 //! - [`tiers`]: role and tier to harness and model, from the layered config.
@@ -15,6 +16,7 @@
 pub mod acp;
 pub mod claude;
 pub mod codex;
+pub mod comments;
 pub mod detect;
 pub mod driver;
 pub mod event;

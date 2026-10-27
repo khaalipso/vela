@@ -252,3 +252,75 @@ export function splitRows(h: Pick<Hunk, "lines">): SplitRow[] {
   flush();
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Optimistic updates: the lists move at once, the backend catches up behind.
+// ---------------------------------------------------------------------------
+
+export interface FileKeyed {
+  repo: string;
+  path: string;
+}
+
+const same = (a: FileKeyed, b: FileKeyed) => a.repo === b.repo && a.path === b.path;
+
+/** What staging whole files does to the status and the hunks, before git answers. */
+export function stageLocally(status: FileChange[], hunks: Hunk[], files: FileKeyed[]): { status: FileChange[]; hunks: Hunk[] } {
+  const hit = (f: FileKeyed) => files.some((x) => same(x, f));
+  return {
+    status: status.map((c) =>
+      hit(c) && c.unstaged
+        ? {
+            ...c,
+            staged: c.staged ?? (c.unstaged === "untracked" ? "added" : c.unstaged),
+            unstaged: null,
+          }
+        : c,
+    ),
+    hunks: hunks.map((h) => (hit(h) && h.state === "pending" && h.origin.type === "you" ? { ...h, state: "staged" } : h)),
+  };
+}
+
+/** What unstaging whole files does, before git answers. */
+export function unstageLocally(status: FileChange[], hunks: Hunk[], files: FileKeyed[]): { status: FileChange[]; hunks: Hunk[] } {
+  const hit = (f: FileKeyed) => files.some((x) => same(x, f));
+  return {
+    status: status.map((c) =>
+      hit(c) && c.staged
+        ? {
+            ...c,
+            unstaged: c.unstaged ?? (c.staged === "added" ? "untracked" : c.staged),
+            staged: null,
+          }
+        : c,
+    ),
+    hunks: hunks.map((h) => (hit(h) && h.state === "staged" ? { ...h, state: "pending", origin: { type: "you" } } : h)),
+  };
+}
+
+/** What accepting hunks does: they turn staged, and their files show in the staged list. */
+export function acceptLocally(status: FileChange[], hunks: Hunk[], ids: string[]): { status: FileChange[]; hunks: Hunk[] } {
+  const picked = hunks.filter((h) => ids.includes(h.id));
+  const out = [...status];
+  for (const h of picked) {
+    const i = out.findIndex((c) => same(c, h));
+    if (i < 0)
+      out.push({
+        repo: h.repo,
+        path: h.path,
+        staged: "modified",
+        unstaged: null,
+      });
+    else if (!out[i].staged)
+      out[i] = {
+        ...out[i],
+        staged: out[i].unstaged === "untracked" ? "added" : (out[i].unstaged ?? "modified"),
+      };
+  }
+  // A file of yours whose every pending hunk is accepted leaves the "Not staged" list.
+  const left = (c: FileChange) => hunks.some((h) => same(h, c) && h.state === "pending" && h.origin.type === "you" && !ids.includes(h.id));
+  return {
+    status: out.map((c) => (c.unstaged && picked.some((h) => same(h, c)) && !left(c) ? { ...c, unstaged: null } : c)),
+    hunks: hunks.map((h) => (ids.includes(h.id) ? { ...h, state: "staged" } : h)),
+  };
+}

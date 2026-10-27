@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use vela_core::{Error, Result};
 
-use crate::driver::{AgentDriver, LineParser, RunHandle, RunSpec, launch, locate};
+use crate::driver::{AgentDriver, LineParser, RunHandle, RunSpec, launch_with_env, locate};
 use crate::event::AgentEvent;
 use crate::util::{rel_path, shorten};
 
@@ -73,6 +73,9 @@ pub fn args(spec: &RunSpec) -> Vec<String> {
     a
 }
 
+/// The permissions of a writer run, as opencode reads them from `OPENCODE_PERMISSION`.
+pub const WRITER_PERMISSION: &str = r#"{"edit":"allow","bash":"allow","webfetch":"allow"}"#;
+
 impl AgentDriver for OpencodeDriver {
     fn harness(&self) -> &'static str {
         "opencode"
@@ -84,7 +87,13 @@ impl AgentDriver for OpencodeDriver {
             .as_deref()
             .ok_or_else(|| Error::Invalid("opencode is not installed".to_string()))?;
         let parser = OpencodeParser::new(&run.cwd, run.model.as_deref());
-        launch(bin, &args(&run), None, &run.cwd, Box::new(parser))
+        // A writer works in its own worktree: edits and commands there need no question.
+        let env: &[(&str, &str)] = if run.read_only {
+            &[]
+        } else {
+            &[("OPENCODE_PERMISSION", WRITER_PERMISSION)]
+        };
+        launch_with_env(bin, &args(&run), env, None, &run.cwd, Box::new(parser))
     }
 }
 

@@ -690,6 +690,154 @@ impl AgentManager {
         Ok(entry.agent)
     }
 
+    /// A review comment of the user: a new thread answered by a reviewer, or by a developer
+    /// (the agent that wrote the hunk when it can be resumed, else a new one).
+    #[allow(clippy::too_many_arguments)]
+    pub fn comment(
+        self: &Arc<Self>,
+        vela: &Vela,
+        space: &Space,
+        at: (&str, &str, u32, &str),
+        code: &str,
+        text: &str,
+        role: AgentRole,
+        author: Option<&str>,
+        emit: &Emit,
+    ) -> Result<crate::comments::Thread> {
+        let (repo, path, line, hunk_id) = at;
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(Error::Invalid("write the comment first".to_string()));
+        }
+        let role = if role == AgentRole::Developer {
+            AgentRole::Developer
+        } else {
+            AgentRole::Reviewer
+        };
+        let prompt = crate::comments::first_prompt(role, repo, path, line, code, text);
+        let resumable = author
+            .filter(|_| role == AgentRole::Developer)
+            .and_then(|a| registry::find(vela, &space.id, a).ok())
+            .filter(|e| {
+                !e.read_only
+                    && e.agent.session.is_some()
+                    && e.agent.status != AgentStatus::Working
+                    && !self.is_live(&space.id, &e.agent.id)
+            });
+        let (agent, log_from) = match resumable {
+            Some(e) => {
+                let from = registry::read_log(vela, &space.id, &e.agent.id)
+                    .map(|l| l.len())
+                    .unwrap_or(0);
+                (
+                    self.follow_up(vela, space, &e.agent.id, &prompt, emit)?,
+                    from,
+                )
+            }
+            None => (
+                self.ask(
+                    vela,
+                    space,
+                    AskRequest {
+                        role,
+                        prompt,
+                        harness: None,
+                        tier: None,
+                    },
+                    emit,
+                )?,
+                0,
+            ),
+        };
+        let mut list = crate::comments::load(vela, &space.id);
+        let thread = crate::comments::Thread {
+            id: crate::comments::next_id(&list),
+            repo: repo.to_string(),
+            path: path.to_string(),
+            line,
+            hunk_id: hunk_id.to_string(),
+            role,
+            agent: agent.id,
+            turns: vec![crate::comments::Turn {
+                text: text.to_string(),
+                log_from,
+            }],
+            resolved: false,
+            created: registry::now(),
+        };
+        list.push(thread.clone());
+        crate::comments::save(vela, &space.id, &list)?;
+        Ok(thread)
+    }
+
+    /// The user answers in a thread: a follow up of the agent of the thread.
+    pub fn reply_comment(
+        self: &Arc<Self>,
+        vela: &Vela,
+        space: &Space,
+        thread_id: &str,
+        text: &str,
+        emit: &Emit,
+    ) -> Result<()> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(Error::Invalid("write the answer first".to_string()));
+        }
+        let mut list = crate::comments::load(vela, &space.id);
+        let t = list
+            .iter_mut()
+            .find(|t| t.id == thread_id)
+            .ok_or_else(|| Error::Invalid("this comment is gone".to_string()))?;
+        let from = registry::read_log(vela, &space.id, &t.agent)
+            .map(|l| l.len())
+            .unwrap_or(0);
+        let resumable = registry::find(vela, &space.id, &t.agent)
+            .ok()
+            .is_some_and(|e| e.agent.session.is_some());
+        if resumable {
+            self.follow_up(vela, space, &t.agent, text, emit)?;
+            t.turns.push(crate::comments::Turn {
+                text: text.to_string(),
+                log_from: from,
+            });
+        } else {
+            // The agent never started a session: a new one takes the whole thread.
+            let mut prompt = crate::comments::first_prompt(
+                t.role,
+                &t.repo,
+                &t.path,
+                t.line,
+                "",
+                &t.turns[0].text,
+            );
+            for turn in &t.turns[1..] {
+                prompt.push_str(&format!("\n\nThe user added: {}", turn.text));
+            }
+            prompt.push_str(&format!("\n\nThe user added: {text}"));
+            let a = self.ask(
+                vela,
+                space,
+                AskRequest {
+                    role: t.role,
+                    prompt,
+                    harness: None,
+                    tier: None,
+                },
+                emit,
+            )?;
+            t.agent = a.id;
+            t.turns.push(crate::comments::Turn {
+                text: text.to_string(),
+                log_from: 0,
+            });
+            for turn in t.turns.iter_mut() {
+                turn.log_from = 0;
+            }
+        }
+        t.resolved = false;
+        crate::comments::save(vela, &space.id, &list)
+    }
+
     /// Ask for a fix of a reviewer note. The agent that proposed the hunk gets it back when it
     /// can be resumed; otherwise a new developer agent starts with the note as the request.
     pub fn ask_fix(

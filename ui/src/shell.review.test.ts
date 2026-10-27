@@ -96,7 +96,7 @@ describe("review: files and keys", () => {
     expect($(".commit .line")?.textContent).toContain("1 file");
   });
 
-  it("Space on a staged file unstages it; Shift A stages everything, Shift U unstages everything", async () => {
+  it("Space on a staged file unstages it; Stage all stages everything, Shift U unstages everything", async () => {
     press("k");
     await settle();
     press("j");
@@ -106,7 +106,7 @@ describe("review: files and keys", () => {
     press(" ");
     await vi.waitFor(() => expect(rows("staged")).toEqual([]));
     expect(rows("unstaged").length).toBe(1);
-    press("A", { shiftKey: true });
+    $("[data-section='unstaged'] .sa")!.click();
     await vi.waitFor(() => expect(rows("staged").length).toBe(1));
     press("U", { shiftKey: true });
     await vi.waitFor(() => expect(rows("staged")).toEqual([]));
@@ -251,10 +251,45 @@ describe("review: checks", () => {
 });
 
 describe("review: narrow widths", () => {
-  it("the file column width is a variable the drag handle sets (34% by default)", () => {
+  it("the file column width is a variable the drag handle sets (30% between 300 and 420 px by default)", () => {
     const rv = $(".rv")!;
-    expect(rv.getAttribute("style")).toContain("--fw: 34%");
+    expect(rv.getAttribute("style")).toContain("--fw: clamp(300px, 30%, 420px)");
     app.rvWidth = 420;
     return tick().then(() => expect($(".rv")!.getAttribute("style")).toContain("--fw: 420px"));
+  });
+});
+
+describe("review: approve all and comments", () => {
+  it("M opens a comment box on the hunk; Enter sends it and the agent answers in the thread", async () => {
+    const p = app.rows.find((r) => r.section === "proposed")!;
+    app.rvSelect(p.id);
+    await settle();
+    press("m");
+    await settle();
+    const box = $(".thread textarea") as HTMLTextAreaElement;
+    expect(box).toBeTruthy();
+    box.value = "Why not a timing-safe compare?";
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(app.sd.comments.length).toBe(1));
+    expect(app.commentDraft).toBeNull();
+    await vi.waitFor(() => expect($$(".thread .msg").map((m) => m.querySelector("b")?.textContent)).toEqual(["You", "Reviewer"]));
+    expect($(".thread .msg p")?.textContent).toBe("Why not a timing-safe compare?");
+  });
+
+  it("Shift A stages your edits and accepts every proposal at once", async () => {
+    const f = (await backend.listFiles("stripe"))[0];
+    const { content } = await backend.readFile("stripe", f.repo, f.path);
+    await backend.writeFile("stripe", f.repo, f.path, content + "\n// again");
+    await vi.waitFor(() => expect(rows("unstaged").length).toBe(1));
+    expect(app.pending.length).toBeGreaterThan(0);
+    press("A", { shiftKey: true });
+    // The lists move before the backend answers.
+    await tick();
+    expect(rows("unstaged")).toEqual([]);
+    expect(rows("proposed")).toEqual([]);
+    await vi.waitFor(() => expect(app.pending.length).toBe(0));
+    expect(rows("staged").length).toBeGreaterThan(1);
+    expect($(".bar.done")?.textContent).toContain("All reviewed");
   });
 });

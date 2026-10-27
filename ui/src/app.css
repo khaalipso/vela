@@ -301,3 +301,16 @@ textarea.field {
     scroll-behavior: auto !important;
   }
 }
+
+/* Syntax colors of diffs (lib/diffsyntax.ts), the same as the editor's. */
+.tk-kw { color: var(--info); }
+.tk-atom { color: var(--warn); }
+.tk-str { color: var(--add); }
+.tk-cmt { color: var(--faint); font-style: italic; }
+.tk-type { color: var(--syn-alt); }
+.tk-fn { color: var(--syn-fn); }
+.tk-prop { color: var(--syn-key); }
+.tk-attr { color: var(--syn-attr); }
+.tk-tag { color: var(--syn-tag); }
+.tk-meta { color: var(--syn-meta); }
+.tk-head { font-weight: 700; }

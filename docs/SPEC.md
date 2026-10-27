@@ -42,7 +42,13 @@ An agent works in its own worktree. Its proposals are what it changed since the 
 
 ## Review view and checks
 
-The Review view has three zones: files (Staged first and big, then Not staged, then Proposed by agents), the diff of the selected file with every hunk and its state, and the Checks panel (hooks, lint, types, optional tests, your own scripts) with live status and logs. Checks run in your worktree on the staged set, are cached by the tree of the index, and rerun by themselves when the staged set changes (`checks.auto`). Detection, config layers and keys: `docs/CONFIG.md`. Keys in the view: `J` `K` files, `Space` stage or unstage the file, `Shift A` / `Shift U` all, `Enter` focus the diff, `Tab` / `Shift Tab` hunks, `Y` stage / accept, `U` unstage, `N` reject a proposal (your own edits are never discarded), `R` run all checks, `Shift J` / `Shift K` pick a check, `Shift R` run it, `O` its log.
+The Review view has the files on the left (Staged, Not staged, Proposed by agents) with the Checks panel under them, and the diff of the selected file on the right, which always gets the rest of the width; when the view is narrower than 760 px the list goes on top and the diff under it. The Checks panel (hooks, lint, types, optional tests, your own scripts) shows live status and logs. Checks run in your worktree on the staged set, are cached by the tree of the index, and rerun by themselves when the staged set changes (`checks.auto`). Detection, config layers and keys: `docs/CONFIG.md`. Keys in the view: `J` `K` files, `Space` stage, unstage or accept the file, `Shift A` approve all (stage your edits and accept every proposal, in one git call per repo), `Shift U` unstage all, `Enter` focus the diff, `Tab` / `Shift Tab` hunks, `Y` stage / accept, `U` unstage, `N` reject a proposal (your own edits are never discarded), `M` comment, `R` run all checks, `Shift J` / `Shift K` pick a check, `Shift R` run it, `O` its log. Each section has its button (Stage all, Unstage all, Accept all), each file row a hover button, each hunk its buttons. The lists move at once and git catches up behind. Diffs show the old and new line numbers and the syntax colors of the editor.
+
+Comments: click a line number (or `M` on a hunk) to comment a line. The comment goes to a reviewer, who answers without changing anything, or to a developer, who answers and changes the code (the agent that wrote the hunk when it can be resumed, else a new one; its changes come back as proposals). The answer shows in a thread under the hunk; answering in the thread is a follow up of the same agent. Threads are kept in `VELA_HOME/spaces/<space>.comments.json`, the answers are read back from the agent's log.
+
+Agents that write (developer, debugger, tester) work in their own worktree, so they get their permissions without asking: Claude Code runs with `acceptEdits` and edits and shell commands allowed, opencode with `OPENCODE_PERMISSION` allowing edits and commands, ACP permission requests are granted, Codex keeps `workspace-write`. Read only roles are unchanged.
+
+`Ctrl W` (`Cmd W`) closes the file tab of the editor, never the window: on macOS the menu bar has no "Close Window" item.
 
 The composer's gate lists the results of these checks (a failing one needs an override). If every enabled hook check passed on the exact index tree and `checks.skip_hooks_on_commit_if_passed` is on, the commit runs with `--no-verify` and carries `Vela-Checks: <ids> passed on <short tree>`.
 
@@ -90,6 +96,8 @@ Before a commit, run in parallel on the staged diff only: reviewer agent (non in
 | `J` `K` | Next, previous proposal |
 | `Y` `N` `E` `U` | Accept, reject, accept and edit, undo |
 | `F` | Ask the author to fix the reviewer note (`Shift Y` resolves it) |
+| `M` | Review: comment the hunk under the cursor, a reviewer or a developer agent answers |
+| `Ctrl W` | Close the file tab of the editor |
 | `V` | Code view: Markdown preview or source. Review: before and after side by side, or unified |
 | `Ctrl F` | Find (and replace) in the open file, or in the Markdown preview |
 | `T`, `Ctrl \`` | Terminal panel; `Ctrl Shift \`` opens one more |

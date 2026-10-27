@@ -591,6 +591,16 @@ impl Session {
                 })
                 .collect();
             names.sort();
+            // An agent that writes works in its own worktree: it may change it without asking.
+            if !self.spec.read_only
+                && let Some(opt) = pick_option(&options, "yes")
+            {
+                self.shared.send(&json!({
+                    "jsonrpc": "2.0", "id": id,
+                    "result": { "outcome": { "outcome": "selected", "optionId": opt } }
+                }));
+                return;
+            }
             if let Ok(mut g) = self.shared.pending.lock() {
                 *g = Some(Pending { id, options });
             }

@@ -179,7 +179,9 @@ fn claude_args() {
             "stream-json",
             "--verbose",
             "--permission-mode",
-            "acceptEdits"
+            "acceptEdits",
+            "--allowed-tools",
+            "Read,Grep,Glob,LS,Edit,Write,MultiEdit,NotebookEdit,Bash,WebFetch,WebSearch,TodoWrite,Task"
         ]
     );
     s.model = Some("opus".into());

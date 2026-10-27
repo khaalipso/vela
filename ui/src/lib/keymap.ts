@@ -79,13 +79,17 @@ export type Action =
   | { type: "open-branch-settings" } // how new branches are named
   | { type: "agent-move"; delta: 1 | -1 } // J / K in the agents view
   | { type: "change-move"; delta: 1 | -1 } // Ctrl Alt Down / Up in the code view: next, previous change of yours
+  | { type: "noop" } // a key taken from the browser that does nothing here
+  | { type: "close-tab" } // Ctrl W: close the file tab shown in the editor
   | { type: "toggle-rail" } // Ctrl B: dock or hide the spaces bar (hidden: it floats in on the left edge)
   | { type: "prs-refresh" } // R in the pull requests view
   // review view
   | { type: "rv-file"; delta: 1 | -1 } // J / K: next, previous file
   | { type: "rv-check"; delta: 1 | -1 } // Shift J / Shift K: next, previous check
   | { type: "rv-toggle-file" } // Space: stage or unstage the selected file
-  | { type: "rv-stage-all" } // Shift A
+  | { type: "rv-stage-all" } // stage every file of yours
+  | { type: "rv-comment" } // M: comment the hunk under the cursor, an agent answers
+  | { type: "rv-approve-all" } // Shift A: stage your edits and accept every proposal
   | { type: "rv-unstage-all" } // Shift U
   | { type: "rv-focus-diff" } // Enter
   | { type: "rv-hunk"; delta: 1 | -1 } // Tab / Shift Tab
@@ -119,6 +123,8 @@ export interface KeyContext {
   filesOpen?: boolean;
   /** Focus is inside the file tree drawer, which handles its own keys. */
   inFiles?: boolean;
+  /** Focus is in a terminal, where Ctrl W deletes a word. */
+  inTerm?: boolean;
 }
 
 /** The part of an element `isTyping` reads. */
@@ -153,6 +159,10 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
   if (ctrl && !alt && (k === "t" || k === "T")) return { type: "palette-toggle" };
   if (ctrl && !alt && (k === "k" || k === "K")) {
     return c.overlay === "composer" ? { type: "close" } : { type: "open-composer" };
+  }
+  // Cmd/Ctrl W closes the editor tab, never the window (the editor included).
+  if (ctrl && !alt && !shift && (k === "w" || k === "W") && !c.inTerm) {
+    return !c.overlay && c.view === "code" ? { type: "close-tab" } : { type: "noop" };
   }
   if (ctrl && !alt && !shift && (k === "b" || k === "B") && (!c.overlay || c.overlay === "palette")) {
     return { type: "toggle-rail" };
@@ -350,7 +360,7 @@ export function resolveReviewKey(k: string, shift: boolean): Action | null {
     case " ":
       return { type: "rv-toggle-file" };
     case "A":
-      return { type: "rv-stage-all" };
+      return { type: "rv-approve-all" };
     case "U":
       return { type: "rv-unstage-all" };
     case "Enter":
@@ -373,6 +383,9 @@ export function resolveReviewKey(k: string, shift: boolean): Action | null {
     case "o":
     case "O":
       return { type: "rv-toggle-log" };
+    case "m":
+    case "M":
+      return { type: "rv-comment" };
     default:
       return null;
   }

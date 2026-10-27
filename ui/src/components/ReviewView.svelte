@@ -4,7 +4,7 @@
   import ReviewDiff from "./ReviewDiff.svelte";
   import ReviewFiles from "./ReviewFiles.svelte";
 
-  const MIN = 300;
+  const MIN = 280;
   let root: HTMLDivElement | undefined = $state();
 
   // Drag the handle to resize the file column (never below 300 px, never over 60%).
@@ -31,25 +31,49 @@
   }
 </script>
 
-<div class="rv" bind:this={root} style:--fw={app.rvWidth ? `${app.rvWidth}px` : "34%"}>
-  <ReviewFiles />
-  <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-  <div class="handle" role="separator" aria-orientation="vertical" aria-label="Resize the file list" tabindex="0" onpointerdown={drag} onkeydown={nudge}></div>
-  <ReviewDiff />
-  <ChecksPanel />
+<div class="wrap">
+  <div class="rv" bind:this={root} style:--fw={app.rvWidth ? `${app.rvWidth}px` : "clamp(300px, 30%, 420px)"}>
+    <div class="side">
+      <ReviewFiles />
+      <ChecksPanel />
+    </div>
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+    <div class="handle" role="separator" aria-orientation="vertical" aria-label="Resize the file list" tabindex="0" onpointerdown={drag} onkeydown={nudge}></div>
+    <ReviewDiff />
+  </div>
 </div>
 
 <style>
+  .wrap {
+    height: 100%;
+    container-type: inline-size;
+  }
+  /* Files and checks on the left, the diff takes the rest: it never gets squeezed. */
   .rv {
     height: 100%;
     display: grid;
-    grid-template-columns: minmax(300px, var(--fw)) 6px minmax(0, 1fr) 300px;
+    grid-template-columns: minmax(280px, var(--fw)) 6px minmax(0, 1fr);
     gap: 6px;
     padding: 12px;
     box-sizing: border-box;
   }
   .rv > :global(*) {
     min-height: 0;
+  }
+  .side {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    min-height: 0;
+  }
+  .side > :global(.files) {
+    flex: 1 1 auto;
+    min-height: 120px;
+  }
+  .side > :global(.checks) {
+    flex: 0 1 auto;
+    max-height: 45%;
   }
   .handle {
     cursor: col-resize;
@@ -61,16 +85,17 @@
     background: var(--line);
     outline: none;
   }
-  @media (max-width: 1000px) {
+  /* Narrow: the list on top, the diff under it, each scrolling on its own. */
+  @container (max-width: 760px) {
     .rv {
-      height: auto;
       grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: minmax(0, 42%) minmax(0, 1fr);
     }
     .handle {
       display: none;
     }
-    .rv > :global(*) {
-      max-height: none;
+    .side > :global(.checks) {
+      display: none;
     }
   }
 </style>

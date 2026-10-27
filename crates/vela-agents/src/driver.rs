@@ -203,10 +203,23 @@ pub(crate) fn launch(
     args: &[String],
     stdin: Option<String>,
     cwd: &Path,
+    parser: Box<dyn LineParser>,
+) -> Result<RunHandle> {
+    launch_with_env(bin, args, &[], stdin, cwd, parser)
+}
+
+/// [`launch`] with extra environment variables.
+pub(crate) fn launch_with_env(
+    bin: &Path,
+    args: &[String],
+    env: &[(&str, &str)],
+    stdin: Option<String>,
+    cwd: &Path,
     mut parser: Box<dyn LineParser>,
 ) -> Result<RunHandle> {
     let mut cmd = Command::new(bin);
     cmd.args(args)
+        .envs(env.iter().copied())
         .current_dir(cwd)
         .env("NO_COLOR", "1")
         .env("GIT_TERMINAL_PROMPT", "0")

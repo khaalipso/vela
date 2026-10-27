@@ -125,6 +125,40 @@ pub fn accept(space: &Space, p: &Proposal) -> Result<Hunk> {
     Ok(hunk)
 }
 
+/// Accept several proposals: each patch goes to your worktree, then the ones that applied
+/// are staged together. Returns the proposals that did not apply, with the reason.
+pub fn accept_many(space: &Space, list: &[&Proposal]) -> Result<Vec<(String, String)>> {
+    let mut applied: Vec<String> = Vec::new();
+    let mut failed: Vec<(String, String)> = Vec::new();
+    for p in list {
+        let Some(user) = space.repos.iter().find(|r| r.name == p.hunk.repo) else {
+            failed.push((
+                p.hunk.id.clone(),
+                format!("{} is not in this space", p.hunk.repo),
+            ));
+            continue;
+        };
+        match git_with(
+            Path::new(&user.worktree),
+            &apply_args(&[]),
+            &[],
+            Some(&p.patch),
+        ) {
+            Ok(_) => applied.push(p.hunk.id.clone()),
+            Err(_) => failed.push((
+                p.hunk.id.clone(),
+                format!(
+                    "{} does not apply (you changed the same lines)",
+                    p.hunk.path
+                ),
+            )),
+        }
+    }
+    // A hunk git merged with your edits next to it stays applied but not staged.
+    stage::stage_hunks(space, &applied)?;
+    Ok(failed)
+}
+
 /// Why each proposed hunk exists: the latest message of its author, one line.
 pub fn reasons(entries: &[Entry], hunks: &[Hunk]) -> HashMap<String, String> {
     let mut out = HashMap::new();

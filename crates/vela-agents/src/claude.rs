@@ -73,6 +73,24 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "Bash(tree:*)",
 ];
 
+/// What a writer run (developer, debugger, tester) may use without asking: everything it
+/// needs to change and build the code of its own worktree.
+pub const WRITE_TOOLS: &[&str] = &[
+    "Read",
+    "Grep",
+    "Glob",
+    "LS",
+    "Edit",
+    "Write",
+    "MultiEdit",
+    "NotebookEdit",
+    "Bash",
+    "WebFetch",
+    "WebSearch",
+    "TodoWrite",
+    "Task",
+];
+
 /// The arguments of `claude` for a run (the prompt is sent on stdin).
 pub fn args(spec: &RunSpec) -> Vec<String> {
     let mut a: Vec<String> = ["-p", "--output-format", "stream-json", "--verbose"]
@@ -97,7 +115,13 @@ pub fn args(spec: &RunSpec) -> Vec<String> {
             "Edit,Write,MultiEdit,NotebookEdit".to_string(),
         ]);
     } else {
-        a.extend(["--permission-mode".to_string(), "acceptEdits".to_string()]);
+        // A writer works in its own worktree: edits and commands there need no question.
+        a.extend([
+            "--permission-mode".to_string(),
+            "acceptEdits".to_string(),
+            "--allowed-tools".to_string(),
+            WRITE_TOOLS.join(","),
+        ]);
     }
     if let Some(s) = &spec.session {
         a.extend(["--resume".to_string(), s.clone()]);

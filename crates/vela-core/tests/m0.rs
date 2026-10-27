@@ -441,6 +441,74 @@ fn file_level_stage_and_unstage() {
 }
 
 #[test]
+fn many_files_stage_and_unstage_in_one_go() {
+    let e = env();
+    let s = one_repo_space(&e, &[("a.txt", "a\n"), ("b.txt", "b\n"), ("c.txt", "c\n")]);
+    let w = wt(&s, 0);
+    write(&w, "a.txt", "A\n");
+    fs::remove_file(w.join("b.txt")).unwrap();
+    write(&w, "new/d.txt", "d\n");
+    let files: Vec<(String, String)> = ["a.txt", "b.txt", "new/d.txt"]
+        .iter()
+        .map(|p| ("app".to_string(), p.to_string()))
+        .collect();
+    stage::stage_files(&s, &files).unwrap();
+    let st = status::space_status(&s).unwrap();
+    assert_eq!(st.len(), 3);
+    assert!(
+        st.iter()
+            .all(|c| c.staged.is_some() && c.unstaged.is_none()),
+        "{st:?}"
+    );
+    stage::unstage_files(&s, &files[..2]).unwrap();
+    let st = status::space_status(&s).unwrap();
+    let of = |p: &str| st.iter().find(|c| c.path == p).unwrap().clone();
+    assert_eq!(
+        (of("a.txt").staged, of("a.txt").unstaged),
+        (None, Some(ChangeKind::Modified))
+    );
+    assert_eq!(
+        (of("b.txt").staged, of("b.txt").unstaged),
+        (None, Some(ChangeKind::Deleted))
+    );
+    assert_eq!(of("new/d.txt").staged, Some(ChangeKind::Added));
+}
+
+#[test]
+fn several_hunks_stage_with_one_diff() {
+    let e = env();
+    let s = one_repo_space(&e, &[("f.txt", &numbered(40)), ("g.txt", &numbered(40))]);
+    let w = wt(&s, 0);
+    let edited = numbered(40)
+        .replace("line 3\n", "three\n")
+        .replace("line 20\n", "twenty\n")
+        .replace("line 35\n", "thirty-five\n");
+    write(&w, "f.txt", &edited);
+    write(&w, "g.txt", &numbered(40).replace("line 9\n", "nine\n"));
+    write(&w, "u.txt", "untracked\n");
+    let hunks = diff::worktree_hunks(&s).unwrap();
+    let f: Vec<_> = hunks.iter().filter(|h| h.path == "f.txt").collect();
+    assert_eq!(f.len(), 3);
+    let g = hunks.iter().find(|h| h.path == "g.txt").unwrap();
+    let u = hunks.iter().find(|h| h.path == "u.txt").unwrap();
+    // The first and last hunk of f, the hunk of g, the untracked file, and one unknown id.
+    let ids = vec![
+        f[0].id.clone(),
+        f[2].id.clone(),
+        g.id.clone(),
+        u.id.clone(),
+        "nope".to_string(),
+    ];
+    let missing = stage::stage_hunks(&s, &ids).unwrap();
+    assert_eq!(missing, vec!["nope".to_string()]);
+    let rest = diff::worktree_hunks(&s).unwrap();
+    assert_eq!(rest.len(), 1);
+    assert_eq!(rest[0].id, f[1].id);
+    assert_eq!(diff::staged_hunks(&s).unwrap().len(), 4);
+    assert_eq!(fs::read_to_string(w.join("f.txt")).unwrap(), edited);
+}
+
+#[test]
 fn hunk_id_is_stable_after_inserting_lines_above() {
     let e = env();
     let s = one_repo_space(&e, &[("f.txt", &numbered(40))]);

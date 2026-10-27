@@ -14,6 +14,8 @@ import type {
   HarnessTiers,
   RepoPr,
   RolePrompt,
+  ReviewComment,
+  NewComment,
   ReviewNote,
   TermEvent,
   Unsubscribe,
@@ -36,6 +38,9 @@ import {
   rowId,
   toggleSection,
   visibleRows,
+  acceptLocally,
+  stageLocally,
+  unstageLocally,
   type FileRow,
   type RvState,
   type Section,
@@ -72,6 +77,14 @@ export const DEFAULT_TIERS: Record<AgentRole, Tier> = {
   security: "high",
 };
 
+function readCommentRole(): "reviewer" | "developer" {
+  try {
+    return localStorage.getItem("vela.commentRole") === "developer" ? "developer" : "reviewer";
+  } catch {
+    return "reviewer";
+  }
+}
+
 export interface SpaceData {
   hunks: Hunk[];
   reasons: Record<string, string>;
@@ -80,6 +93,7 @@ export interface SpaceData {
   status: FileChange[];
   question: AgentQuestion | null;
   notes: ReviewNote[];
+  comments: ReviewComment[];
   files: FileRef[];
   links: Link[];
   checks: RepoChecks[];
@@ -432,7 +446,7 @@ export class AppState {
   /** Reload everything the backend knows about a space. */
   async load(id: string, light = false) {
     const b = this.backend;
-    const [hunks, reasons, agents, stack, status, question, notes, files, links, checks] = await Promise.all([
+    const [hunks, reasons, agents, stack, status, question, notes, files, links, checks, comments] = await Promise.all([
       b.hunks(id),
       b.reasons(id),
       b.agents(id),
@@ -443,10 +457,11 @@ export class AppState {
       b.listFiles(id),
       b.links(id).catch((): Link[] => []),
       b.checks(id).catch((): RepoChecks[] => []),
+      b.comments(id).catch((): ReviewComment[] => []),
     ]);
     const before = this.rv[id] ? this.rowsOf(id) : [];
     const prevIndex = before.findIndex((r) => r.id === this.rv[id]?.sel);
-    this.data = { ...this.data, [id]: { hunks, reasons, agents, stack, status, question, notes, files, links, checks } };
+    this.data = { ...this.data, [id]: { hunks, reasons, agents, stack, status, question, notes, files, links, checks, comments } };
     if (!light || !this.ui[id]) this.ensureUi(id);
     this.syncRv(id, prevIndex);
   }
@@ -565,45 +580,105 @@ export class AppState {
     this.setRv({ sel: row.id, hunk: Math.max(0, i) });
   }
 
+  /** Show the result of a change at once; the reload after the backend call settles it. */
+  private optimistic(sid: string, f: (status: FileChange[], hunks: Hunk[]) => { status: FileChange[]; hunks: Hunk[] }) {
+    const d = this.data[sid];
+    if (!d) return;
+    const prev = this.rowsOf(sid).findIndex((r) => r.id === this.rv[sid]?.sel);
+    this.data = { ...this.data, [sid]: { ...d, ...f(d.status, d.hunks) } };
+    this.syncRv(sid, prev);
+  }
+
+  /** Pending proposals of agents, of one file or of all. */
+  private pendingAgentHunks(sid: string, file?: FileRow): Hunk[] {
+    return (this.data[sid]?.hunks ?? []).filter(
+      (h) => h.state === "pending" && h.origin.type === "agent" && (!file || (h.repo === file.repo && h.path === file.path)),
+    );
+  }
+
+  private async stageRows(sid: string, rows: FileRow[]) {
+    if (!rows.length) return;
+    this.optimistic(sid, (st, hs) => stageLocally(st, hs, rows));
+    try {
+      await this.backend.stageFiles(sid, rows.map((r) => ({ repo: r.repo, path: r.path })));
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh(sid);
+  }
+  private async unstageRows(sid: string, rows: FileRow[]) {
+    if (!rows.length) return;
+    for (const h of this.data[sid].hunks) if (rows.some((r) => r.repo === h.repo && r.path === h.path)) delete this.edited[`${sid}:${h.id}`];
+    this.optimistic(sid, (st, hs) => unstageLocally(st, hs, rows));
+    try {
+      await this.backend.unstageFiles(sid, rows.map((r) => ({ repo: r.repo, path: r.path })));
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh(sid);
+  }
+  private async acceptIds(sid: string, ids: string[]) {
+    if (!ids.length) return;
+    this.optimistic(sid, (st, hs) => acceptLocally(st, hs, ids));
+    try {
+      this.failedToApply(await this.backend.acceptHunks(sid, ids));
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh(sid);
+  }
+  private failedToApply(failed: string[]) {
+    if (failed.length) this.toast(failed.length === 1 ? failed[0] : `${failed.length} proposals did not apply: ${failed[0]}`);
+  }
+
   /** Space: stage or unstage the selected file (a proposed file: accept its pending hunks). */
   async rvToggleFile() {
     const r = this.selectedRow;
-    if (!r) return;
+    if (r) await this.rvStageRow(r);
+  }
+  /** Stage, unstage or accept one row of the list. */
+  async rvStageRow(r: FileRow) {
     const sid = this.space.id;
-    try {
-      if (r.section === "staged") await this.backend.unstageFile(sid, r.repo, r.path);
-      else if (r.section === "unstaged") await this.backend.stageFile(sid, r.repo, r.path);
-      else {
-        for (const h of fileHunks(this.sd.hunks, r.repo, r.path)) {
-          if (h.state === "pending" && h.origin.type === "agent") await this.backend.stageHunk(sid, h.id);
-        }
-      }
-    } catch (e) {
-      this.fail(e);
-    }
-    await this.refresh(sid);
+    if (r.section === "staged") return this.unstageRows(sid, [r]);
+    if (r.section === "unstaged") return this.stageRows(sid, [r]);
+    return this.acceptIds(
+      sid,
+      this.pendingAgentHunks(sid, r).map((h) => h.id),
+    );
   }
   async rvStageAll() {
-    const sid = this.space.id;
     const rows = this.sections.unstaged.flatMap((g) => g.files);
     if (!rows.length) return this.toast("Nothing to stage. Proposals need Y");
-    try {
-      for (const r of rows) await this.backend.stageFile(sid, r.repo, r.path);
-    } catch (e) {
-      this.fail(e);
-    }
-    await this.refresh(sid);
+    await this.stageRows(this.space.id, rows);
   }
   async rvUnstageAll() {
-    const sid = this.space.id;
     const rows = this.sections.staged.flatMap((g) => g.files);
     if (!rows.length) return this.toast("Nothing is staged");
+    await this.unstageRows(this.space.id, rows);
+  }
+  /** Accept every pending proposal of the agents. */
+  async rvAcceptAll() {
+    const sid = this.space.id;
+    const ids = this.pendingAgentHunks(sid).map((h) => h.id);
+    if (!ids.length) return this.toast("No proposals waiting");
+    await this.acceptIds(sid, ids);
+  }
+  /** Shift A: approve everything at once, your edits staged and every proposal accepted. */
+  async rvApproveAll() {
+    const sid = this.space.id;
+    const rows = this.sections.unstaged.flatMap((g) => g.files);
+    const ids = this.pendingAgentHunks(sid).map((h) => h.id);
+    if (!rows.length && !ids.length) return this.toast(this.readyToCommit ? "All approved. Press C to commit" : "Nothing left to approve");
+    if (rows.length) this.optimistic(sid, (st, hs) => stageLocally(st, hs, rows));
+    if (ids.length) this.optimistic(sid, (st, hs) => acceptLocally(st, hs, ids));
     try {
-      for (const r of rows) await this.backend.unstageFile(sid, r.repo, r.path);
+      if (rows.length) await this.backend.stageFiles(sid, rows.map((r) => ({ repo: r.repo, path: r.path })));
+      if (ids.length) this.failedToApply(await this.backend.acceptHunks(sid, ids));
     } catch (e) {
       this.fail(e);
     }
     await this.refresh(sid);
+    if (!this.pending.length && this.readyToCommit) this.toast("All approved. Press C to commit");
   }
   /** Y on the hunk under the cursor: stage it (accept it when an agent proposed it). */
   async rvHunkStage() {
@@ -1165,6 +1240,82 @@ export class AppState {
     await this.refresh();
   }
 
+  // -- review comments ------------------------------------------------------
+
+  /** Where the comment being written goes; null when none is open. */
+  commentDraft: { repo: string; path: string; line: number; hunkId: string } | null = $state(null);
+  /** Who answers new comments: the reviewer explains, the developer may change the code. */
+  commentRole: "reviewer" | "developer" = $state(readCommentRole());
+
+  /** Comment threads of a file, by line. */
+  commentsOf(repo: string, path: string): ReviewComment[] {
+    return (this.sd.comments ?? []).filter((c) => c.repo === repo && c.path === path).sort((a, b) => a.line - b.line);
+  }
+  /** Open the comment box on a line of a hunk (its first changed line when none is given). */
+  openComment(h: Hunk, line?: number) {
+    const first = h.lines.find((l) => l.kind !== "context");
+    const n = line ?? first?.new ?? first?.old ?? h.newStart;
+    this.commentDraft = { repo: h.repo, path: h.path, line: n, hunkId: h.id };
+  }
+  /** M: comment the hunk under the cursor. */
+  rvComment() {
+    const h = this.currentHunk;
+    if (!h) return this.toast("Pick a hunk to comment");
+    this.openComment(h);
+  }
+  setCommentRole(r: "reviewer" | "developer") {
+    this.commentRole = r;
+    try {
+      localStorage.setItem("vela.commentRole", r);
+    } catch {
+      /* storage off: the choice lasts until the window closes */
+    }
+  }
+  async sendComment(text: string) {
+    const d = this.commentDraft;
+    const t = text.trim();
+    if (!d || !t) return;
+    const sid = this.space.id;
+    const role = this.commentRole;
+    this.commentDraft = null;
+    try {
+      await this.backend.addComment(sid, { ...d, text: t, role } satisfies NewComment);
+      this.toast(role === "developer" ? "Sent to a developer" : "Sent to a reviewer");
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh(sid);
+  }
+  async replyComment(id: string, text: string) {
+    const t = text.trim();
+    if (!t) return;
+    const sid = this.space.id;
+    try {
+      await this.backend.replyComment(sid, id, t);
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh(sid);
+  }
+  async resolveComment(id: string, resolved: boolean) {
+    const sid = this.space.id;
+    try {
+      await this.backend.resolveComment(sid, id, resolved);
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh(sid);
+  }
+  async deleteComment(id: string) {
+    const sid = this.space.id;
+    try {
+      await this.backend.deleteComment(sid, id);
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.refresh(sid);
+  }
+
   /** Shift Y: resolve a note (or open it again). */
   async resolveNote(noteId?: string, resolved = true) {
     const n = noteId ? this.sd.notes.find((x) => x.id === noteId) : this.currentNote();
@@ -1491,9 +1642,14 @@ export class AppState {
   async loadAgents(id: string, notice?: AgentNotice) {
     const b = this.backend;
     try {
-      const [agents, question, reasons] = await Promise.all([b.agents(id), b.question(id), b.reasons(id)]);
+      const [agents, question, reasons, comments] = await Promise.all([
+        b.agents(id),
+        b.question(id),
+        b.reasons(id),
+        b.comments(id).catch((): ReviewComment[] => this.data[id]?.comments ?? []),
+      ]);
       if (!this.data[id]) return;
-      this.data = { ...this.data, [id]: { ...this.data[id], agents, question, reasons } };
+      this.data = { ...this.data, [id]: { ...this.data[id], agents, question, reasons, comments } };
       if (notice?.event.type === "failed" && notice.event.error !== "cancelled") this.toast(`Agent failed: ${notice.event.error}`);
       if (notice?.event.type === "done") {
         const a = agents.find((x) => x.id === notice.agentId);
@@ -2078,6 +2234,11 @@ export class AppState {
       case "change-move":
         this.changeMove = { seq: this.changeMove.seq + 1, delta: a.delta };
         return;
+      case "noop":
+        return;
+      case "close-tab":
+        if (this.cui.file) this.closeTab(this.cui.file);
+        return;
       case "toggle-rail":
         this.railHidden = !this.railHidden;
         this.railPeek = false;
@@ -2191,6 +2352,10 @@ export class AppState {
         return this.rvStageAll();
       case "rv-unstage-all":
         return this.rvUnstageAll();
+      case "rv-approve-all":
+        return this.rvApproveAll();
+      case "rv-comment":
+        return this.rvComment();
       case "rv-focus-diff":
         return this.rvFocusDiff();
       case "rv-hunk":

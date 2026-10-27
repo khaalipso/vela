@@ -16,6 +16,7 @@
         ["1  2  3", "Code, review, agents"],
         ["B", "Files drawer"],
         ["Ctrl B", "Hide the spaces bar (it floats in on the left edge)"],
+        ["Ctrl W", "Close the file tab shown in the editor"],
         ["Ctrl P", "Go to file"],
         ["/", "Filter files by name"],
         ["S", "Stack and containers"],

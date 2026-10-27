@@ -5,7 +5,9 @@
   import { hunkMenu } from "../lib/menus";
   import { ROLE_COLORS, roleLabel, toolLabel } from "../lib/format";
   import { SECTION_TITLES } from "../lib/review";
-  import type { ReviewNote } from "../lib/backend";
+  import type { ReviewComment, ReviewNote } from "../lib/backend";
+  import type { Hunk } from "../lib/types";
+  import CommentThread from "./CommentThread.svelte";
   import DiffBlock from "./DiffBlock.svelte";
   import Kbd from "./Kbd.svelte";
   import SplitDiff from "./SplitDiff.svelte";
@@ -25,33 +27,71 @@
 
   const proposalOf = (id: string) => app.proposals.find((p) => p.hunk.id === id);
   const notes = $derived(row ? app.notesOf(row.repo, row.path) : []);
+  const comments = $derived(row ? app.commentsOf(row.repo, row.path) : []);
   const hunkIds = $derived(new Set(hunks.map((h) => h.id)));
-  /** Notes of the file that fall in none of the hunks shown. */
+  /** Notes and comments of the file that fall in none of the hunks shown. */
   const fileNotes = $derived(notes.filter((n) => !n.hunkId || !hunkIds.has(n.hunkId)));
+  const fileComments = $derived(comments.filter((c) => !c.hunkId || !hunkIds.has(c.hunkId)));
   const notesOfHunk = (id: string) => notes.filter((n) => n.hunkId === id);
+  const commentsOfHunk = (id: string) => comments.filter((c) => c.hunkId === id);
+  const markedOf = (id: string) => new Set([...notesOfHunk(id).map((n) => n.line), ...commentsOfHunk(id).map((c) => c.line)]);
+  const draft = $derived(app.commentDraft);
   const LEVEL_COLOR: Record<ReviewNote["level"], string> = { blocking: "var(--del)", warning: "var(--warn)", info: "var(--info)" };
+  const dirOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/") + 1) : "");
+  const nameOf = (p: string) => p.slice(p.lastIndexOf("/") + 1);
+  const pendingIn = $derived(hunks.filter((h) => h.state === "pending").length);
+
+  function act(i: number, f: () => unknown) {
+    return (e: MouseEvent) => {
+      e.stopPropagation();
+      app.rvHunkSet(i);
+      void f();
+    };
+  }
+  function comment(h: Hunk, i: number, line?: number) {
+    app.rvHunkSet(i);
+    app.openComment(h, line);
+  }
 </script>
 
 <section class="diff" bind:this={root} class:focused={app.rvs.focus === "diff"} aria-label="Diff">
   {#if !row}
     <div class="allclear">
-      <h3>Nothing selected</h3>
-      <span>Pick a file on the left with <Kbd k="J" /> and <Kbd k="K" /></span>
+      <h3>{app.sections.counts.staged ? "Everything is reviewed" : "Nothing to review"}</h3>
+      <span>
+        {#if app.sections.counts.staged}Press <Kbd k="C" /> to commit{:else}Pick a file on the left with <Kbd k="J" /> and <Kbd k="K" />{/if}
+      </span>
     </div>
   {:else}
     <header class="dh">
-      <b class="path">{row.repo} / {row.path}</b>
-      <span class="badge">{SECTION_TITLES[row.section]}</span>
-      {#if total}
-        <span class="prog">{done} of {total} proposals reviewed</span>
-      {/if}
-      <button class="mode" onclick={() => app.dispatch({ type: "rv-split" })} title="Before and after side by side, or one column">
-        {app.rvSplit ? "Side by side" : "Unified"} <Kbd k="V" />
-      </button>
-      <span class="keys"><Kbd k="Tab" /> next hunk <Kbd k="Y" /> stage <Kbd k="U" /> unstage</span>
+      <div class="title">
+        <span class="repo">{row.repo}</span>
+        <b class="path"><em>{dirOf(row.path)}</em>{nameOf(row.path)}</b>
+        <span class="grow"></span>
+        {#if row.section === "staged"}
+          <button class="btn" onclick={() => void app.rvStageRow(row)}>Unstage file <Kbd k="Space" /></button>
+        {:else}
+          <button class="btn p" onclick={() => void app.rvStageRow(row)}>
+            ✓ {row.section === "proposed" ? "Accept file" : "Stage file"}
+            <Kbd k="Space" />
+          </button>
+        {/if}
+      </div>
+      <div class="meta">
+        <span class="badge" data-kind={row.section}>{SECTION_TITLES[row.section]}</span>
+        {#if row.add || row.del}<span class="sz"><i class="a">+{row.add}</i> <i class="d">−{row.del}</i></span>{/if}
+        {#if total}<span class="prog">{done} of {total} proposals reviewed</span>{/if}
+        <span class="grow"></span>
+        <button class="mode" onclick={() => app.dispatch({ type: "rv-split" })} title="Before and after side by side, or one column">
+          {app.rvSplit ? "Side by side" : "Unified"} <Kbd k="V" />
+        </button>
+      </div>
     </header>
     {#each fileNotes as n (n.id)}
       {@render note(n)}
+    {/each}
+    {#each fileComments as c (c.id)}
+      <CommentThread thread={c} />
     {/each}
     {#if !hunks.length}
       <div class="allclear">
@@ -67,7 +107,6 @@
         class="hunk"
         class:focus={foc}
         class:staged={h.state === "staged"}
-        class:done={h.state === "staged" && !!p}
         data-focus={foc}
         data-state={h.state}
         onclick={() => app.rvHunkSet(i)}
@@ -86,60 +125,90 @@
             <b>You</b>
           {/if}
           <span class="loc">line {h.newStart}{h.section ? ` · ${h.section}` : ""}</span>
-          <span class="keys">
+          <span class="acts">
+            <button class="ghost" onclick={act(i, () => comment(h, i))} title="Comment: an agent answers">
+              Comment {#if foc}<Kbd k="M" />{/if}
+            </button>
             {#if h.state === "staged"}
               <span class="state">{p?.edited ? "edited by you" : "staged"}</span>
-              {#if foc}<span><Kbd k="U" /> unstage</span>{/if}
-            {:else if foc}
-              <span><Kbd k="Y" /> {p ? "accept" : "stage"}</span>
-              {#if p}<span><Kbd k="N" /> reject</span><span><Kbd k="E" /> edit</span>{/if}
+              <button class="ghost" onclick={act(i, () => app.rvHunkUnstage())}>Unstage {#if foc}<Kbd k="U" />{/if}</button>
+            {:else}
+              {#if p}
+                <button class="ghost" onclick={act(i, () => app.rvHunkReject())}>Reject {#if foc}<Kbd k="N" />{/if}</button>
+                <button class="ghost" onclick={act(i, () => app.dispatch({ type: "edit" }))}>Edit {#if foc}<Kbd k="E" />{/if}</button>
+              {/if}
+              <button class="ok" onclick={act(i, () => app.rvHunkStage())}>
+                ✓ {p ? "Accept" : "Stage"}
+                {#if foc}<Kbd k="Y" />{/if}
+              </button>
             {/if}
           </span>
         </div>
         {#if p?.why}<div class="why">{p.why}</div>{/if}
-        {#if app.rvSplit}<SplitDiff hunk={h} />{:else}<DiffBlock hunk={h} />{/if}
+        {#if app.rvSplit}
+          <SplitDiff hunk={h} />
+        {:else}
+          <DiffBlock hunk={h} marked={markedOf(h.id)} onComment={(line) => comment(h, i, line)} />
+        {/if}
         {#each notesOfHunk(h.id) as n (n.id)}
           {@render note(n)}
         {/each}
+        {#each commentsOfHunk(h.id) as c (c.id)}
+          <CommentThread thread={c} />
+        {/each}
+        {#if draft && draft.hunkId === h.id}
+          <CommentThread line={draft.line} />
+        {/if}
       </article>
     {/each}
+    {#if hunks.length > 1 || pendingIn}
+      <footer class="end">
+        {#if pendingIn}
+          <span>{pendingIn} of {hunks.length} hunks left in this file</span>
+        {:else}
+          <span>Every hunk of this file is staged</span>
+        {/if}
+      </footer>
+    {/if}
   {/if}
 </section>
 
 {#snippet note(n: ReviewNote)}
-  <div class="note" class:resolved={n.resolved} data-note={n.id}>
-    <span class="dot" style:--c={n.resolved ? "var(--add)" : LEVEL_COLOR[n.level]}></span>
-    <div>
-      <small>{n.by} · {n.resolved ? "resolved" : n.level} · line {n.line}</small>
-      <span>{n.text}</span>
+  <div class="note" class:resolved={n.resolved} data-note={n.id} style:--c={n.resolved ? "var(--add)" : LEVEL_COLOR[n.level]}>
+    <div class="nh">
+      <span class="lvl">{n.resolved ? "resolved" : n.level}</span>
+      <span>{n.by} · line {n.line}</span>
     </div>
-    {#if !n.resolved}
-      <button
-        class="btn"
-        disabled={n.busy}
-        onclick={(e) => {
-          e.stopPropagation();
-          void app.askFix(n.id);
-        }}
-      >
-        {#if n.busy}<span class="pulse">Fixing…</span>{:else}Ask to fix <Kbd k="F" />{/if}
-      </button>
-      <button
-        class="btn"
-        onclick={(e) => {
-          e.stopPropagation();
-          void app.resolveNote(n.id, true);
-        }}>Resolve <Kbd k="Shift Y" /></button
-      >
-    {:else}
-      <button
-        class="btn"
-        onclick={(e) => {
-          e.stopPropagation();
-          void app.resolveNote(n.id, false);
-        }}>Reopen</button
-      >
-    {/if}
+    <p>{n.text}</p>
+    <div class="nacts">
+      {#if !n.resolved}
+        <button
+          class="btn"
+          disabled={n.busy}
+          onclick={(e) => {
+            e.stopPropagation();
+            void app.askFix(n.id);
+          }}
+        >
+          {#if n.busy}<span class="pulse">Fixing…</span>{:else}Ask to fix <Kbd k="F" />{/if}
+        </button>
+        <button
+          class="btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            void app.resolveNote(n.id, true);
+          }}>Resolve <Kbd k="Shift Y" /></button
+        >
+      {:else}
+        <button
+          class="btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            void app.resolveNote(n.id, false);
+          }}>Reopen</button
+        >
+      {/if}
+    </div>
   </div>
 {/snippet}
 
@@ -149,33 +218,86 @@
     overflow: auto;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 2px 2px 12px;
+    gap: 12px;
+    padding: 0 4px 16px 2px;
   }
   .dh {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 6px 4px 10px;
+    position: sticky;
+    top: 0;
+    background: var(--panel);
+    z-index: 2;
+    box-shadow: 0 1px 0 var(--line);
+  }
+  .title .btn {
+    flex: none;
+    align-self: center;
+  }
+  .title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+  }
+  .repo {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--faint);
+    flex: none;
+  }
+  .path {
+    font-family: var(--code);
+    font-size: 15px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+  .path em {
+    font-style: normal;
+    font-weight: 400;
+    color: var(--faint);
+  }
+  .meta {
     display: flex;
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
-    padding: 4px 6px;
-    font-size: 12px;
+    font-size: 12.5px;
     color: var(--muted);
-    position: sticky;
-    top: 0;
-    background: var(--panel);
-    z-index: 1;
   }
-  .path {
-    font-family: var(--code);
-    color: var(--fg);
-    font-size: 13px;
-    font-weight: 600;
-    overflow-wrap: anywhere;
+  .grow {
+    flex: 1;
   }
   .badge {
-    padding: 1px 8px;
+    padding: 2px 9px;
     border-radius: 9999px;
     background: var(--hover);
+    font-weight: 600;
+  }
+  .badge[data-kind="proposed"] {
+    color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 14%, transparent);
+  }
+  .badge[data-kind="staged"] {
+    color: var(--add);
+    background: color-mix(in srgb, var(--add) 14%, transparent);
+  }
+  .sz {
+    font-family: var(--code);
+  }
+  i {
+    font-style: normal;
+  }
+  .a {
+    color: var(--add);
+  }
+  .d {
+    color: var(--del);
   }
   .hunk {
     background: var(--raised);
@@ -188,12 +310,10 @@
       box-shadow 240ms var(--ease),
       opacity 240ms var(--ease);
     flex: none;
+    scroll-margin-top: 110px;
   }
   .hunk.staged {
     box-shadow: inset 3px 0 0 var(--add);
-  }
-  .hunk.staged :global(.dl.a) {
-    background: color-mix(in srgb, var(--add) 18%, transparent);
   }
   .hunk.focus {
     box-shadow: 0 0 0 2px var(--space);
@@ -208,72 +328,133 @@
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
-    padding: 10px 14px;
-    font-size: 12px;
+    padding: 8px 10px 8px 14px;
+    font-size: 12.5px;
     color: var(--muted);
   }
   .hh b {
     color: var(--fg);
     font-weight: 600;
-    font-size: 13px;
+    font-size: 13.5px;
   }
   .loc {
     font-family: var(--code);
     color: var(--faint);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 40ch;
   }
-  .keys {
+  .acts {
     margin-left: auto;
     display: flex;
-    gap: 10px;
+    gap: 4px;
     align-items: center;
+    flex-wrap: wrap;
+  }
+  .ghost,
+  .ok {
+    all: unset;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .ghost:hover {
+    background: var(--hover);
+    color: var(--fg);
+  }
+  .ok {
+    color: var(--add);
+    background: color-mix(in srgb, var(--add) 14%, transparent);
+  }
+  .ok:hover {
+    background: color-mix(in srgb, var(--add) 24%, transparent);
   }
   .state {
     font-weight: 600;
     color: var(--add);
+    padding: 0 6px;
   }
   .why {
     padding: 0 14px 10px;
-    font-size: 13px;
+    font-size: 13.5px;
+    line-height: 1.5;
     color: var(--fg);
   }
   .note {
-    margin: 4px 14px 14px;
+    margin: 6px 14px 12px 60px;
     padding: 10px 12px;
-    border-radius: 10px;
-    background: var(--hover);
+    border-radius: 12px;
+    background: var(--panel);
+    box-shadow:
+      0 0 0 1px var(--line),
+      inset 3px 0 0 var(--c);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13.5px;
+  }
+  .diff > .note {
+    margin: 0;
+  }
+  .diff > :global(.thread) {
+    margin: 0;
+  }
+  .nh {
     display: flex;
     gap: 10px;
-    align-items: flex-start;
-    font-size: 13px;
+    align-items: center;
+    font-size: 12px;
+    color: var(--muted);
   }
-  .note .dot {
-    margin-top: 6px;
+  .lvl {
+    font-weight: 700;
+    color: var(--c);
+    text-transform: capitalize;
+  }
+  .note p {
+    margin: 0;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  .nacts {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .note .btn {
+    height: 28px;
+    font-size: 12.5px;
   }
   .note.resolved {
     opacity: 0.6;
   }
   .mode {
-    font-size: 12px;
+    font-size: 12.5px;
     color: var(--muted);
     display: inline-flex;
     gap: 6px;
     align-items: center;
-    padding: 2px 8px;
+    padding: 4px 8px;
     border-radius: 8px;
   }
   .mode:hover {
     background: var(--hover);
     color: var(--fg);
   }
-  .note div {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .note small {
-    font-size: 12px;
-    font-weight: 600;
+  .end {
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--faint);
+    padding: 4px;
   }
   .allclear {
     padding: 48px 20px;

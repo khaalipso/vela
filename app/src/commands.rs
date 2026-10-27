@@ -439,6 +439,26 @@ pub fn stage_file(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<()
     Ok(stage::stage_file(&space, repo, path)?)
 }
 
+/// Stage every change of several files, one git call per repo.
+pub fn stage_files(vela: &Vela, id: &str, files: &[(String, String)]) -> AppResult<()> {
+    let _inv = Invalidate(id);
+    let space = load(vela, id)?;
+    for (repo, path) in files {
+        resolve_path(&space, repo, path)?;
+    }
+    Ok(stage::stage_files(&space, files)?)
+}
+
+/// Unstage every staged change of several files, one git call per repo.
+pub fn unstage_files(vela: &Vela, id: &str, files: &[(String, String)]) -> AppResult<()> {
+    let _inv = Invalidate(id);
+    let space = load(vela, id)?;
+    for (repo, path) in files {
+        resolve_path(&space, repo, path)?;
+    }
+    Ok(stage::unstage_files(&space, files)?)
+}
+
 /// Unstage every staged change of one file.
 pub fn unstage_file(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<()> {
     let _inv = Invalidate(id);
@@ -799,6 +819,32 @@ pub fn reasons(vela: &Vela, id: &str) -> AppResult<std::collections::HashMap<Str
         .map(|p| p.hunk)
         .collect();
     Ok(proposals::reasons(&entries, &hunks))
+}
+
+/// Accept several hunks at once: your own are staged, the proposals of agents are applied to
+/// your worktree and staged. One diff of the space for the lot. Returns what did not apply.
+pub fn accept_hunks(vela: &Vela, id: &str, hunk_ids: &[String]) -> AppResult<Vec<String>> {
+    let _inv = Invalidate(id);
+    let space = load(vela, id)?;
+    let mut rejected = rejected_ids(vela, id)?;
+    let list = agent_proposals(vela, &space, &rejected, true)?;
+    let picked: Vec<&Proposal> = list
+        .iter()
+        .filter(|p| hunk_ids.contains(&p.hunk.id))
+        .collect();
+    let mine: Vec<String> = hunk_ids
+        .iter()
+        .filter(|h| !picked.iter().any(|p| &p.hunk.id == *h))
+        .cloned()
+        .collect();
+    stage::stage_hunks(&space, &mine)?;
+    let failed = proposals::accept_many(&space, &picked)?;
+    let before = rejected.len();
+    rejected.retain(|r| !hunk_ids.contains(r) || failed.iter().any(|(f, _)| f == r));
+    if rejected.len() != before {
+        save_rejected(vela, id, &rejected)?;
+    }
+    Ok(failed.into_iter().map(|(_, why)| why).collect())
 }
 
 /// Apply a proposal of an agent to your worktree and stage it.
@@ -1210,6 +1256,116 @@ pub fn ask_fix(
             _ => None,
         });
     Ok(agents.ask_fix(vela, &space, &note, author.as_deref(), emit)?)
+}
+
+// ---------------------------------------------------------------------------
+// Review comments
+// ---------------------------------------------------------------------------
+
+/// The comment threads of the space, with the answers of their agents.
+pub fn comments(
+    vela: &Vela,
+    agents: &AgentManager,
+    id: &str,
+) -> AppResult<Vec<vela_agents::comments::CommentView>> {
+    load(vela, id)?;
+    let entries = agents.entries(vela, id)?;
+    Ok(vela_agents::comments::views(vela, id, &entries))
+}
+
+/// Where a new comment goes and what it says.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewComment {
+    pub repo: String,
+    pub path: String,
+    pub line: u32,
+    #[serde(default)]
+    pub hunk_id: String,
+    pub text: String,
+    /// "reviewer" or "developer".
+    pub role: AgentRole,
+}
+
+/// A comment on a line: an agent answers it (a developer may also change the code).
+pub fn add_comment(
+    vela: &Vela,
+    agents: &std::sync::Arc<AgentManager>,
+    id: &str,
+    c: &NewComment,
+    emit: &EmitAgent,
+) -> AppResult<()> {
+    let space = load(vela, id)?;
+    resolve_path(&space, &c.repo, &c.path)?;
+    let hunk = if c.hunk_id.is_empty() {
+        None
+    } else {
+        hunks(vela, id)?.into_iter().find(|h| h.id == c.hunk_id)
+    };
+    let code: String = hunk
+        .as_ref()
+        .map(|h| {
+            h.lines
+                .iter()
+                .map(|l| {
+                    let s = match l.kind {
+                        vela_core::model::LineKind::Add => "+",
+                        vela_core::model::LineKind::Del => "-",
+                        _ => " ",
+                    };
+                    format!("{s}{}\n", l.text)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let author = hunk.and_then(|h| match h.origin {
+        vela_core::model::Origin::Agent { agent } => Some(agent),
+        _ => None,
+    });
+    agents.comment(
+        vela,
+        &space,
+        (&c.repo, &c.path, c.line, &c.hunk_id),
+        &code,
+        &c.text,
+        c.role,
+        author.as_deref(),
+        emit,
+    )?;
+    Ok(())
+}
+
+/// The user answers in a thread.
+pub fn reply_comment(
+    vela: &Vela,
+    agents: &std::sync::Arc<AgentManager>,
+    id: &str,
+    thread: &str,
+    text: &str,
+    emit: &EmitAgent,
+) -> AppResult<()> {
+    let space = load(vela, id)?;
+    Ok(agents.reply_comment(vela, &space, thread, text, emit)?)
+}
+
+/// Close a thread, or open it again.
+pub fn resolve_comment(vela: &Vela, id: &str, thread: &str, resolved: bool) -> AppResult<()> {
+    load(vela, id)?;
+    let mut list = vela_agents::comments::load(vela, id);
+    let t = list
+        .iter_mut()
+        .find(|t| t.id == thread)
+        .ok_or_else(|| AppError::invalid("this comment is gone"))?;
+    t.resolved = resolved;
+    Ok(vela_agents::comments::save(vela, id, &list)?)
+}
+
+/// Delete a thread (the agent and its work stay).
+pub fn delete_comment(vela: &Vela, id: &str, thread: &str) -> AppResult<()> {
+    load(vela, id)?;
+    let mut list = vela_agents::comments::load(vela, id);
+    list.retain(|t| t.id != thread);
+    Ok(vela_agents::comments::save(vela, id, &list)?)
 }
 
 /// `Y` on a note: mark it resolved (or open again).

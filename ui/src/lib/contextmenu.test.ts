@@ -97,7 +97,7 @@ describe("shortcuts come from the keymap", () => {
     expect(shortcutFor({ type: "reject" }, "review")).toBe("N");
     expect(shortcutFor({ type: "edit" }, "review")).toBe("E");
     expect(shortcutFor({ type: "toggle-window" })).toBe("W");
-    expect(shortcutFor({ type: "rv-stage-all" }, "review")).toBe("Shift A");
+    expect(shortcutFor({ type: "rv-approve-all" }, "review")).toBe("Shift A");
     expect(shortcutFor({ type: "rv-toggle-file" }, "review")).toBe("Space");
     expect(shortcutFor({ type: "quick-open" })).toBe("Ctrl P");
   });

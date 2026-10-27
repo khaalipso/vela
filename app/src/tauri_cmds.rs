@@ -310,6 +310,46 @@ pub async fn stage_file(
 }
 
 #[tauri::command]
+pub async fn stage_files(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    files: Vec<(String, String)>,
+) -> AppResult<()> {
+    let id = space_id.clone();
+    blocking(&vela, move |v| commands::stage_files(v, &id, &files)).await?;
+    notify_state(&app, &space_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn unstage_files(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    files: Vec<(String, String)>,
+) -> AppResult<()> {
+    let id = space_id.clone();
+    blocking(&vela, move |v| commands::unstage_files(v, &id, &files)).await?;
+    notify_state(&app, &space_id);
+    Ok(())
+}
+
+/// Accept several hunks at once (yours staged, proposals applied and staged).
+#[tauri::command]
+pub async fn accept_hunks(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    hunk_ids: Vec<String>,
+) -> AppResult<Vec<String>> {
+    let id = space_id.clone();
+    let failed = blocking(&vela, move |v| commands::accept_hunks(v, &id, &hunk_ids)).await?;
+    notify_state(&app, &space_id);
+    Ok(failed)
+}
+
+#[tauri::command]
 pub async fn unstage_file(
     app: AppHandle,
     vela: State<'_, Vela>,
@@ -727,6 +767,88 @@ pub async fn ask_fix(
     .await?;
     notify_state(&app, &space_id);
     Ok(a)
+}
+
+/// The comment threads of the space.
+#[tauri::command]
+pub async fn comments(
+    vela: State<'_, Vela>,
+    agents: State<'_, Arc<AgentManager>>,
+    space_id: String,
+) -> AppResult<Vec<vela_agents::comments::CommentView>> {
+    let agents = agents.inner().clone();
+    blocking(&vela, move |v| commands::comments(v, &agents, &space_id)).await
+}
+
+/// Comment a line: an agent answers.
+#[tauri::command]
+pub async fn add_comment(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    agents: State<'_, Arc<AgentManager>>,
+    space_id: String,
+    comment: commands::NewComment,
+) -> AppResult<()> {
+    let agents = agents.inner().clone();
+    let emit = agent_emitter(&app);
+    let sid = space_id.clone();
+    blocking(&vela, move |v| {
+        commands::add_comment(v, &agents, &sid, &comment, &emit)
+    })
+    .await?;
+    notify_state(&app, &space_id);
+    Ok(())
+}
+
+/// Answer in a comment thread.
+#[tauri::command]
+pub async fn reply_comment(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    agents: State<'_, Arc<AgentManager>>,
+    space_id: String,
+    thread: String,
+    text: String,
+) -> AppResult<()> {
+    let agents = agents.inner().clone();
+    let emit = agent_emitter(&app);
+    let sid = space_id.clone();
+    blocking(&vela, move |v| {
+        commands::reply_comment(v, &agents, &sid, &thread, &text, &emit)
+    })
+    .await?;
+    notify_state(&app, &space_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn resolve_comment(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    thread: String,
+    resolved: bool,
+) -> AppResult<()> {
+    let sid = space_id.clone();
+    blocking(&vela, move |v| {
+        commands::resolve_comment(v, &sid, &thread, resolved)
+    })
+    .await?;
+    notify_state(&app, &space_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_comment(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    thread: String,
+) -> AppResult<()> {
+    let sid = space_id.clone();
+    blocking(&vela, move |v| commands::delete_comment(v, &sid, &thread)).await?;
+    notify_state(&app, &space_id);
+    Ok(())
 }
 
 #[tauri::command]

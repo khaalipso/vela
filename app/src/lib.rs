@@ -21,6 +21,55 @@ pub mod watch;
 use tauri_cmds as c;
 use tauri_menu as m;
 
+/// The macOS menu bar: the default one without "Close Window", so Cmd W reaches the page.
+#[cfg(target_os = "macos")]
+fn mac_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{Menu, PredefinedMenuItem as P, Submenu};
+    let name = app.package_info().name.clone();
+    Menu::with_items(
+        app,
+        &[
+            &Submenu::with_items(
+                app,
+                &name,
+                true,
+                &[
+                    &P::about(app, None, None)?,
+                    &P::separator(app)?,
+                    &P::hide(app, None)?,
+                    &P::hide_others(app, None)?,
+                    &P::separator(app)?,
+                    &P::quit(app, None)?,
+                ],
+            )?,
+            &Submenu::with_items(
+                app,
+                "Edit",
+                true,
+                &[
+                    &P::undo(app, None)?,
+                    &P::redo(app, None)?,
+                    &P::separator(app)?,
+                    &P::cut(app, None)?,
+                    &P::copy(app, None)?,
+                    &P::paste(app, None)?,
+                    &P::select_all(app, None)?,
+                ],
+            )?,
+            &Submenu::with_items(
+                app,
+                "Window",
+                true,
+                &[
+                    &P::minimize(app, None)?,
+                    &P::maximize(app, None)?,
+                    &P::fullscreen(app, None)?,
+                ],
+            )?,
+        ],
+    )
+}
+
 pub fn run() {
     let vela = match Vela::from_env() {
         Ok(v) => v,
@@ -33,7 +82,11 @@ pub fn run() {
     let runner = Arc::new(checkrun::CheckRunner::default());
     let agents = vela_agents::AgentManager::new(vela_agents::Drivers::system());
     let refresher = Arc::new(agentrun::Refresher::default());
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // The default macOS menu closes the window on Cmd W: that key closes the editor tab.
+    #[cfg(target_os = "macos")]
+    let builder = builder.enable_macos_default_menu(false).menu(mac_menu);
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .manage(vela)
@@ -98,6 +151,14 @@ pub fn run() {
             c::space_files,
             c::stage_file,
             c::unstage_file,
+            c::stage_files,
+            c::unstage_files,
+            c::accept_hunks,
+            c::comments,
+            c::add_comment,
+            c::reply_comment,
+            c::resolve_comment,
+            c::delete_comment,
             c::read_file,
             c::write_file,
             c::draft_commit,
