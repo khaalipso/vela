@@ -196,6 +196,8 @@ pub fn apply_event(entry: &mut Entry, ev: &AgentEvent, ts: &str) {
         } => {
             a.question = Some(text.clone());
             a.options = options.clone();
+            // Waiting from now: a live run (ACP) stays paused until the answer comes.
+            a.status = AgentStatus::Waiting;
             entry.pending_tools = tools.clone();
             if a.summary.is_empty() {
                 a.summary = one_line(text, 160);

@@ -333,10 +333,14 @@ pub fn list_archived(vela: &Vela) -> AppResult<Vec<Space>> {
         .collect())
 }
 
-/// Remove a space: its worktrees go, its branch is deleted only when fully merged.
+/// Remove a space: its worktrees go, its branch is deleted only when fully merged, the
+/// worktrees, branches, logs and notes of its agents go too.
 pub fn remove_space(vela: &Vela, id: &str) -> AppResult<()> {
     space::remove(vela, id)?;
-    let rejected = vela_core::paths::spaces_dir(&vela.home).join(format!("{id}.rejected.json"));
-    let _ = fs::remove_file(rejected);
+    let dir = vela_core::paths::spaces_dir(&vela.home);
+    for f in ["rejected.json", "agents.json", "notes.json"] {
+        let _ = fs::remove_file(dir.join(format!("{id}.{f}")));
+    }
+    let _ = fs::remove_dir_all(dir.join(format!("{id}.agents")));
     Ok(())
 }

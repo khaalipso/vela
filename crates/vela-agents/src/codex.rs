@@ -63,6 +63,9 @@ pub fn args(spec: &RunSpec) -> Vec<String> {
         if let Some(m) = &spec.model {
             a.extend(["-m".to_string(), m.clone()]);
         }
+        if let Some(e) = &spec.effort {
+            a.extend(["-c".to_string(), format!("model_reasoning_effort=\"{e}\"")]);
+        }
         a.extend(spec.extra_args.iter().cloned());
         a.push(session.clone());
     } else {
@@ -71,6 +74,9 @@ pub fn args(spec: &RunSpec) -> Vec<String> {
         a.extend(["-s".to_string(), sandbox.to_string()]);
         if let Some(m) = &spec.model {
             a.extend(["-m".to_string(), m.clone()]);
+        }
+        if let Some(e) = &spec.effort {
+            a.extend(["-c".to_string(), format!("model_reasoning_effort=\"{e}\"")]);
         }
         a.extend(spec.extra_args.iter().cloned());
     }

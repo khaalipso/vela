@@ -27,6 +27,7 @@ fn spec(harness: &str) -> RunSpec {
     RunSpec {
         harness: harness.into(),
         model: None,
+        effort: None,
         tier: None,
         role: AgentRole::Developer,
         prompt: "do it".into(),
@@ -499,4 +500,51 @@ fn tier_shift_stops_at_the_ends() {
     assert_eq!(Tier::High.shift(1), Tier::High);
     assert_eq!(Tier::Medium.shift(-1), Tier::Low);
     assert_eq!(Tier::Low.shift(-1), Tier::Low);
+}
+
+#[test]
+fn effort_goes_to_each_harness_flag() {
+    let mut s = spec("claude");
+    s.effort = Some("max".into());
+    let a = claude::args(&s).join(" ");
+    assert!(a.contains("--effort max"), "{a}");
+    let mut s = spec("codex");
+    s.effort = Some("high".into());
+    let a = codex::args(&s).join(" ");
+    assert!(a.contains("-c model_reasoning_effort=\"high\""), "{a}");
+    let mut s = spec("opencode");
+    s.effort = Some("high".into());
+    let a = opencode::args(&s).join(" ");
+    assert!(a.contains("--variant high"), "{a}");
+    assert!(!claude::args(&spec("claude")).join(" ").contains("--effort"));
+}
+
+#[test]
+fn opencode_always_names_its_agent() {
+    let a = opencode::args(&spec("opencode")).join(" ");
+    assert!(a.contains("--agent build"), "{a}");
+    let mut s = spec("opencode");
+    s.read_only = true;
+    let a = opencode::args(&s).join(" ");
+    assert!(
+        a.contains("--agent plan") && !a.contains("--agent build"),
+        "{a}"
+    );
+}
+
+#[test]
+fn effort_resolves_per_harness_and_tier() {
+    let mut cfg = AgentsConfig::default();
+    cfg.effort.insert(
+        "claude".into(),
+        TierModels {
+            high: Some("max".into()),
+            ..Default::default()
+        },
+    );
+    let r = resolve(&cfg, AgentRole::Security, &Overrides::default(), None);
+    assert_eq!(r.tier, Tier::High);
+    assert_eq!(r.effort.as_deref(), Some("max"));
+    let r = resolve(&cfg, AgentRole::Developer, &Overrides::default(), None);
+    assert_eq!(r.effort, None);
 }

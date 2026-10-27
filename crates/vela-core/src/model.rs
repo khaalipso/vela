@@ -133,6 +133,10 @@ pub enum AgentRole {
     Reviewer,
     Tester,
     Debugger,
+    /// Reads the request and the code as a product manager: scope, user stories, edge cases.
+    Product,
+    /// Reads the code as a security reviewer: threats, unsafe patterns, secrets.
+    Security,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,6 +179,16 @@ impl Tier {
 }
 
 impl AgentRole {
+    pub const ALL: [AgentRole; 7] = [
+        AgentRole::Developer,
+        AgentRole::Reviewer,
+        AgentRole::Tester,
+        AgentRole::Planner,
+        AgentRole::Debugger,
+        AgentRole::Product,
+        AgentRole::Security,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             AgentRole::Planner => "planner",
@@ -182,6 +196,8 @@ impl AgentRole {
             AgentRole::Reviewer => "reviewer",
             AgentRole::Tester => "tester",
             AgentRole::Debugger => "debugger",
+            AgentRole::Product => "product",
+            AgentRole::Security => "security",
         }
     }
 
@@ -192,6 +208,8 @@ impl AgentRole {
             "reviewer" => AgentRole::Reviewer,
             "tester" => AgentRole::Tester,
             "debugger" => AgentRole::Debugger,
+            "product" => AgentRole::Product,
+            "security" => AgentRole::Security,
             _ => return None,
         })
     }

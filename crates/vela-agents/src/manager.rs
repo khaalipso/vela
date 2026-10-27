@@ -14,7 +14,7 @@ use vela_core::{Error, Result, Vela};
 use crate::claude::ClaudeDriver;
 use crate::codex::CodexDriver;
 use crate::detect::{HarnessInfo, detect};
-use crate::driver::{AgentDriver, Canceller, RunHandle, RunSpec};
+use crate::driver::{AgentDriver, Canceller, Replier, RunHandle, RunSpec};
 use crate::event::AgentEvent;
 use crate::opencode::OpencodeDriver;
 use crate::registry::{self, Entry, LogEntry};
@@ -73,6 +73,18 @@ impl Drivers {
         }
     }
 
+    /// The driver of a harness for a transport (`acp`, `cli`; None: ACP when its server is
+    /// installed, else the CLI).
+    pub fn get_for(&self, harness: &str, transport: Option<&str>) -> Option<Box<dyn AgentDriver>> {
+        if transport != Some("cli")
+            && let Some(d) = crate::acp::AcpDriver::for_harness(harness, self.path.as_deref())
+        {
+            return Some(Box::new(d));
+        }
+        self.get(harness)
+    }
+
+    /// The CLI driver of a harness.
     pub fn get(&self, harness: &str) -> Option<Box<dyn AgentDriver>> {
         let p = self.path.as_deref();
         Some(match harness {
@@ -91,6 +103,8 @@ impl Drivers {
 struct Live {
     /// None while the run is being prepared (worktrees, process start).
     canceller: Option<Canceller>,
+    /// Answers a question in the live run (ACP).
+    replier: Option<Replier>,
 }
 
 pub struct AgentManager {
@@ -106,7 +120,10 @@ fn key(space: &str, agent: &str) -> String {
 
 /// Roles that only read: they run in the user's worktree in the harness's read only mode.
 pub fn is_read_only(role: AgentRole) -> bool {
-    matches!(role, AgentRole::Reviewer | AgentRole::Planner)
+    matches!(
+        role,
+        AgentRole::Reviewer | AgentRole::Planner | AgentRole::Product | AgentRole::Security
+    )
 }
 
 fn role_brief(role: AgentRole) -> &'static str {
@@ -135,11 +152,33 @@ fn role_brief(role: AgentRole) -> &'static str {
             "You are the planner agent of a Vela space. You only read: do not change any file. \
              Write a short plan as a list of steps for the request."
         }
+        AgentRole::Product => {
+            "You are the product agent of a Vela space. You only read: do not change any file. \
+             Look at the request and the code as a product manager: restate the goal, the user \
+             stories and acceptance criteria, the edge cases and what is out of scope, and the \
+             open questions to settle before building. Be short and concrete."
+        }
+        AgentRole::Security => {
+            "You are the security agent of a Vela space. You only read: do not change any file. \
+             Review the code and the uncommitted changes (git diff, git status) for security \
+             problems: injection, authentication and authorization, secrets, unsafe input \
+             handling, dependencies, data exposure. Report concrete findings with file and line, \
+             most severe first."
+        }
     }
 }
 
 fn compose_prompt(role: AgentRole, prompt: &str) -> String {
-    format!("{}\n\nRequest: {}", role_brief(role), prompt.trim())
+    if crate::notes::reports_notes(role) {
+        format!(
+            "{} {}\n\nRequest: {}",
+            role_brief(role),
+            crate::notes::FORMAT,
+            prompt.trim()
+        )
+    } else {
+        format!("{}\n\nRequest: {}", role_brief(role), prompt.trim())
+    }
 }
 
 /// Does the answer mean yes to a permission question?
@@ -174,6 +213,11 @@ impl AgentManager {
         })
     }
 
+    /// The directory of the global config layer (None: there is none).
+    pub fn config_dir(&self) -> Option<&std::path::Path> {
+        self.config_dir.as_deref()
+    }
+
     pub fn harnesses(&self) -> Vec<HarnessInfo> {
         self.drivers.detect()
     }
@@ -194,6 +238,19 @@ impl AgentManager {
                 return false;
             }
             std::thread::sleep(Duration::from_millis(5));
+        }
+        true
+    }
+
+    /// Wait until no agent of the space runs. False on timeout.
+    pub fn wait_idle_space(&self, space_id: &str, timeout: Duration) -> bool {
+        let prefix = format!("{space_id}\0");
+        let end = Instant::now() + timeout;
+        while self.live().keys().any(|k| k.starts_with(&prefix)) {
+            if Instant::now() >= end {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
         }
         true
     }
@@ -228,16 +285,10 @@ impl AgentManager {
             .filter(|h| h.available)
             .map(|h| h.name)
             .collect();
-        [
-            AgentRole::Developer,
-            AgentRole::Reviewer,
-            AgentRole::Tester,
-            AgentRole::Planner,
-            AgentRole::Debugger,
-        ]
-        .into_iter()
-        .map(|r| (r, resolve(&cfg, r, &Overrides::default(), Some(&installed))))
-        .collect()
+        AgentRole::ALL
+            .into_iter()
+            .map(|r| (r, resolve(&cfg, r, &Overrides::default(), Some(&installed))))
+            .collect()
     }
 
     /// The agents of a space, newest first. Agents that were running when Vela stopped are
@@ -299,6 +350,22 @@ impl AgentManager {
         }
     }
 
+    /// Kill every running agent of a space (before the space is removed). Returns how many.
+    pub fn cancel_space(&self, space_id: &str) -> usize {
+        let prefix = format!("{space_id}\0");
+        let live = self.live();
+        let mut n = 0;
+        for (k, l) in live.iter() {
+            if k.starts_with(&prefix) {
+                if let Some(c) = &l.canceller {
+                    c.cancel();
+                }
+                n += 1;
+            }
+        }
+        n
+    }
+
     /// Start an agent for the request: resolve harness and model, make its worktrees, run.
     pub fn ask(
         self: &Arc<Self>,
@@ -334,15 +401,23 @@ impl AgentManager {
         }
         let driver = self
             .drivers
-            .get(&resolved.harness)
+            .get_for(
+                &resolved.harness,
+                cfg.transport.get(&resolved.harness).map(String::as_str),
+            )
             .ok_or_else(|| Error::Invalid(format!("unknown harness: {}", resolved.harness)))?;
         let read_only = is_read_only(req.role);
 
         // Reserve the id before making worktrees so two requests never share one. The agent is
         // live from the start, so a listing never mistakes it for an interrupted one.
         let id = registry::insert_next(vela, &space.id, req.role, |id| {
-            self.live()
-                .insert(key(&space.id, &id), Live { canceller: None });
+            self.live().insert(
+                key(&space.id, &id),
+                Live {
+                    canceller: None,
+                    replier: None,
+                },
+            );
             Entry {
                 agent: Agent {
                     id,
@@ -397,6 +472,7 @@ impl AgentManager {
         let spec = RunSpec {
             harness: resolved.harness,
             model: resolved.model,
+            effort: resolved.effort,
             tier: Some(resolved.tier),
             role: req.role,
             prompt: compose_prompt(req.role, &req.prompt),
@@ -436,6 +512,27 @@ impl AgentManager {
             return Err(Error::Invalid("the answer is empty".to_string()));
         }
         let entry = registry::find(vela, &space.id, agent_id)?;
+        // A live run that can take the answer (ACP): it goes straight to the process.
+        let replier = self
+            .live()
+            .get(&key(&space.id, agent_id))
+            .and_then(|l| l.replier.clone());
+        if entry.agent.status == AgentStatus::Waiting
+            && let Some(reply) = replier
+            && reply(text)
+        {
+            let entry = registry::update(vela, &space.id, agent_id, registry::begin_run)?;
+            let prompt = AgentEvent::Prompt {
+                text: text.to_string(),
+            };
+            let _ = registry::append_log(vela, &space.id, agent_id, &prompt);
+            emit(Notice {
+                space_id: space.id.clone(),
+                agent_id: agent_id.to_string(),
+                event: prompt,
+            });
+            return Ok(entry.agent);
+        }
         if entry.agent.status == AgentStatus::Working || self.is_live(&space.id, agent_id) {
             return Err(Error::Invalid(format!("{agent_id} is still working")));
         }
@@ -444,10 +541,6 @@ impl AgentManager {
             .session
             .clone()
             .ok_or_else(|| Error::Invalid(format!("{agent_id} has no session to resume")))?;
-        let driver = self
-            .drivers
-            .get(&entry.agent.tool)
-            .ok_or_else(|| Error::Invalid(format!("unknown harness: {}", entry.agent.tool)))?;
         let tools = entry.pending_tools.clone();
         let mut extra = Vec::new();
         let prompt = if !tools.is_empty() {
@@ -468,26 +561,129 @@ impl AgentManager {
         } else {
             text.to_string()
         };
+        self.resume(vela, space, &entry, &session, prompt, extra, text, emit)
+    }
+
+    /// Give a finished agent more work: a resumed run of its session in its own worktree.
+    pub fn follow_up(
+        self: &Arc<Self>,
+        vela: &Vela,
+        space: &Space,
+        agent_id: &str,
+        prompt: &str,
+        emit: &Emit,
+    ) -> Result<Agent> {
+        let prompt = prompt.trim();
+        if prompt.is_empty() {
+            return Err(Error::Invalid("tell the agent what to do".to_string()));
+        }
+        let entry = registry::find(vela, &space.id, agent_id)?;
+        if entry.agent.status == AgentStatus::Working || self.is_live(&space.id, agent_id) {
+            return Err(Error::Invalid(format!("{agent_id} is still working")));
+        }
+        let session = entry
+            .agent
+            .session
+            .clone()
+            .ok_or_else(|| Error::Invalid(format!("{agent_id} has no session to resume")))?;
+        self.resume(
+            vela,
+            space,
+            &entry,
+            &session,
+            prompt.to_string(),
+            Vec::new(),
+            prompt,
+            emit,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resume(
+        self: &Arc<Self>,
+        vela: &Vela,
+        space: &Space,
+        entry: &Entry,
+        session: &str,
+        prompt: String,
+        extra: Vec<String>,
+        shown: &str,
+        emit: &Emit,
+    ) -> Result<Agent> {
+        let agent_id = entry.agent.id.as_str();
+        let cfg = self.agents_config(vela, space);
+        let driver = self
+            .drivers
+            .get_for(
+                &entry.agent.tool,
+                cfg.transport.get(&entry.agent.tool).map(String::as_str),
+            )
+            .ok_or_else(|| Error::Invalid(format!("unknown harness: {}", entry.agent.tool)))?;
         let cwd = if entry.read_only {
             worktree::read_only_dir(vela, space)
         } else {
             worktree::run_dir(vela, space, agent_id, &entry.agent.worktrees)
         };
+        let effort = entry
+            .agent
+            .tier
+            .and_then(|t| cfg.effort.get(&entry.agent.tool).and_then(|e| e.get(t)))
+            .map(str::to_string);
         let spec = RunSpec {
             harness: entry.agent.tool.clone(),
             model: entry.agent.model.clone(),
+            effort,
             tier: entry.agent.tier,
             role: entry.agent.role,
             prompt,
             cwd,
-            session: Some(session.clone()),
+            session: Some(session.to_string()),
             read_only: entry.read_only,
             extra_args: extra,
         };
-        let handle = driver.reply(&spec, &session, &spec.prompt)?;
+        let handle = driver.reply(&spec, session, &spec.prompt)?;
         let entry = registry::update(vela, &space.id, agent_id, registry::begin_run)?;
-        self.watch(vela, &space.id, agent_id, handle, text, emit);
+        self.watch(vela, &space.id, agent_id, handle, shown, emit);
         Ok(entry.agent)
+    }
+
+    /// Ask for a fix of a reviewer note. The agent that proposed the hunk gets it back when it
+    /// can be resumed; otherwise a new developer agent starts with the note as the request.
+    pub fn ask_fix(
+        self: &Arc<Self>,
+        vela: &Vela,
+        space: &Space,
+        note: &crate::notes::Note,
+        author: Option<&str>,
+        emit: &Emit,
+    ) -> Result<Agent> {
+        let prompt = crate::notes::fix_prompt(note);
+        let resumable = author
+            .and_then(|a| registry::find(vela, &space.id, a).ok())
+            .filter(|e| {
+                !e.read_only
+                    && e.agent.session.is_some()
+                    && e.agent.status != AgentStatus::Working
+                    && !self.is_live(&space.id, &e.agent.id)
+            });
+        let agent = match resumable {
+            Some(e) => self.follow_up(vela, space, &e.agent.id, &prompt, emit)?,
+            None => self.ask(
+                vela,
+                space,
+                AskRequest {
+                    role: AgentRole::Developer,
+                    prompt,
+                    harness: None,
+                    tier: None,
+                },
+                emit,
+            )?,
+        };
+        let mut st = crate::notes::load_state(vela, &space.id);
+        st.fixers.insert(note.id.clone(), agent.id.clone());
+        crate::notes::save_state(vela, &space.id, &st)?;
+        Ok(agent)
     }
 
     /// Consume the events of a run on a thread: log, fold into the registry, forward.
@@ -504,6 +700,7 @@ impl AgentManager {
             key(space_id, agent_id),
             Live {
                 canceller: Some(handle.canceller()),
+                replier: handle.replier(),
             },
         );
         let me = self.clone();

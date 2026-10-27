@@ -444,7 +444,7 @@ fn opencode_runs_through_its_driver() {
         "opencode",
         &recording(&fixture("opencode/run.jsonl")),
     );
-    let m = manager(&e);
+    let m = manager_cfg(&e, "[agents.transport]\nopencode = \"cli\"\n");
     let (emit, _) = collector();
     m.ask(
         &e.vela,
@@ -467,4 +467,148 @@ fn opencode_runs_through_its_driver() {
     assert!(args.starts_with("run --format json "), "{args}");
     assert!(args.contains("--agent plan"), "{args}");
     assert!(args.contains("Request: plan refunds"), "{args}");
+}
+
+/// A manager whose global config layer holds `toml`.
+fn manager_cfg(e: &Env, toml: &str) -> std::sync::Arc<vela_agents::AgentManager> {
+    let dir = e.root.join("cfg");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("config.toml"), toml).unwrap();
+    vela_agents::AgentManager::with_config_dir(
+        vela_agents::Drivers::with_path(e.bin.clone()),
+        Some(dir),
+    )
+}
+
+/// A fake `opencode acp`: answers initialize and session/new, then on the prompt edits
+/// notes.txt, asks a permission, waits for the answer (recorded in `answer`), ends the turn.
+const FAKE_ACP: &str = r#"here=$(dirname "$0")
+if [ "$1" = "--version" ]; then echo 9.9.9; exit 0; fi
+echo "$@" > "$here/args"
+while IFS= read -r line; do
+  echo "$line" >> "$here/requests"
+  case "$line" in
+    *'"method":"initialize"'*)
+      echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}' ;;
+    *'"method":"session/new"'*)
+      echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"ses_acp1","configOptions":[{"id":"mode","category":"mode","currentValue":"build","options":[{"value":"build"},{"value":"plan"}]},{"id":"effort","category":"thought_level","currentValue":"none","options":[{"value":"none"},{"value":"high"}]}]}}' ;;
+    *'"method":"session/set_config_option"'*)
+      id=$(echo "$line" | sed 's/.*"id":\([0-9]*\).*/\1/')
+      echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{}}" ;;
+    *'"method":"session/prompt"'*)
+      printf 'one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\nthirteen\nfourteen\nfifteen\nsixteen\nseventeen\neighteen\nnineteen\ntwenty\n' > notes.txt
+      echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"ses_acp1","update":{"sessionUpdate":"plan","entries":[{"content":"Edit notes","status":"pending"}]}}}'
+      echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"ses_acp1","update":{"sessionUpdate":"tool_call","toolCallId":"t1","title":"write","kind":"edit","status":"pending","rawInput":{}}}}'
+      echo "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"sessionId\":\"ses_acp1\",\"update\":{\"sessionUpdate\":\"tool_call_update\",\"toolCallId\":\"t1\",\"status\":\"completed\",\"rawInput\":{\"filePath\":\"$PWD/notes.txt\"}}}}"
+      echo '{"jsonrpc":"2.0","id":7,"method":"session/request_permission","params":{"sessionId":"ses_acp1","toolCall":{"toolCallId":"t2","title":"rm -rf build"},"options":[{"optionId":"ok","name":"Allow once","kind":"allow_once"},{"optionId":"no","name":"Reject","kind":"reject_once"}]}}' ;;
+    *'"id":7'*'"result"'*)
+      echo "$line" > "$here/answer"
+      echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"ses_acp1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Changed line "}}}}'
+      echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"ses_acp1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"two."}}}}'
+      echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"ses_acp1","update":{"sessionUpdate":"usage_update","used":10,"size":100,"cost":{"amount":0.25,"currency":"USD"}}}}'
+      echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","usage":{"inputTokens":100,"outputTokens":20,"cachedReadTokens":5}}}' ;;
+  esac
+done
+"#;
+
+#[test]
+fn acp_runs_and_takes_an_answer_in_the_live_run() {
+    let e = env();
+    script(&e.bin, "opencode", FAKE_ACP);
+    let m = manager_cfg(&e, "[agents.effort.opencode]\nmedium = \"high\"\n");
+    let (emit, seen) = collector();
+    m.ask(
+        &e.vela,
+        &e.space,
+        AskRequest {
+            harness: Some("opencode".into()),
+            ..ask(AgentRole::Developer, "change two")
+        },
+        &emit,
+    )
+    .unwrap();
+    // Wait for the permission question; the process stays alive meanwhile.
+    let end = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let a = m.list(&e.vela, "refunds").unwrap().remove(0);
+        if a.status == AgentStatus::Waiting {
+            assert_eq!(a.question.as_deref(), Some("Allow rm -rf build?"));
+            assert_eq!(a.options, vec!["Allow once", "Reject"]);
+            assert!(m.is_live("refunds", &a.id));
+            break;
+        }
+        assert!(std::time::Instant::now() < end, "no question");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let id = m.list(&e.vela, "refunds").unwrap().remove(0).id;
+    m.answer(&e.vela, &e.space, &id, "yes", &emit).unwrap();
+    idle(&m);
+    let a = m.list(&e.vela, "refunds").unwrap().remove(0);
+    assert_eq!(a.status, AgentStatus::Done, "{a:?}");
+    assert_eq!(a.summary, "Changed line two.");
+    assert_eq!(a.session.as_deref(), Some("ses_acp1"));
+    assert_eq!(a.plan, vec!["Edit notes"]);
+    assert_eq!(a.usage.input_tokens, 105);
+    assert!((a.usage.cost_usd - 0.25).abs() < 1e-9);
+    assert_eq!(read(&e.bin.join("args")).trim(), "acp");
+    assert!(read(&e.bin.join("answer")).contains(r#""optionId":"ok""#));
+    let reqs = read(&e.bin.join("requests"));
+    // Developer runs at medium: its effort is set; the mode is already build.
+    assert!(
+        reqs.contains(r#""configId":"effort","sessionId":"ses_acp1","value":"high""#),
+        "{reqs}"
+    );
+    assert!(!reqs.contains(r#""configId":"mode""#), "{reqs}");
+    let events: Vec<AgentEvent> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|n| n.event.clone())
+        .collect();
+    assert!(
+        events.contains(&AgentEvent::FileChanged {
+            path: "notes.txt".into()
+        }),
+        "{events:?}"
+    );
+    // The edit shows as a proposal.
+    let entries = registry::load(&e.vela, "refunds").unwrap();
+    let props =
+        vela_agents::proposals::proposals(&e.space, &entries, &Default::default(), false).unwrap();
+    assert_eq!(props.len(), 1);
+}
+
+#[test]
+fn acp_read_only_roles_switch_to_plan_mode() {
+    let e = env();
+    script(&e.bin, "opencode", FAKE_ACP);
+    let m = manager_cfg(&e, "");
+    let (emit, _) = collector();
+    m.ask(
+        &e.vela,
+        &e.space,
+        AskRequest {
+            harness: Some("opencode".into()),
+            ..ask(AgentRole::Security, "audit")
+        },
+        &emit,
+    )
+    .unwrap();
+    let end = std::time::Instant::now() + Duration::from_secs(10);
+    while !read(&e.bin.join("requests")).contains("session/prompt") {
+        assert!(std::time::Instant::now() < end);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let id = m.list(&e.vela, "refunds").unwrap().remove(0).id;
+    m.cancel("refunds", &id);
+    idle(&m);
+    let reqs = read(&e.bin.join("requests"));
+    assert!(
+        reqs.contains(r#""configId":"mode","sessionId":"ses_acp1","value":"plan""#),
+        "{reqs}"
+    );
+    assert!(
+        reqs.contains("NOTE <blocking|warning|info>"),
+        "the security brief asks for notes"
+    );
 }

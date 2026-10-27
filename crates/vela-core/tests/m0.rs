@@ -175,6 +175,34 @@ fn remove_keeps_an_unmerged_branch() {
 }
 
 #[test]
+fn remove_deletes_agent_worktrees_and_branches() {
+    let e = env();
+    let a = repo(&e.root, "api", &[("a", "a\n")]);
+    let s = space::create(&e.vela, "wip", &[&a], None).unwrap();
+    let agent_wt = vela_core::paths::agent_worktree(&e.vela.home, &s.id, "developer-1", "api");
+    std::fs::create_dir_all(agent_wt.parent().unwrap()).unwrap();
+    let branch = format!("{}--developer-1", s.branch);
+    sh(
+        &a,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            &branch,
+            &agent_wt.to_string_lossy(),
+            "HEAD",
+        ],
+    );
+    write(&agent_wt, "a", "agent\n");
+    sh(&agent_wt, &["commit", "-qam", "agent work"]);
+    space::remove(&e.vela, "wip").unwrap();
+    assert!(!agent_wt.exists());
+    assert!(!sh(&a, &["branch", "--list", &branch]).contains("developer-1"));
+    assert!(!sh(&a, &["worktree", "list"]).contains("developer-1"));
+}
+
+#[test]
 fn status_splits_staged_unstaged_untracked_renamed() {
     let e = env();
     let s = one_repo_space(

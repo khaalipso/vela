@@ -527,6 +527,7 @@ pub fn agent_emitter(app: &AppHandle) -> vela_agents::Emit {
     let handle = app.clone();
     let send: Arc<dyn Fn(&vela_agents::Notice) + Send + Sync> = Arc::new(move |n| {
         let _ = handle.emit(agentrun::EVENT, n);
+        crate::desktop::notify(&handle, n);
     });
     agentrun::sink(
         send,
@@ -677,10 +678,85 @@ pub async fn accept_proposal(
 
 // -- later milestones: empty or neutral --------------------------------------
 
-/// TODO(M3): reviewer notes.
+/// The notes of the reviewer and security agents of the space.
 #[tauri::command]
-pub fn notes(_space_id: String) -> Vec<serde_json::Value> {
-    Vec::new()
+pub async fn notes(
+    vela: State<'_, Vela>,
+    agents: State<'_, Arc<AgentManager>>,
+    space_id: String,
+) -> AppResult<Vec<vela_agents::notes::Note>> {
+    let agents = agents.inner().clone();
+    blocking(&vela, move |v| commands::notes(v, &agents, &space_id)).await
+}
+
+/// Send a note to its author (or a new developer agent) for a fix.
+#[tauri::command]
+pub async fn ask_fix(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    agents: State<'_, Arc<AgentManager>>,
+    space_id: String,
+    note_id: String,
+) -> AppResult<Agent> {
+    let agents = agents.inner().clone();
+    let emit = agent_emitter(&app);
+    let sid = space_id.clone();
+    let a = blocking(&vela, move |v| {
+        commands::ask_fix(v, &agents, &sid, &note_id, &emit)
+    })
+    .await?;
+    notify_state(&app, &space_id);
+    Ok(a)
+}
+
+#[tauri::command]
+pub async fn resolve_note(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    note_id: String,
+    resolved: bool,
+) -> AppResult<()> {
+    let sid = space_id.clone();
+    blocking(&vela, move |v| {
+        commands::resolve_note(v, &sid, &note_id, resolved)
+    })
+    .await?;
+    notify_state(&app, &space_id);
+    Ok(())
+}
+
+/// Model and effort of each tier, per harness.
+#[tauri::command]
+pub async fn agent_tiers(
+    agents: State<'_, Arc<AgentManager>>,
+) -> AppResult<Vec<commands::HarnessTiers>> {
+    let agents = agents.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || commands::agent_tiers(&agents))
+        .await
+        .map_err(|e| AppError::new("internal", e.to_string()))
+}
+
+#[tauri::command]
+pub async fn set_agent_tier(
+    agents: State<'_, Arc<AgentManager>>,
+    harness: String,
+    tier: String,
+    model: Option<String>,
+    effort: Option<String>,
+) -> AppResult<()> {
+    let agents = agents.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        commands::set_agent_tier(
+            &agents,
+            &harness,
+            &tier,
+            model.as_deref(),
+            effort.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| AppError::new("internal", e.to_string()))?
 }
 
 /// TODO(M3): runtimes and containers of the space.
@@ -693,4 +769,56 @@ pub fn stack(_space_id: String) -> Vec<StackItem> {
 #[tauri::command]
 pub fn run_gate(_space_id: String) -> Vec<serde_json::Value> {
     Vec::new()
+}
+
+// -- terminals ---------------------------------------------------------------
+
+/// Start a shell in the worktree of `repo` (or the first repo, or the space directory).
+#[tauri::command]
+pub async fn term_open(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    terms: State<'_, Arc<crate::term::Terminals>>,
+    space_id: String,
+    repo: Option<String>,
+    cols: u16,
+    rows: u16,
+) -> AppResult<u64> {
+    let space = vela_core::store::load(&vela, &space_id)?;
+    let cwd = repo
+        .as_deref()
+        .and_then(|r| space.repos.iter().find(|x| x.name == r))
+        .or(space.repos.first())
+        .map(|r| std::path::PathBuf::from(&r.worktree))
+        .filter(|p| p.is_dir())
+        .unwrap_or_else(|| vela_core::paths::space_root(&vela.home, &space_id));
+    let handle = app.clone();
+    let emit: crate::term::EmitTerm = Arc::new(move |e| {
+        let _ = handle.emit(crate::term::EVENT, e);
+    });
+    terms.inner().open(cwd, cols, rows, emit)
+}
+
+#[tauri::command]
+pub fn term_write(
+    terms: State<'_, Arc<crate::term::Terminals>>,
+    id: u64,
+    data: String,
+) -> AppResult<()> {
+    terms.write(id, &data)
+}
+
+#[tauri::command]
+pub fn term_resize(
+    terms: State<'_, Arc<crate::term::Terminals>>,
+    id: u64,
+    cols: u16,
+    rows: u16,
+) -> AppResult<()> {
+    terms.resize(id, cols, rows)
+}
+
+#[tauri::command]
+pub fn term_close(terms: State<'_, Arc<crate::term::Terminals>>, id: u64) {
+    terms.close(id);
 }

@@ -5,7 +5,7 @@
 //! the tool with its input and state, `step_finish` the cost and tokens. When the installed
 //! opencode prints plain text instead (before the first JSON line), each line is a Message.
 //! The prompt is the last argument; a resumed run adds `--session <id>`; read only runs use
-//! the built in `plan` agent.
+//! the built in `plan` agent, the others `build`. A tier's effort goes to `--variant`.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -51,13 +51,17 @@ pub fn args(spec: &RunSpec) -> Vec<String> {
     if let Some(m) = &spec.model {
         a.extend(["-m".to_string(), m.clone()]);
     }
+    if let Some(e) = &spec.effort {
+        a.extend(["--variant".to_string(), e.clone()]);
+    }
     a.extend(["--dir".to_string(), spec.cwd.to_string_lossy().into_owned()]);
     if let Some(s) = &spec.session {
         a.extend(["--session".to_string(), s.clone()]);
     }
-    if spec.read_only {
-        a.extend(["--agent".to_string(), "plan".to_string()]);
-    }
+    // Always name the agent: a `default_agent` in the user's opencode config may not exist in
+    // this directory, and opencode then fails every prompt with "default agent not found".
+    let agent = if spec.read_only { "plan" } else { "build" };
+    a.extend(["--agent".to_string(), agent.to_string()]);
     a.extend(spec.extra_args.iter().cloned());
     // A prompt that starts with a dash would be read as an option.
     let prompt = if spec.prompt.starts_with('-') {

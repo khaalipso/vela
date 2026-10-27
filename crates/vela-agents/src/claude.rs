@@ -53,6 +53,9 @@ pub fn args(spec: &RunSpec) -> Vec<String> {
     if let Some(m) = &spec.model {
         a.extend(["--model".to_string(), m.clone()]);
     }
+    if let Some(e) = &spec.effort {
+        a.extend(["--effort".to_string(), e.clone()]);
+    }
     a.extend([
         "--permission-mode".to_string(),
         if spec.read_only {
