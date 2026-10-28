@@ -1,6 +1,7 @@
 // Pure logic of the Review view: the three file sections, the selection and the hunk cursor.
 // The store (app.svelte.ts) applies these; components only render.
 
+import { naturalCompare } from "./filetree";
 import type { ChangeKind, FileChange, Hunk } from "./types";
 
 /**
@@ -69,13 +70,29 @@ function sizeOf(h: Hunk): { add: number; del: number } {
   return { add, del };
 }
 
+/**
+ * The order of the file tree: repos by name, then in each folder the subfolders before the
+ * files, names in natural order. J and K walk the rows in this order.
+ */
+export function treeCompare(a: { repo: string; path: string }, b: { repo: string; path: string }): number {
+  if (a.repo !== b.repo) return naturalCompare(a.repo, b.repo);
+  const x = a.path.split("/");
+  const y = b.path.split("/");
+  for (let i = 0; i < Math.min(x.length, y.length); i++) {
+    const xDir = i < x.length - 1;
+    const yDir = i < y.length - 1;
+    if (xDir !== yDir) return xDir ? -1 : 1;
+    const c = naturalCompare(x[i], y[i]);
+    if (c) return c;
+  }
+  return x.length - y.length;
+}
+
 function group(rows: FileRow[]): RepoGroup[] {
+  const sorted = [...rows].sort(treeCompare);
   const repos: string[] = [];
-  for (const r of rows) if (!repos.includes(r.repo)) repos.push(r.repo);
-  return repos.map((repo) => ({
-    repo,
-    files: rows.filter((r) => r.repo === repo).sort((a, b) => a.path.localeCompare(b.path)),
-  }));
+  for (const r of sorted) if (!repos.includes(r.repo)) repos.push(r.repo);
+  return repos.map((repo) => ({ repo, files: sorted.filter((r) => r.repo === repo) }));
 }
 
 /** The files of the space with what waits in each, from git status and the hunks. */
@@ -160,9 +177,9 @@ export const initialRv = (): RvState => ({
   open: null,
 });
 
-/** Rows in screen order, leaving out the collapsed sections. */
+/** Rows in screen order (one tree, files to review and accepted ones mixed), leaving out the collapsed sections. */
 export function visibleRows(s: Sections, collapsed: Record<Section, boolean>): FileRow[] {
-  return SECTIONS.flatMap((sec) => (collapsed[sec] ? [] : s[sec].flatMap((g) => g.files)));
+  return SECTIONS.flatMap((sec) => (collapsed[sec] ? [] : s[sec].flatMap((g) => g.files))).sort(treeCompare);
 }
 
 export function allRows(s: Sections): FileRow[] {

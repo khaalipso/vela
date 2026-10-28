@@ -33,6 +33,8 @@ changed, file by file, as a diff you can edit before you accept it.
   <kbd>F</kbd> sends one back to its author for a fix, <kbd>Shift</kbd>+<kbd>Y</kbd> resolves it.
 - **Commit composer** (<kbd>C</kbd>): conventional commits inferred from the diff, split
   suggestions, ticket footers, one commit per repo.
+- **Git view** (<kbd>4</kbd>): the commit graph of each repo, the branch against its base and its
+  upstream, what is not committed yet, and the pull requests.
 - **Context card** (<kbd>L</kbd>): issue, PRs, docs, dashboards of the space; issue keys are
   detected from the branch and commits, URLs pasted anywhere are linked.
 - **Editor** on CodeMirror 6 with find and replace (<kbd>Ctrl</kbd>+<kbd>F</kbd>), a Markdown

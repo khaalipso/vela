@@ -159,7 +159,7 @@ describe("keyboard", () => {
 
   it("keys do not leak to the shortcuts behind the menu", async () => {
     const view = app.view;
-    press("2");
+    press("3");
     press("b");
     expect(app.view).toBe(view);
     expect(app.filesOpen).toBe(true);
@@ -312,7 +312,7 @@ describe("tree actions end to end", () => {
     expect(document.activeElement?.textContent).toBe("Cancel");
     // letters do not reach the shortcuts behind the sheet
     const v = app.view;
-    press("2");
+    press("3");
     expect(app.view).toBe(v);
     press("Escape");
     await settle();
@@ -470,9 +470,9 @@ describe("spaces", () => {
 
 describe("review", () => {
   it("a file row has its menu; Accept file accepts it as the diff shows it", async () => {
-    press("2");
+    press("3");
     await settle();
-    const frow = $$(".frow").find((r) => r.closest("[data-section='review']"))!;
+    const frow = $$(".frow[data-section='review']")[0];
     rightClick(frow);
     await settle();
     expect(items()).toEqual(["Accept file", "Reject the agent's changes", "Open in editor", "Discard your changes…", "Copy path"]);

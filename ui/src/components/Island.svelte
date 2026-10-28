@@ -15,7 +15,7 @@
   .island {
     position: absolute;
     left: 50%;
-    bottom: calc(52px + var(--termh, 0px));
+    bottom: calc(72px + var(--termh, 0px));
     transform: translateX(-50%);
     z-index: 5;
     display: flex;

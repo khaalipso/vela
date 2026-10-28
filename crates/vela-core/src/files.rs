@@ -12,7 +12,8 @@ use crate::status::repo_status;
 pub const MAX_FILES: usize = 200_000;
 
 /// Files of one worktree: tracked and untracked (ignored ones left out), merged with
-/// `changes`. Files deleted from the worktree stay listed with their status.
+/// `changes`. The tree shows what is on disk: a file deleted from the worktree leaves it (the
+/// Review lists the deletion).
 pub fn tree_files(dir: &Path, changes: &[FileChange]) -> Result<(Vec<TreeFile>, bool)> {
     tree_files_capped(dir, changes, MAX_FILES)
 }
@@ -51,26 +52,17 @@ fn tree_files_capped(
             )
         })
         .collect();
-    let mut extra: Vec<TreeFile> = Vec::new();
     for c in changes {
-        match map.get_mut(c.path.as_str()) {
-            Some(f) => {
-                f.staged = c.staged;
-                f.unstaged = c.unstaged;
-            }
-            // Staged deletions leave the index, so ls-files no longer lists them.
-            None if c.staged.is_some() || c.unstaged == Some(ChangeKind::Deleted) => {
-                extra.push(TreeFile {
-                    path: c.path.clone(),
-                    staged: c.staged,
-                    unstaged: c.unstaged,
-                })
-            }
-            None => {}
+        let gone = c.unstaged == Some(ChangeKind::Deleted)
+            || (c.staged == Some(ChangeKind::Deleted) && !dir.join(&c.path).exists());
+        if gone {
+            map.remove(c.path.as_str());
+        } else if let Some(f) = map.get_mut(c.path.as_str()) {
+            f.staged = c.staged;
+            f.unstaged = c.unstaged;
         }
     }
     let mut files: Vec<TreeFile> = map.into_values().collect();
-    files.extend(extra);
     files.sort_unstable_by(|a, b| a.path.cmp(&b.path));
     files.dedup_by(|a, b| a.path == b.path);
     Ok((files, truncated))
@@ -216,17 +208,20 @@ mod tests {
     }
 
     #[test]
-    fn deleted_files_stay_listed() {
+    fn deleted_files_leave_the_tree() {
         let tmp = tempfile::tempdir().unwrap();
         let (dir, space) = repo(tmp.path());
         fs::remove_file(dir.join("src/old.ts")).unwrap();
         fs::remove_file(dir.join("src/b.ts")).unwrap();
         sh(&dir, &["rm", "--cached", "-q", "src/b.ts"]);
+        // A new file staged, then deleted from disk.
+        write(&dir, "src/new.ts", "n\n");
+        sh(&dir, &["add", "src/new.ts"]);
+        fs::remove_file(dir.join("src/new.ts")).unwrap();
         let r = &space_files(&space).unwrap()[0];
-        let old = find(r, "src/old.ts").unwrap();
-        assert_eq!(old.unstaged, Some(ChangeKind::Deleted));
-        let b = find(r, "src/b.ts").unwrap();
-        assert_eq!(b.staged, Some(ChangeKind::Deleted));
+        assert!(find(r, "src/old.ts").is_none());
+        assert!(find(r, "src/b.ts").is_none());
+        assert!(find(r, "src/new.ts").is_none());
     }
 
     #[test]

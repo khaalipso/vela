@@ -29,7 +29,8 @@
   const running = $derived(isRunning(agent));
   const waiting = $derived(agent.status === "waiting");
   const q = $derived(waiting && app.sd.question?.agentId === agent.id ? app.sd.question : null);
-  const canSend = $derived(!running && (waiting || !!agent.session));
+  const canSend = $derived(running || waiting || !!agent.session);
+  const queued = $derived(app.queuedFor(agent.id));
   const use = $derived(usageLine(agent.usage));
   /** The files this agent proposes changes in, still waiting for you in the Review. */
   const changed = $derived.by(() => {
@@ -117,6 +118,12 @@
     if (!t || !canSend) return;
     text = "";
     stick = true;
+    if (running) {
+      app.queueFor(agent.id, t);
+      await tick();
+      bottom();
+      return;
+    }
     if (q) await app.reply(t);
     else await app.followUp(agent.id, t);
     await load(agent.id);
@@ -175,7 +182,7 @@
           <i class="a">+{f.add}</i><i class="d">−{f.del}</i>
         </button>
       {/each}
-      <button class="btn p go" onclick={() => review(changed[0])}>Review <Kbd k="2" /></button>
+      <button class="btn p go" onclick={() => review(changed[0])}>Review <Kbd k="3" /></button>
     </div>
   {/if}
 
@@ -245,6 +252,12 @@
     {#if running}
       <div class="typing"><span></span><span></span><span></span> working</div>
     {/if}
+    {#each queued as m, i (i)}
+      <div class="you queued">
+        <div class="bubble">{m}</div>
+        <span class="qn">Sends when it stops <button onclick={() => app.unqueue(agent.id, i)} title="Do not send">✕</button></span>
+      </div>
+    {/each}
   </div>
 
   <form
@@ -262,18 +275,44 @@
       onkeydown={onKey}
       aria-label="Message to {agent.id}"
       placeholder={running
-        ? "Working… you can write once it stops, or cancel it"
+        ? "Write the next step: it is sent as soon as this run ends (Enter)"
         : q
           ? "Answer the question in words"
           : agent.session
             ? "Give it more work: same session, same worktree (Enter to send, Shift Enter for a new line)"
             : "This agent cannot be resumed: edit and rerun instead"}
     ></textarea>
-    <button class="btn p" type="submit" disabled={!canSend || !text.trim()}>{q ? "Answer" : "Send"}</button>
+    <button class="btn p" type="submit" disabled={!canSend || !text.trim()}>{q ? "Answer" : running ? "Queue" : "Send"}</button>
   </form>
 </section>
 
 <style>
+  .queued {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+  }
+  .queued .bubble {
+    opacity: 0.7;
+    border: 1px dashed var(--line);
+  }
+  .qn {
+    font-size: 11.5px;
+    color: var(--faint);
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .qn button {
+    all: unset;
+    cursor: pointer;
+    padding: 0 4px;
+    border-radius: 4px;
+  }
+  .qn button:hover {
+    background: var(--hover);
+    color: var(--fg);
+  }
   .changes {
     flex: none;
     display: flex;

@@ -112,7 +112,7 @@ describe("terminal", () => {
 
 describe("review", () => {
   it("V shows the diff before and after side by side", async () => {
-    press("2");
+    press("3");
     await settle();
     const proposed = app.rows.find((r) => r.agents.length > 0)!;
     app.rvSelect(proposed.id);
@@ -259,7 +259,7 @@ describe("pull requests", () => {
 
 describe("agents view", () => {
   it("Edit and rerun opens the composer with the request", async () => {
-    press("3");
+    press("2");
     await settle();
     const done = app.sd.agents.find((a) => a.status === "done")!;
     app.data = {

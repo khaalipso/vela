@@ -288,9 +288,9 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
     case "1":
       return { type: "view", view: "code" };
     case "2":
-      return { type: "view", view: "review" };
-    case "3":
       return { type: "view", view: "agents" };
+    case "3":
+      return { type: "view", view: "review" };
     case "4":
       return { type: "view", view: "prs" };
     case "[":

@@ -155,12 +155,45 @@ pub fn delete_path_with(
     if fs::symlink_metadata(&full).is_err() {
         return Err(AppError::invalid(format!("{path} does not exist")));
     }
-    if permanent {
+    let done = if permanent {
         remove_for_good(&full)?;
-        return Ok(Disposal::Deleted);
+        Disposal::Deleted
+    } else {
+        trash(&full).map_err(|e| AppError::new("no_trash", format!("no system trash: {e}")))?;
+        Disposal::Trashed
+    };
+    forget_new_in_index(&space, repo, path);
+    Ok(done)
+}
+
+/// A file staged as new and then deleted is nothing for git any more: drop it from the index
+/// too, so it does not linger as "added" in the Review and the tree.
+fn forget_new_in_index(space: &vela_core::model::Space, repo: &str, path: &str) {
+    let Some(r) = space.repos.iter().find(|r| r.name == repo) else {
+        return;
+    };
+    let dir = std::path::Path::new(&r.worktree);
+    let Ok(staged) = vela_core::git::git(
+        dir,
+        &[
+            "diff",
+            "--cached",
+            "--name-only",
+            "--diff-filter=A",
+            "-z",
+            "--",
+            path,
+        ],
+    ) else {
+        return;
+    };
+    let added: Vec<&str> = staged.split('\0').filter(|p| !p.is_empty()).collect();
+    if added.is_empty() {
+        return;
     }
-    trash(&full).map_err(|e| AppError::new("no_trash", format!("no system trash: {e}")))?;
-    Ok(Disposal::Trashed)
+    let mut args = vec!["rm", "--cached", "-q", "-r", "--ignore-unmatch", "--"];
+    args.extend(added);
+    let _ = vela_core::git::git(dir, &args);
 }
 
 pub fn delete_path(

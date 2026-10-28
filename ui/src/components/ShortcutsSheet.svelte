@@ -13,7 +13,7 @@
         ["[  ]", "Previous, next space"],
         ["Alt 1 to 9", "Jump to space"],
         ["W", "Open space in its own window"],
-        ["1  2  3", "Code, review, agents"],
+        ["1  2  3  4", "Code, agents, review, git"],
         ["B", "Files drawer"],
         ["Ctrl B", "Hide the spaces bar (it floats in on the left edge)"],
         ["Ctrl W", "Close the file tab shown in the editor"],

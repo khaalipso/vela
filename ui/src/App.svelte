@@ -46,7 +46,7 @@
       stackOpen: app.stackOpen,
       view: app.view,
       hasQuestion: app.spaces.length > 0 && !!app.sd.question,
-      filesOpen: app.filesOpen && app.view !== "review" && app.view !== "agents",
+      filesOpen: app.filesOpen && app.view === "code",
       inFiles: !!(e.target as HTMLElement | null)?.closest?.("[data-files]"),
       inTerm: !!(e.target as HTMLElement | null)?.closest?.(".xterm"),
     });
@@ -87,11 +87,12 @@
   <ContextMenu />
   <Toast />
 {:else if app.ready}
-  <div class="app" class:norail={app.railHidden}>
-    {#if !app.railHidden}
+  <div class="app" class:norail={app.railOff}>
+    {#if !app.railOff}
       <Rail />
-    {:else}
-      <!-- The hidden spaces bar floats in while the pointer touches the left edge. -->
+    {:else if app.view !== "review"}
+      <!-- The hidden spaces bar floats in while the pointer touches the left edge (never in the
+           Review: its file list sits right there). -->
       <div class="edge" role="presentation" onmouseenter={() => (app.railPeek = true)}></div>
       {#if app.railPeek}<Rail floating />{/if}
     {/if}
@@ -99,7 +100,7 @@
       <TopBar />
       <div class="body">
         <!-- The Review view lists its own files: the tree would only take room there. -->
-        {#if app.filesOpen && app.view !== "review" && app.view !== "agents"}<FilesDrawer />{/if}
+        {#if app.filesOpen && app.view === "code"}<FilesDrawer />{/if}
         {#key surfaceKey}
           {#if app.elsewhere}
             <section class="surface enter">
@@ -112,7 +113,7 @@
             </section>
           {:else}
             <section class="surface enter" aria-label={app.view}>
-              {#if app.view === "review"}<ReviewView />{:else if app.view === "code"}<CodeView />{:else if app.view === "prs"}{#await import("./components/PrsView.svelte") then { default: PrsView }}<PrsView />{/await}{:else}<AgentsView />{/if}
+              {#if app.view === "review"}<ReviewView />{:else if app.view === "code"}<CodeView />{:else if app.view === "prs"}{#await import("./components/GitView.svelte") then { default: GitView }}<GitView />{/await}{:else}<AgentsView />{/if}
             </section>
           {/if}
         {/key}

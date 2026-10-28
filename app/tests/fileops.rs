@@ -424,3 +424,39 @@ fn removing_a_merged_space_deletes_its_branch() {
             .is_empty()
     );
 }
+
+#[test]
+fn deleting_a_staged_new_file_leaves_nothing_behind() {
+    let e = env();
+    let s = space(&e);
+    write(&wt(&s), "src/new.txt", "n\n");
+    sh(&wt(&s), &["add", "src/new.txt"]);
+    let log = RefCell::new(Vec::new());
+    fileops::delete_path_with(
+        &e.vela,
+        &s.id,
+        "api",
+        "src/new.txt",
+        false,
+        &fake_trash(&log),
+    )
+    .unwrap();
+    assert!(
+        !commands::status(&e.vela, &s.id)
+            .unwrap()
+            .iter()
+            .any(|c| c.path == "src/new.txt")
+    );
+    let files = commands::space_files(&e.vela, &s.id).unwrap();
+    assert!(!files[0].files.iter().any(|f| f.path == "src/new.txt"));
+    // A tracked file deleted leaves the tree, its deletion waits in the Review.
+    fileops::delete_path_with(&e.vela, &s.id, "api", "a.txt", false, &fake_trash(&log)).unwrap();
+    let files = commands::space_files(&e.vela, &s.id).unwrap();
+    assert!(!files[0].files.iter().any(|f| f.path == "a.txt"));
+    assert!(
+        commands::status(&e.vela, &s.id)
+            .unwrap()
+            .iter()
+            .any(|c| c.path == "a.txt")
+    );
+}

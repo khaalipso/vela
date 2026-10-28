@@ -142,7 +142,7 @@ describe("agents view", () => {
   };
 
   it("empty state lists the detected harnesses and how to ask", async () => {
-    press("3");
+    press("2");
     await settle();
     withAgents([]);
     await settle();
@@ -157,6 +157,23 @@ describe("agents view", () => {
     expect($$(".ag button").some((b) => b.textContent?.includes("Ask an agent"))).toBe(true);
   });
 
+  it("what you write to a working agent is sent as soon as it stops", async () => {
+    const send = vi.spyOn(backend, "answerAgentText").mockResolvedValue();
+    const agents = vi.spyOn(backend, "agents");
+    withAgents([live]);
+    app.queueFor(live.id, "then the disputes");
+    // still working: nothing leaves
+    agents.mockResolvedValue([live]);
+    await app.loadAgents(app.space.id);
+    expect(send).not.toHaveBeenCalled();
+    agents.mockResolvedValue([{ ...live, status: "done" }]);
+    await app.loadAgents(app.space.id);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(app.space.id, live.id, "then the disputes"));
+    expect(app.queuedFor(live.id)).toEqual([]);
+    send.mockRestore();
+    agents.mockRestore();
+  });
+
   it("a running agent opens as a conversation with its plan, usage and Cancel", async () => {
     const cancel = vi.spyOn(backend, "cancelAgent");
     const log = vi.spyOn(backend, "agentLog").mockResolvedValue([
@@ -165,7 +182,7 @@ describe("agents view", () => {
       { ts: "t", event: { type: "message", text: "Reading the webhook\n\nthen adding the **refund** branch" } },
       { ts: "t", event: { type: "plan", steps: ["Read the webhook", "Add the refund branch"] } },
     ]);
-    press("3");
+    press("2");
     await settle();
     withAgents([live]);
     await vi.waitFor(() => expect($(".chat .agent-msg")).toBeTruthy());
@@ -179,7 +196,18 @@ describe("agents view", () => {
     expect(chat.querySelector(".tsum")?.textContent).toContain("1 tool call (Read)");
     expect(chat.querySelector(".meta")?.textContent).toContain("2.0k in · 340 out · $0.04");
     expect(chat.querySelector(".typing")).toBeTruthy();
-    expect((chat.querySelector("textarea") as HTMLTextAreaElement).disabled).toBe(true);
+    // You can write while it works: the message waits and leaves when the run ends.
+    const box = chat.querySelector("textarea") as HTMLTextAreaElement;
+    expect(box.disabled).toBe(false);
+    box.value = "Also handle charge.dispute";
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await settle();
+    expect(chat.querySelector(".queued .bubble")?.textContent).toBe("Also handle charge.dispute");
+    expect(app.queuedFor(live.id)).toEqual(["Also handle charge.dispute"]);
+    chat.querySelector<HTMLElement>(".qn button")!.click();
+    await settle();
+    expect(app.queuedFor(live.id)).toEqual([]);
     expect($(".ag .total")?.textContent).toContain("1 agent ·");
     [...chat.querySelectorAll<HTMLElement>(".ch button")].find((b) => b.textContent?.trim() === "Cancel")!.click();
     await settle();
@@ -196,7 +224,7 @@ describe("agents view", () => {
       { ts: "t", event: { type: "done", summary: "Added the refund branch." } },
     ]);
     const ans = vi.spyOn(backend, "answerAgentText").mockResolvedValue();
-    press("3");
+    press("2");
     await settle();
     withAgents([{ ...live, status: "done", session: "s1" }]);
     await vi.waitFor(() => expect($(".chat .end")).toBeTruthy());
@@ -216,7 +244,7 @@ describe("agents view", () => {
   });
 
   it("J and K pick the agent of the conversation", async () => {
-    press("3");
+    press("2");
     await settle();
     withAgents([live, { ...live, id: "tester-1", role: "tester", status: "done" }]);
     await settle();
@@ -231,7 +259,7 @@ describe("agents view", () => {
   });
 
   it("shows the total once there are agents with usage", async () => {
-    press("3");
+    press("2");
     await settle();
     withAgents([live, { ...live, id: "tester-1", role: "tester", status: "done" }]);
     await settle();

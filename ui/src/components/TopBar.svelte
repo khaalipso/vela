@@ -32,10 +32,10 @@
       {/if}
     </div>
   {/if}
-  <button class="filesbtn" aria-pressed={app.filesOpen} title="Show or hide the files (B)" onclick={() => app.dispatch({ type: "toggle-files" })}>
+  {#if app.view === "code"}<button class="filesbtn" aria-pressed={app.filesOpen} title="Show or hide the files (B)" onclick={() => app.dispatch({ type: "toggle-files" })}>
     <svg width="14" height="14" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="20" stroke-linejoin="round" aria-hidden="true"><path d="M32 72a16 16 0 0 1 16-16h48l24 24h88a16 16 0 0 1 16 16v96a16 16 0 0 1-16 16H48a16 16 0 0 1-16-16z"></path></svg>
     Files <kbd>B</kbd>
-  </button>
+  </button>{/if}
   <div class="chips">
     {#each app.space.repos as r (r.name)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->

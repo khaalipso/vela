@@ -16,7 +16,7 @@ const settle = async () => {
   await new Promise((r) => setTimeout(r, 5));
   await tick();
 };
-const rows = (section: string) => $$(`[data-section='${section}'] .frow`).map((r) => r.dataset.row);
+const rows = (section: string) => $$(`.frow[data-section='${section}']`).map((r) => r.dataset.row);
 const summary = () => $(".summary .sum")?.textContent;
 const check = (id: string) => $(`[data-check='${id}']`)!;
 /** The file of the space with no proposal (the seed staged it before). */
@@ -41,23 +41,26 @@ afterAll(() => {
 });
 
 describe("review: layout", () => {
-  it("lists the files to review and the accepted ones, the diff of the selected file, and the checks", () => {
+  it("lists the changed files as a tree, the diff of the selected file, and the checks", () => {
     expect($("section[aria-label='Files']")).toBeTruthy();
     expect($("section[aria-label='Diff']")).toBeTruthy();
     expect($("aside[aria-label='Checks']")).toBeTruthy();
-    expect($$("[data-section]").map((s) => s.dataset.section)).toEqual(["review", "done"]);
-    // the seed has one file staged earlier and two files with proposals
-    expect($$(".sh .count").map((c) => c.textContent)).toEqual(["2", "1"]);
+    // the seed has one file staged earlier and two files with proposals, in two repos
+    expect(rows("review").length).toBe(2);
+    expect(rows("done").length).toBe(1);
+    expect($$(".drow.repo").map((r) => r.textContent?.trim().split(/\s/)[0])).toEqual(["api", "web"]);
+    // the spaces bar is out of the way in the Review
+    expect($(".rail")).toBeNull();
     expect($(".head")?.textContent).toContain("2 files to review");
     expect($(".head")?.textContent).toContain("1 of 3 accepted");
     // who proposes: an agent chip on the row
-    expect($("[data-section='review'] .frow .chip")?.textContent).toBeTruthy();
+    expect($(".frow[data-section='review'] .chip")?.textContent).toBeTruthy();
   });
 
   it("Shift U takes every accepted file back to review", async () => {
     press("U", { shiftKey: true });
     await vi.waitFor(() => expect(rows("done")).toEqual([]));
-    expect($("[data-section='done']")).toBeNull();
+    expect($(".frow[data-section='done']")).toBeNull();
     expect(rows("review").length).toBe(3);
     expect($(".commit .btn.p")?.hasAttribute("disabled")).toBe(true);
   });
@@ -70,14 +73,17 @@ describe("review: layout", () => {
     expect(($(".auto") as HTMLElement).getAttribute("aria-checked")).toBe("true");
   });
 
-  it("collapses a section from its header", async () => {
+  it("a folder row folds its files; J and K walk the files in tree order", async () => {
     const n = rows("review").length;
-    $("[data-section='review'] .sh")!.click();
+    const repo = $$(".drow.repo")[0];
+    repo.click();
     await settle();
-    expect(rows("review")).toEqual([]);
-    $("[data-section='review'] .sh")!.click();
+    expect(rows("review").length).toBeLessThan(n);
+    repo.click();
     await settle();
     expect(rows("review").length).toBe(n);
+    const order = $$(".frow[data-row]").map((r) => r.dataset.row);
+    expect(app.rows.map((r) => r.id)).toEqual(order);
   });
 });
 

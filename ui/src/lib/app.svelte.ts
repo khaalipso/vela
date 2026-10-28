@@ -20,7 +20,7 @@ import type {
   TermEvent,
   Unsubscribe,
 } from "./backend";
-import type { FileReview } from "./backend";
+import type { FileReview, RepoHistory } from "./backend";
 import { findConflicts } from "./conflicts";
 import type { Pane } from "./mergeview";
 import { composeMessage, cycleType, mergeAll, moveHunk, splitHunk } from "./commitplan";
@@ -193,6 +193,10 @@ export class AppState {
   railHidden = $state(readFlag("vela.railHidden", false));
   /** The hidden bar is showing, floating over the window. */
   railPeek = $state(false);
+  /** The spaces bar is out of the way: hidden by hand (Ctrl B), or in the Review, which needs the width. */
+  get railOff(): boolean {
+    return this.railHidden || this.view === "review";
+  }
 
   /** The file tree drawer is open. Open by default, remembered per window. */
   filesOpen = $state(readFlag("vela.filesOpen", true));
@@ -802,6 +806,11 @@ export class AppState {
   }
   async rvAcceptAll() {
     return this.rvApproveAll();
+  }
+  /** Accept the files waiting among these (a folder of the tree). */
+  async rvApproveRows(rows: FileRow[]) {
+    const list = rows.filter((r) => r.section === "review");
+    if (list.length) await this.approveRows(this.space.id, list);
   }
   /** Shift A: accept every file waiting, in one go. */
   async rvApproveAll() {
@@ -1584,6 +1593,18 @@ export class AppState {
 
   // -- pull requests --------------------------------------------------------
 
+  /** Commit graph and branch state per space (Git view). */
+  history: Record<string, RepoHistory[]> = $state({});
+  historyError: Record<string, string> = $state({});
+  async loadHistory(sid = this.space.id) {
+    try {
+      this.history = { ...this.history, [sid]: await this.backend.gitHistory(sid) };
+      delete this.historyError[sid];
+    } catch (e) {
+      this.historyError[sid] = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   get prState() {
     return this.prs[this.space.id] ?? { list: [], at: 0, loading: false, error: null };
   }
@@ -1787,6 +1808,7 @@ export class AppState {
       ]);
       if (!this.data[id]) return;
       this.data = { ...this.data, [id]: { ...this.data[id], agents, question, reasons, comments } };
+      void this.flushQueued(id);
       if (notice?.event.type === "failed" && notice.event.error !== "cancelled") this.toast(`Agent failed: ${notice.event.error}`);
       if (notice?.event.type === "done") {
         const a = agents.find((x) => x.id === notice.agentId);
@@ -1809,6 +1831,41 @@ export class AppState {
       this.fail(e);
     }
     await this.loadAgents(this.space.id);
+  }
+
+  /** What you wrote to agents while they worked, sent as soon as each one stops (`space|agent`). */
+  queued: Record<string, string[]> = $state({});
+  /** Write to an agent at work: the message waits and leaves when its run ends. */
+  queueFor(agentId: string, text: string) {
+    const t = text.trim();
+    if (!t) return;
+    const k = `${this.space.id}|${agentId}`;
+    this.queued[k] = [...(this.queued[k] ?? []), t];
+  }
+  unqueue(agentId: string, index: number) {
+    const k = `${this.space.id}|${agentId}`;
+    const list = (this.queued[k] ?? []).filter((_, i) => i !== index);
+    if (list.length) this.queued[k] = list;
+    else delete this.queued[k];
+  }
+  queuedFor(agentId: string): string[] {
+    return this.queued[`${this.space.id}|${agentId}`] ?? [];
+  }
+  /** Send what waits for agents of a space that stopped working. */
+  private async flushQueued(sid: string) {
+    for (const [k, list] of Object.entries(this.queued)) {
+      const [s, agentId] = k.split("|");
+      if (s !== sid || !list.length) continue;
+      const a = this.data[sid]?.agents.find((x) => x.id === agentId);
+      if (!a || a.status === "working") continue;
+      delete this.queued[k];
+      try {
+        await this.backend.answerAgentText(sid, agentId, list.join("\n\n"));
+        this.toast(`Sent what you wrote to ${roleLabel(a.role)}`);
+      } catch (e) {
+        this.fail(e);
+      }
+    }
   }
 
   /** More work for a finished agent: a resumed run of its session, in its own worktree. */

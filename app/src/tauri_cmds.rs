@@ -349,6 +349,15 @@ pub async fn accept_hunks(
     Ok(failed)
 }
 
+/// The commit graph and branch state of each repo (Git view).
+#[tauri::command]
+pub async fn git_history(
+    vela: State<'_, Vela>,
+    space_id: String,
+) -> AppResult<Vec<vela_core::history::RepoHistory>> {
+    blocking(&vela, move |v| commands::git_history(v, &space_id)).await
+}
+
 /// One file of the Review: your file, what accepting gives, the last commit.
 #[tauri::command]
 pub async fn review_file(

@@ -39,11 +39,13 @@ afterAll(() => {
 describe("shell", () => {
   it("opens on the first space in review; the list says what is next, so the island stays out of the way", () => {
     expect($("h1")?.textContent).toContain("Stripe v2 billing");
-    expect($$(".sp").length).toBe(3);
+    expect(app.spaces.length).toBe(3);
+    // the Review needs the width: no spaces bar there
+    expect($(".rail")).toBeNull();
     expect(app.upNext.title).toBe("Review 3 proposals");
     expect($(".island")).toBeNull();
     // the files to review, the diff of the first one with what its agents say, the checks
-    expect($$("[data-section='review'] .frow").length).toBe(2);
+    expect($$(".frow[data-section='review']").length).toBe(2);
     // the whole file, as accepting it would write it
     expect($("section[aria-label='Diff'] .cm-editor")).toBeTruthy();
     expect(app.pane?.doc()).toContain("constructEvent");
@@ -180,7 +182,7 @@ describe("shell", () => {
   });
 
   it("F asks the author to fix the reviewer note and a follow-up proposal appears", async () => {
-    press("2");
+    press("3");
     await settle();
     app.cui.hi = "s1";
     await settle();

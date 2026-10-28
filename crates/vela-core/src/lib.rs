@@ -14,6 +14,7 @@ pub mod diff;
 pub mod error;
 pub mod files;
 pub mod git;
+pub mod history;
 pub mod links;
 pub mod model;
 pub mod paths;

@@ -26,8 +26,8 @@ describe("global shortcuts", () => {
 
   it("1 2 3 switch views", () => {
     expect(resolveKey(key("1"), ctx())).toEqual({ type: "view", view: "code" });
-    expect(resolveKey(key("2"), ctx())).toEqual({ type: "view", view: "review" });
-    expect(resolveKey(key("3"), ctx())).toEqual({ type: "view", view: "agents" });
+    expect(resolveKey(key("2"), ctx())).toEqual({ type: "view", view: "agents" });
+    expect(resolveKey(key("3"), ctx())).toEqual({ type: "view", view: "review" });
   });
 
   it("[ and ] switch spaces, Alt 1..9 jumps", () => {

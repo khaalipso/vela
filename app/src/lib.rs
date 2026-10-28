@@ -155,6 +155,7 @@ pub fn run() {
             c::unstage_files,
             c::accept_hunks,
             c::review_file,
+            c::git_history,
             c::accept_file,
             c::accept_files,
             c::reject_file,

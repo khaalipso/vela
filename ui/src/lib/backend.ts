@@ -116,6 +116,36 @@ export interface FileReview {
   binary: boolean;
 }
 
+/** One line of the commit graph (`git log --graph`): the drawing, and the commit if any. */
+export interface GraphLine {
+  graph: string;
+  /** Short hash; empty on a line that only continues the drawing. */
+  hash: string;
+  subject: string;
+  author: string;
+  when: string;
+  refs: string[];
+  /** On the space branch and not on its base. */
+  mine: boolean;
+}
+
+/** The history and branch state of one repo of the space (Git view). */
+export interface RepoHistory {
+  repo: string;
+  branch: string;
+  base: string | null;
+  ahead: number;
+  behind: number;
+  unpushed: number | null;
+  unpulled: number | null;
+  files: number;
+  added: number;
+  removed: number;
+  uncommitted: number;
+  stashes: number;
+  lines: GraphLine[];
+}
+
 export interface NewComment {
   repo: string;
   path: string;
@@ -359,6 +389,8 @@ export interface Backend {
   unstageFiles(spaceId: string, files: FileRef[]): Promise<void>;
   /** Accept several hunks at once; returns why the ones that did not apply failed. */
   acceptHunks(spaceId: string, hunkIds: string[]): Promise<string[]>;
+  /** The commit graph and branch state of each repo of the space. */
+  gitHistory(spaceId: string): Promise<RepoHistory[]>;
   /** What accepting a file gives, before anything is written. */
   reviewFile(spaceId: string, repo: string, path: string): Promise<FileReview>;
   /** Accept a file: write `content` (or the merged result as is) and stage it. Refused with conflict markers. */
@@ -1759,6 +1791,38 @@ export class MockBackend implements Backend {
     return failed;
   }
 
+  async gitHistory(spaceId: string): Promise<RepoHistory[]> {
+    const s = this.sp(spaceId);
+    const st = await this.status(spaceId);
+    const L = (graph: string, hash = "", subject = "", author = "", when = "", refs: string[] = [], mine = false): GraphLine => ({ graph, hash, subject, author, when, refs, mine });
+    return s.space.repos.map((r, i) => ({
+      repo: r.name,
+      branch: s.space.branch,
+      base: "origin/main",
+      ahead: 3 - Math.min(i, 2),
+      behind: i,
+      unpushed: i === 0 ? 2 : null,
+      unpulled: i === 0 ? 0 : null,
+      files: 6 - i,
+      added: 182 - i * 40,
+      removed: 37 - i * 10,
+      uncommitted: st.filter((c) => c.repo === r.name).length,
+      stashes: i === 0 ? 1 : 0,
+      lines: [
+        L("*", `a1${i}f9c2`, "fix(billing): verify the Stripe signature", "Claude Code", "12 minutes ago", [`HEAD -> ${s.space.branch}`], true),
+        L("*", `9b${i}e771`, "test(billing): webhook signature cases", "You", "1 hour ago", [], true),
+        L("*", `47${i}c0de`, "feat(billing): checkout session for carts", "You", "3 hours ago", [`origin/${s.space.branch}`], true),
+        ...(i ? [L("| *", `5d${i}a0b1`, "chore: bump deps", "Sam", "5 hours ago", ["origin/main"]), L("|/")] : []),
+        L("*", `e0${i}b3a8`, "Merge pull request #212 from acme/feat/refunds", "Ada", "yesterday", i ? [] : ["origin/main", "main"]),
+        L("|\\"),
+        L("| *", `c4${i}d2e1`, "feat(refunds): partial refunds", "Ada", "2 days ago"),
+        L("|/"),
+        L("*", `7f${i}1a2b`, "chore(release): v2.3.0", "Lin", "3 days ago", ["tag: v2.3.0"]),
+        L("*", `31${i}9e4f`, "fix(api): retry on 429", "Lin", "4 days ago"),
+      ],
+    }));
+  }
+
   async reviewFile(spaceId: string, repo: string, path: string): Promise<FileReview> {
     const s = this.sp(spaceId);
     const f = this.file(s, repo, path);
@@ -2378,6 +2442,9 @@ export class TauriBackend implements Backend {
   }
   reviewFile(spaceId: string, repo: string, path: string) {
     return call<FileReview>("review_file", { spaceId, repo, path });
+  }
+  gitHistory(spaceId: string) {
+    return call<RepoHistory[]>("git_history", { spaceId });
   }
   acceptFile(spaceId: string, repo: string, path: string, content?: string | null) {
     return call<void>("accept_file", { spaceId, repo, path, content: content ?? null });

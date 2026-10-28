@@ -945,6 +945,11 @@ pub fn accept_proposal(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> 
     Ok(hunk)
 }
 
+/// The commit graph and branch state of each repo of the space (Git view).
+pub fn git_history(vela: &Vela, id: &str) -> AppResult<Vec<vela_core::history::RepoHistory>> {
+    Ok(vela_core::history::space_history(&load(vela, id)?, 120)?)
+}
+
 // ---------------------------------------------------------------------------
 // Review, file by file
 // ---------------------------------------------------------------------------

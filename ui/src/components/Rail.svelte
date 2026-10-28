@@ -77,9 +77,6 @@
     </div>
   {/if}
   <div class="railfoot">
-    <div><Kbd k="[" /><Kbd k="]" /> switch space</div>
-    <div><Kbd k="Shift Enter" /> next space waiting</div>
-    <div><Kbd k="W" /> open in its own window</div>
     <div><Kbd k="?" /> all shortcuts</div>
   </div>
 </nav>
