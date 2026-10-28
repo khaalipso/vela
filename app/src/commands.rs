@@ -8,6 +8,7 @@ use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use vela_agents::HarnessInfo;
 use vela_agents::manager::{AgentManager, AskRequest, Emit as EmitAgent, QuestionView};
+use vela_agents::merge;
 use vela_agents::notes::Note;
 use vela_agents::proposals::{self, Proposal};
 use vela_agents::registry::{self, LogEntry};
@@ -871,7 +872,46 @@ pub fn accept_hunks(vela: &Vela, id: &str, hunk_ids: &[String]) -> AppResult<Vec
         .cloned()
         .collect();
     stage::stage_hunks(&space, &mine)?;
-    let failed = proposals::accept_many(&space, &picked)?;
+    let mut failed = proposals::accept_many(&space, &picked)?;
+    // What git apply refused (you changed lines next to them): a three-way merge of each file,
+    // written when it is clean. Conflicts stay for the Review, which shows them.
+    if !failed.is_empty() {
+        let entries = registry::load(vela, id)?;
+        let mut files: Vec<(String, String)> = Vec::new();
+        for (fid, _) in &failed {
+            if let Some(p) = picked.iter().find(|p| &p.hunk.id == fid) {
+                let k = (p.hunk.repo.clone(), p.hunk.path.clone());
+                if !files.contains(&k) {
+                    files.push(k);
+                }
+            }
+        }
+        for (repo, path) in files {
+            let list: Vec<&Proposal> = picked
+                .iter()
+                .copied()
+                .filter(|p| {
+                    p.hunk.repo == repo
+                        && p.hunk.path == path
+                        && failed.iter().any(|(f, _)| f == &p.hunk.id)
+                })
+                .collect();
+            let m = merge::merge_file(&space, &entries, &repo, &path, &list)?;
+            if m.conflicts > 0 || !m.notes.is_empty() {
+                for (f, why) in failed.iter_mut() {
+                    if m.ids.contains(f) {
+                        *why = format!(
+                            "{path}: you changed the same lines. Open it in the Review to resolve"
+                        );
+                    }
+                }
+                continue;
+            }
+            merge::write_result(&space, &repo, &path, &m.result)?;
+            stage::stage_files(&space, &[(repo.clone(), path.clone())])?;
+            failed.retain(|(f, _)| !m.ids.contains(f));
+        }
+    }
     let taken: Vec<String> = picked
         .iter()
         .map(|p| p.hunk.id.clone())
@@ -903,6 +943,167 @@ pub fn accept_proposal(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> 
         save_rejected(vela, id, &rejected)?;
     }
     Ok(hunk)
+}
+
+// ---------------------------------------------------------------------------
+// Review, file by file
+// ---------------------------------------------------------------------------
+
+/// One file as the Review shows it: your file now, the file you get when you accept, and the
+/// file at the last commit. Accepting writes `result` (or what you made of it) and stages it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileReview {
+    pub repo: String,
+    pub path: String,
+    /// Your file now; None when it does not exist.
+    pub mine: Option<String>,
+    /// Your file with every pending proposal merged in (conflict markers where you both changed
+    /// the same lines); None when accepting deletes the file.
+    pub result: Option<String>,
+    /// The file at the last commit; None when it is new.
+    pub head: Option<String>,
+    pub conflicts: usize,
+    /// Conflicts markers cannot show (a deleted or binary file).
+    pub notes: Vec<String>,
+    /// Agents with proposals in the file.
+    pub agents: Vec<String>,
+    /// A side is binary: no text to show.
+    pub binary: bool,
+}
+
+fn file_proposals(vela: &Vela, space: &Space, repo: &str, path: &str) -> AppResult<Vec<Proposal>> {
+    let rejected = rejected_ids(vela, &space.id)?;
+    Ok(agent_proposals(vela, space, &rejected, false)?
+        .into_iter()
+        .filter(|p| p.hunk.repo == repo && p.hunk.path == path)
+        .collect())
+}
+
+fn merge_of(vela: &Vela, space: &Space, repo: &str, path: &str) -> AppResult<merge::FileMerge> {
+    let list = file_proposals(vela, space, repo, path)?;
+    let entries = registry::load(vela, &space.id)?;
+    let refs: Vec<&Proposal> = list.iter().collect();
+    Ok(merge::merge_file(space, &entries, repo, path, &refs)?)
+}
+
+/// What accepting one file gives, for the Review to show before anything is written.
+pub fn review_file(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<FileReview> {
+    let space = load(vela, id)?;
+    resolve_path(&space, repo, path)?;
+    let wt = space
+        .repos
+        .iter()
+        .find(|r| r.name == repo)
+        .map(|r| PathBuf::from(&r.worktree))
+        .ok_or_else(|| vela_core::Error::RepoNotFound(repo.to_string()))?;
+    let m = merge_of(vela, &space, repo, path)?;
+    let head = merge::show(&wt, "HEAD", path);
+    let binary = m.mine.is_binary() || m.result.is_binary() || head.is_binary();
+    Ok(FileReview {
+        repo: repo.to_string(),
+        path: path.to_string(),
+        mine: m.mine.text().map(str::to_string),
+        result: m.result.text().map(str::to_string),
+        head: head.text().map(str::to_string),
+        conflicts: m.conflicts,
+        notes: m.notes,
+        agents: m.agents,
+        binary,
+    })
+}
+
+/// Accept one file: write `content` (what you made of the result in the Review) or the merged
+/// result as it is, mark its proposals decided, and stage the file. Refused while conflict
+/// markers are left, so nothing half merged is ever staged.
+pub fn accept_file(
+    vela: &Vela,
+    id: &str,
+    repo: &str,
+    path: &str,
+    content: Option<&str>,
+) -> AppResult<()> {
+    let _inv = Invalidate(id);
+    let space = load(vela, id)?;
+    resolve_path(&space, repo, path)?;
+    let m = merge_of(vela, &space, repo, path)?;
+    let result = match content {
+        Some(text) => merge::Content::Text(text.to_string()),
+        None if m.conflicts > 0 => {
+            return Err(vela_core::Error::Invalid(format!(
+                "{path}: {} with your edits. Resolve them in the Review first",
+                plural(m.conflicts, "conflict")
+            ))
+            .into());
+        }
+        None => m.result.clone(),
+    };
+    if result.text().is_some_and(merge::has_markers) {
+        return Err(vela_core::Error::Invalid(format!(
+            "{path} still has conflict markers (<<<<<<< yours … >>>>>>> agent). Keep one side of each first"
+        ))
+        .into());
+    }
+    if !m.ids.is_empty() || content.is_some() {
+        merge::write_result(&space, repo, path, &result)?;
+    }
+    remember_accepted(vela, id, &m.ids)?;
+    stage::stage_files(&space, &[(repo.to_string(), path.to_string())])?;
+    Ok(())
+}
+
+fn plural(n: usize, word: &str) -> String {
+    if n == 1 {
+        format!("1 {word}")
+    } else {
+        format!("{n} {word}s")
+    }
+}
+
+/// Accept several files as they are. Files with conflicts are left for you, with the reason.
+pub fn accept_files(vela: &Vela, id: &str, files: &[(String, String)]) -> AppResult<Vec<String>> {
+    let _inv = Invalidate(id);
+    let space = load(vela, id)?;
+    let rejected = rejected_ids(vela, id)?;
+    let all = agent_proposals(vela, &space, &rejected, false)?;
+    let entries = registry::load(vela, id)?;
+    let mut skipped = Vec::new();
+    let mut taken: Vec<String> = Vec::new();
+    let mut stage_list: Vec<(String, String)> = Vec::new();
+    for (repo, path) in files {
+        resolve_path(&space, repo, path)?;
+        let list: Vec<&Proposal> = all
+            .iter()
+            .filter(|p| &p.hunk.repo == repo && &p.hunk.path == path)
+            .collect();
+        if !list.is_empty() {
+            let m = merge::merge_file(&space, &entries, repo, path, &list)?;
+            if m.conflicts > 0 {
+                skipped.push(format!(
+                    "{path}: {} with your edits",
+                    plural(m.conflicts, "conflict")
+                ));
+                continue;
+            }
+            merge::write_result(&space, repo, path, &m.result)?;
+            taken.extend(m.ids);
+        }
+        stage_list.push((repo.clone(), path.clone()));
+    }
+    remember_accepted(vela, id, &taken)?;
+    stage::stage_files(&space, &stage_list)?;
+    Ok(skipped)
+}
+
+/// Reject what the agents propose in one file; your own edits are never touched.
+pub fn reject_file(vela: &Vela, id: &str, repo: &str, path: &str) -> AppResult<usize> {
+    let _inv = Invalidate(id);
+    let space = load(vela, id)?;
+    let list = file_proposals(vela, &space, repo, path)?;
+    let mut rejected = rejected_ids(vela, id)?;
+    rejected.extend(list.iter().map(|p| p.hunk.id.clone()));
+    save_rejected(vela, id, &rejected)?;
+    Ok(list.len())
 }
 
 // ---------------------------------------------------------------------------

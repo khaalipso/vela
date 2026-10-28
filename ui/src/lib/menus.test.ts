@@ -5,7 +5,7 @@ import { app } from "./app.svelte";
 import { MockBackend } from "./backend";
 import { isItem, labels, type MenuAction, type MenuEntry } from "./contextmenu.svelte";
 import { files } from "./files.svelte";
-import { archivedMenu, contextPaletteItems, installMenus, editorMenu, hunkMenu, linkMenu, reviewFileMenu, repoChipMenu, spaceMenu, tabMenu, textFieldMenu, treeMenu } from "./menus";
+import { archivedMenu, contextPaletteItems, installMenus, editorMenu, linkMenu, reviewFileMenu, repoChipMenu, spaceMenu, tabMenu, textFieldMenu, treeMenu } from "./menus";
 import { ops } from "./ops.svelte";
 import { buildTree, type TNode } from "./filetree";
 import type { Hunk, Link } from "./types";
@@ -471,6 +471,7 @@ describe("review menus", () => {
     const done = reviewFileMenu({ section: "done", repo: "api", path: "a.ts", agents: [], mine: false });
     expect(labels(done)).toEqual(["Back to review", "Reject the agent's changes", "Open in editor", "-", "Discard your changes…", "-", "Copy path"]);
     expect(find(done, "Back to review").shortcut).toBe("Space");
+    expect(find(done, "Reject the agent's changes").shortcut).toBe("N");
     expect(find(done, "Discard your changes…").disabled).toMatch(/back to review first/);
     const mine = reviewFileMenu({ section: "review", repo: "api", path: "a.ts", agents: [], mine: true });
     expect(has(mine, "Accept file")).toBe(true);
@@ -479,44 +480,6 @@ describe("review menus", () => {
     const prop = reviewFileMenu({ section: "review", repo: "api", path: "a.ts", agents: ["developer-1"], mine: false });
     expect(find(prop, "Reject the agent's changes").disabled).toBe(false);
     expect(find(prop, "Discard your changes…").disabled).toMatch(/Nothing of yours/);
-  });
-
-  const hunk = (over: Partial<Hunk>): Hunk => ({
-    id: "h",
-    repo: "api",
-    path: "a.ts",
-    oldStart: 3,
-    oldLines: 1,
-    newStart: 3,
-    newLines: 1,
-    section: "",
-    lines: [],
-    origin: { type: "agent", agent: "stripe-dev" },
-    state: "pending",
-    ...over,
-  });
-
-  it("a pending agent proposal can be staged, rejected and edited", () => {
-    const m = hunkMenu(hunk({}));
-    expect(labels(m)).toEqual(["Accept change", "Back to review", "Reject change", "Edit by hand", "-", "Copy as patch"]);
-    expect(find(m, "Accept change").shortcut).toBe("Y");
-    expect(find(m, "Back to review").shortcut).toBe("U");
-    expect(find(m, "Reject change").shortcut).toBe("N");
-    expect(find(m, "Edit by hand").shortcut).toBe("E");
-    expect(find(m, "Accept change").disabled).toBe(false);
-    expect(find(m, "Back to review").disabled).toMatch(/Not accepted/);
-    expect(find(m, "Reject change").disabled).toBe(false);
-  });
-
-  it("your own staged hunk can be unstaged but never rejected", () => {
-    const m = hunkMenu(hunk({ origin: { type: "you" }, state: "staged" }));
-    expect(find(m, "Accept change").disabled).toMatch(/Already accepted/);
-    expect(find(m, "Back to review").disabled).toBe(false);
-    expect(find(m, "Reject change").disabled).toMatch(/never discarded/);
-  });
-
-  it("a staged proposal cannot be rejected any more", () => {
-    expect(find(hunkMenu(hunk({ state: "staged" })), "Reject change").disabled).toMatch(/pending/);
   });
 });
 
@@ -707,11 +670,11 @@ describe("the command bar", () => {
     app.pal = { q: "", i: 0 };
   });
 
-  it("in the review view it offers the selected file and the hunk under the cursor", () => {
+  it("in the review view it offers the actions of the selected file", () => {
     app.goSpace(0);
     app.setView("review");
     const titles = contextPaletteItems().map((i) => i.title);
-    expect(titles).toContain("Copy as patch");
+    expect(titles).toContain("Accept file");
     expect(titles).toContain("Open in editor");
   });
 });

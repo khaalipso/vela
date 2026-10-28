@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { app } from "../lib/app.svelte";
+  import { app, draftKey } from "../lib/app.svelte";
   import { colorOfRepo } from "../lib/colors";
   import { openAtEvent } from "../lib/contextmenu.svelte";
   import { ROLE_COLORS, roleLabel } from "../lib/format";
@@ -62,7 +62,7 @@
         <div class="sec" data-section={sec}>
           <button class="sh" aria-expanded={!collapsed} onclick={() => app.rvToggleSection(sec)}>
             <span class="chev" class:shut={collapsed}>▾</span>
-            <b>{sec === "review" ? "To review" : "Accepted"}</b>
+            <b>{sec === "review" ? "To review" : "Ready to commit"}</b>
             <span class="count">{list.length}</span>
             {#if sec === "done" && (sections.total.add || sections.total.del)}<span class="tot"><i class="a">+{sections.total.add}</i> <i class="d">−{sections.total.del}</i></span>{/if}
           </button>
@@ -97,6 +97,7 @@
                     <i class="chip" style:--c={role ? ROLE_COLORS[role] : "var(--warn)"} title={`Proposed by ${role ? roleLabel(role) : a}`}>{role ? roleLabel(role).slice(0, 3) : "AI"}</i>
                   {/each}
                   {#if r.mine}<i class="chip you" title="Your edits">You</i>{/if}
+                  {#if sec === "review" && app.conflictsLeft(app.space.id, r)}<i class="chip cf" title="Conflicts with your edits: resolve them in the diff">Conflict</i>{:else if sec === "review" && app.rvDrafts[draftKey(app.space.id, r.id)] !== undefined}<i class="chip ed" title="You edited the result in the diff">Edited</i>{/if}
                 </span>
                 <span class="n">
                   {#if r.add}<i class="a">+{r.add}</i>{/if}
@@ -118,12 +119,6 @@
         </div>
       {/if}
     {/each}
-  </div>
-  <div class="tips">
-    <span><Kbd k="J" /><Kbd k="K" /> file</span>
-    <span><Kbd k="Space" /> accept</span>
-    <span><Kbd k="Shift A" /> all</span>
-    <span><Kbd k="M" /> comment</span>
   </div>
 </section>
 
@@ -327,6 +322,12 @@
   .chip.you {
     --c: var(--muted);
   }
+  .chip.cf {
+    --c: var(--warn);
+  }
+  .chip.ed {
+    --c: var(--info);
+  }
   .n {
     flex: none;
     display: flex;
@@ -373,13 +374,5 @@
   .ic.no:hover {
     color: var(--del);
   }
-  .tips {
-    flex: none;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 12px;
-    padding: 2px 10px 4px;
-    font-size: 11.5px;
-    color: var(--faint);
-  }
+
 </style>

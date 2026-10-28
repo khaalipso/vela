@@ -224,6 +224,7 @@ export function reviewFileMenu(r: Pick<FileRow, "section" | "repo" | "path" | "a
   return tidy([
     toggle,
     it("Reject the agent's changes", {
+      shortcut: shortcutFor({ type: "rv-reject-file" }, "review"),
       icon: "discard",
       disabled: r.agents.length ? false : "No proposal of an agent in this file",
       run: () => {
@@ -241,34 +242,6 @@ export function reviewFileMenu(r: Pick<FileRow, "section" | "repo" | "path" | "a
     }),
     SEP,
     it("Copy path", { icon: "copy", run: () => void ops.copyAbsolute(r.repo, r.path) }),
-  ]);
-}
-
-/** Menu of the hunk under the review cursor (the caller moves the cursor there first). */
-export function hunkMenu(h: Hunk): MenuEntry[] {
-  const agent = h.origin.type === "agent";
-  const key = fileKey(h.repo, h.path);
-  return tidy([
-    act("Accept change", { type: "rv-hunk-stage" }, "review", {
-      icon: "stage",
-      disabled: h.state === "staged" ? "Already accepted" : false,
-    }),
-    act("Back to review", { type: "rv-hunk-unstage" }, "review", {
-      icon: "unstage",
-      disabled: h.state === "staged" ? false : "Not accepted yet",
-    }),
-    act("Reject change", { type: "reject" }, "review", {
-      icon: "close",
-      disabled: !agent ? "Your own changes are never discarded from here" : h.state !== "pending" ? "Only pending proposals can be rejected" : false,
-      run: () => void app.rvHunkReject(),
-    }),
-    it("Edit by hand", {
-      shortcut: shortcutFor({ type: "edit" }, "review"),
-      icon: "edit",
-      run: () => (agent && h.state === "pending" ? void app.dispatch({ type: "edit" }) : app.gotoLine(key, h.newStart)),
-    }),
-    SEP,
-    it("Copy as patch", { icon: "patch", run: () => void ops.copyPatch(h) }),
   ]);
 }
 
@@ -415,8 +388,6 @@ export function contextPaletteItems(): PaletteItem[] {
   if (app.view === "review") {
     const r = app.selectedRow;
     if (r) add(reviewFileMenu(r), `${r.repo}/${r.path}`);
-    const h = app.currentHunk;
-    if (h) add(hunkMenu(h), `hunk at line ${h.newStart}`);
   }
   const key = app.cui.file;
   if (app.view === "code" && key) {

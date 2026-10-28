@@ -92,14 +92,18 @@ export type Action =
   | { type: "rv-approve-all" } // Shift A: stage your edits and accept every proposal
   | { type: "rv-unstage-all" } // Shift U
   | { type: "rv-focus-diff" } // Enter
-  | { type: "rv-hunk"; delta: 1 | -1 } // Tab / Shift Tab
+  | { type: "rv-hunk"; delta: 1 | -1 } // Tab / Shift Tab: next, previous change in the diff
   | { type: "rv-hunk-stage" } // Y
   | { type: "rv-hunk-unstage" } // U
   | { type: "rv-run-all" } // R
   | { type: "rv-run-focused" } // Shift R
   | { type: "rv-toggle-log" } // O
   | { type: "rv-split" } // V: side by side or unified diff
-  | { type: "rv-note-resolve" }; // Shift Y: resolve the note of the hunk
+  | { type: "rv-note-resolve" } // Shift Y: resolve the note of the file
+  | { type: "rv-reject-file" } // N: reject the agents' changes in the file
+  | { type: "rv-open-editor" } // E: open the file in the editor
+  | { type: "rv-accept-file" } // Y: accept the file
+  | { type: "rv-unaccept-file" }; // U: take an accepted file back to review
 
 /** The part of a KeyboardEvent the resolver reads. */
 export interface KeyLike {
@@ -368,11 +372,17 @@ export function resolveReviewKey(k: string, shift: boolean): Action | null {
     case "Tab":
       return { type: "rv-hunk", delta: shift ? -1 : 1 };
     case "y":
-      return { type: "rv-hunk-stage" };
+      return { type: "rv-accept-file" };
     case "Y":
-      return shift ? { type: "rv-note-resolve" } : { type: "rv-hunk-stage" };
+      return shift ? { type: "rv-note-resolve" } : { type: "rv-accept-file" };
     case "u":
-      return { type: "rv-hunk-unstage" };
+      return { type: "rv-unaccept-file" };
+    case "n":
+    case "N":
+      return { type: "rv-reject-file" };
+    case "e":
+    case "E":
+      return { type: "rv-open-editor" };
     case "v":
     case "V":
       return { type: "rv-split" };

@@ -8,6 +8,7 @@
   import { chatItems, isRunning, usageLine, type ChatItem } from "../lib/agents";
   import { app } from "../lib/app.svelte";
   import { agentStatusColor, ROLE_COLORS, roleLabel, toolLabel } from "../lib/format";
+  import { rowId } from "../lib/review";
   import type { Agent, AgentLogEntry } from "../lib/types";
   import Kbd from "./Kbd.svelte";
 
@@ -30,6 +31,25 @@
   const q = $derived(waiting && app.sd.question?.agentId === agent.id ? app.sd.question : null);
   const canSend = $derived(!running && (waiting || !!agent.session));
   const use = $derived(usageLine(agent.usage));
+  /** The files this agent proposes changes in, still waiting for you in the Review. */
+  const changed = $derived.by(() => {
+    const out: { repo: string; path: string; add: number; del: number }[] = [];
+    for (const p of app.pending) {
+      const h = p.hunk;
+      if (h.origin.type !== "agent" || h.origin.agent !== agent.id) continue;
+      let f = out.find((x) => x.repo === h.repo && x.path === h.path);
+      if (!f) out.push((f = { repo: h.repo, path: h.path, add: 0, del: 0 }));
+      for (const l of h.lines) {
+        if (l.kind === "add") f.add++;
+        else if (l.kind === "del") f.del++;
+      }
+    }
+    return out;
+  });
+  function review(f?: { repo: string; path: string }) {
+    app.setView("review");
+    if (f) app.rvSelect(rowId(f.repo, f.path));
+  }
 
   const md = (t: string) => DOMPurify.sanitize(marked.parse(t, { gfm: true, breaks: false, async: false }) as string);
 
@@ -144,11 +164,20 @@
       {:else}
         <button class="btn ghost" onclick={() => app.rerun(agent)} title="Open the composer with this request">Edit and rerun</button>
       {/if}
-      {#if agent.worktrees.length && app.pending.some((p) => p.hunk.origin.type === "agent" && p.hunk.origin.agent === agent.id)}
-        <button class="btn ghost" onclick={() => app.setView("review")}>Review its changes <Kbd k="2" /></button>
-      {/if}
     </span>
   </header>
+  {#if changed.length}
+    <div class="changes">
+      <span class="cl">Changes waiting for you</span>
+      {#each changed as f (f.repo + f.path)}
+        <button class="cfile" onclick={() => review(f)} title={`${f.repo}/${f.path}: open in the Review`}>
+          <span class="fn">{f.path.slice(f.path.lastIndexOf("/") + 1)}</span>
+          <i class="a">+{f.add}</i><i class="d">−{f.del}</i>
+        </button>
+      {/each}
+      <button class="btn p go" onclick={() => review(changed[0])}>Review <Kbd k="2" /></button>
+    </div>
+  {/if}
 
   <div class="scroll" bind:this={scroller} onscroll={onScroll} aria-live="polite">
     {#if log === null}
@@ -245,6 +274,51 @@
 </section>
 
 <style>
+  .changes {
+    flex: none;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--space) 7%, var(--raised));
+    font-size: 12.5px;
+  }
+  .cl {
+    color: var(--muted);
+    margin-right: 4px;
+  }
+  .cfile {
+    all: unset;
+    cursor: pointer;
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    padding: 3px 9px;
+    border-radius: 7px;
+    background: var(--panel);
+    box-shadow: 0 0 0 1px var(--line);
+    font-family: var(--code);
+    font-size: 12px;
+  }
+  .cfile:hover {
+    box-shadow: 0 0 0 1px var(--space);
+  }
+  .cfile i {
+    font-style: normal;
+  }
+  .cfile .a {
+    color: var(--add);
+  }
+  .cfile .d {
+    color: var(--del);
+  }
+  .changes .go {
+    margin-left: auto;
+    height: 28px;
+    font-size: 12.5px;
+  }
   .chat {
     display: flex;
     flex-direction: column;

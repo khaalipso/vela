@@ -175,7 +175,7 @@ pub fn space_context(space: &Space, read_only: bool, worktrees: &[(String, Strin
         if read_only {
             "You run in the person's own worktree, read only."
         } else {
-            "You run in your own worktree of each repo, on a branch made from the last commit of the space; the person's uncommitted changes are not in it."
+            "You run in your own worktree of each repo. It starts as a copy of the person's files, uncommitted edits included; what you change there is shown to them as a diff they accept, edit or reject."
         },
         repos.join("\n")
     )

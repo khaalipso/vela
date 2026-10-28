@@ -59,10 +59,10 @@ fn entry_with_trees(e: &Env, id: &str) -> Entry {
 // -- worktrees ------------------------------------------------------------------
 
 #[test]
-fn worktree_is_created_from_head_on_its_own_branch_and_removed() {
+fn worktree_starts_from_your_files_on_its_own_branch_and_is_removed() {
     let e = env();
     let user_wt = Path::new(&e.space.repos[0].worktree);
-    // The user's uncommitted work is not copied.
+    // The user's uncommitted work is copied: the agent works on what the user sees.
     write(user_wt, "notes.txt", "mine\n");
     write(user_wt, "untracked.txt", "u\n");
     let trees = worktree::create(&e.vela, &e.space, "developer-1").unwrap();
@@ -72,13 +72,23 @@ fn worktree_is_created_from_head_on_its_own_branch_and_removed() {
         wt,
         &paths::agent_worktree(&e.vela.home, "refunds", "developer-1", "api")
     );
-    assert_eq!(fs::read_to_string(wt.join("notes.txt")).unwrap(), NOTES);
-    assert!(!wt.join("untracked.txt").exists());
+    assert_eq!(fs::read_to_string(wt.join("notes.txt")).unwrap(), "mine\n");
+    assert_eq!(fs::read_to_string(wt.join("untracked.txt")).unwrap(), "u\n");
+    // The agent's own `git diff` starts empty: only its work will show there.
+    assert!(
+        sh(wt, &["status", "--porcelain"])
+            .lines()
+            .all(|l| !l.starts_with(" M") && !l.starts_with("??"))
+    );
     assert_eq!(
         sh(wt, &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
         "feat/refunds--developer-1"
     );
-    assert_eq!(trees[0].base, sh(user_wt, &["rev-parse", "HEAD"]).trim());
+    // The base is the tree of your files, not the commit.
+    assert_ne!(
+        trees[0].base,
+        sh(user_wt, &["rev-parse", "HEAD^{tree}"]).trim()
+    );
 
     worktree::remove(
         &e.vela,

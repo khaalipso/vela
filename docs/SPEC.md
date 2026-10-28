@@ -9,7 +9,7 @@ Arc replaced tabs with spaces. Vela replaces the open folder with the **space**:
 1. **One focused surface.** A space shows one view at a time: Code, Review or Agents. Nothing is docked unless you ask for it.
 2. **The IDE tells you what is next.** The "Up next" island always holds the single most useful action (answer an agent, review proposals, commit). `Enter` does it. `Shift Enter` jumps to the next space waiting for you.
 3. **Keyboard first.** Every action has a key. Hints at the bottom change with the view. `Cmd/Ctrl T` reaches everything, `Cmd/Ctrl K` asks an agent. On macOS the hints show ⌘ ⇧ ⌥.
-4. **You stay the author.** Agents never write in your worktree. They propose hunks from their own worktrees; you accept, reject or edit each one. Typing by hand always works.
+4. **You stay the author.** Agents never write in your worktree. They work on a copy of your files; you review what they changed file by file, edit it if you want, and accept or reject it. Typing by hand always works.
 5. **Plain git underneath.** Spaces are branches and standard `git worktree`s. Uninstall Vela and nothing is lost.
 6. **One AI config, many tools.** Instructions, MCP servers, skills and agent roles are set in layers (global, space, repo, folder) and written out to `AGENTS.md`, `CLAUDE.md`, `.mcp.json`, `opencode.json`, `.codex/config.toml`, `crush.json`.
 
@@ -32,17 +32,19 @@ The types in `crates/vela-core/src/model.rs` are the contract. The UI mirrors th
 - `VELA_HOME` (default `$XDG_DATA_HOME/vela`, else `~/.local/share/vela`).
 - `VELA_HOME/spaces/<id>.toml`: one file per space.
 - `VELA_HOME/worktrees/<space>/<repo>`: the user's worktree for that repo.
-- `VELA_HOME/worktrees/<space>/.agents/<agent>/<repo>`: an agent's worktree, on branch `<space-branch>--<agent>`, created from the commit the space branch is on (your uncommitted changes are not copied).
+- `VELA_HOME/worktrees/<space>/.agents/<agent>/<repo>`: an agent's worktree, on branch `<space-branch>--<agent>`, created from the commit the space branch is on, then filled with your files as they are (uncommitted edits and new files included).
 - `VELA_HOME/spaces/<id>.agents.json`: the agents of a space; `VELA_HOME/spaces/<id>.agents/<agent>.jsonl`: the event log of each agent.
 - Global AI config: `$XDG_CONFIG_HOME/vela/` (default `~/.config/vela/`).
 
 ## How proposals work
 
-An agent works in its own worktree. Its proposals are what it changed since the commit it started from (committed or not) that is not already in the user's worktree; comparing the two worktrees directly would offer to undo the user's own uncommitted edits. Accepting a hunk applies that patch to the user's worktree (`git apply`), then stages it. Rejecting records the hunk id so it is not shown again. Editing accepts, then opens the lines in the editor.
+An agent works in its own worktree, which starts as a copy of your files (uncommitted edits included), so it builds on what you see. Its proposals are what it changed since that starting point (committed or not) that is not already in your worktree; comparing the two worktrees directly would offer to undo the edits you made since.
+
+Accepting a file is a three-way merge (`git merge-file`): the base is the file as the agent found it, "theirs" is the base with the changes it still proposes, "mine" is your file now. Your edits next to the agent's are kept; lines you both changed come back as conflict markers, shown in the Review with "Keep yours", "Take the agent's" and "Keep both" on each. A file with markers left is never written or staged. Rejecting records the ids of the file's proposals so they are not shown again. When an agent runs again and everything it proposed was decided, its worktree takes your files as they are and that becomes its new base.
 
 ## Review view and checks
 
-The Review view lists each changed file once, in two groups: **To review** (an agent proposal or an edit of yours waits in it) and **Accepted** (everything in it is staged and goes in the commit). Each row shows who changed the file (agent role chips, "You") and its size. The selected file shows what its agents said they did, then its changes with old and new line numbers and syntax colors. `Space` (or "Accept file") applies the agents' proposals of the file to your worktree, stages the whole file and moves to the next file to review; on an accepted file it takes it back to review. `Shift A` accepts every file waiting. "Reject" throws away what the agents propose in the file; your own edits are never thrown away there. Hunk by hunk: `Tab` / `Shift Tab` move, `Y` accept, `U` back to review, `N` reject, `E` edit, `M` comment. The lists move at once and git catches up behind; reloads that overlap are merged. Accepted proposals are remembered (`<space>.accepted.json`): they are never offered again, even when you change those lines afterwards. When an agent starts a new run and everything it proposed was decided, its base moves to what it has, so the run offers only what it changes next. The Checks panel sits under the list; the file tree drawer is hidden in this view.
+The Review view lists each changed file once, in two groups: **To review** (an agent proposal or an edit of yours waits in it) and **Ready to commit** (everything in it is staged and goes in the commit). Each row shows who changed the file (agent role chips, "You", "Conflict", "Edited") and its size. The selected file shows what its agents said they did, then the whole file as a diff (CodeMirror merge view, `lib/mergeview.ts`): unified or side by side (`V`), syntax colors, unchanged runs folded. For a file with agent changes the diff goes from your file to what accepting writes ("Agent changes"), or from the last commit ("All since commit"). The "after" side is editable: type in it, revert one change ("↶ Revert"), resolve conflicts in place; accepting writes exactly what it shows (`accept_file`). `Space` or `Y` accepts the file, stages it and moves to the next file to review; `U` (or `Space` on an accepted file) takes it back. `Shift A` accepts every file waiting and leaves the ones with conflicts, saying which. `N` rejects what the agents propose in the file; your own edits are never thrown away there. `Tab` / `Shift Tab` move between the changes, `Enter` puts the cursor in the diff, `E` opens the file in the editor, `M` or a click on a line number comments that line. The lists move at once and git catches up behind; reloads that overlap are merged. Accepted proposals are remembered (`<space>.accepted.json`): they are never offered again, even when you change those lines afterwards. When an agent starts a new run and everything it proposed was decided, its base moves to what it has, so the run offers only what it changes next. The Checks panel sits under the list; the file tree drawer is hidden in this view.
 
 Comments: click a line number (or `M` on a hunk) to comment a line. The comment goes to a reviewer, who answers without changing anything, or to a developer, who answers and changes the code (the agent that wrote the hunk when it can be resumed, else a new one; its changes come back as proposals). The answer shows in a thread under the hunk; answering in the thread is a follow up of the same agent. Threads are kept in `VELA_HOME/spaces/<space>.comments.json`, the answers are read back from the agent's log.
 
@@ -68,7 +70,7 @@ The branch chip in the top bar renames the branch (`git branch -m` in every repo
 
 ## Agents view
 
-A conversation per agent: the list on the left (at work first, `J` `K` to move), the chat on the right. The chat shows your requests, the agent's full answers rendered as Markdown, its tool calls grouped between answers (click to unfold, with the files it edited), its plan, its questions with their answer buttons, and the end of each run. It updates live. The field at the bottom answers a question or gives a finished agent more work in the same session and worktree. "Edit and rerun" opens the composer with the request; "Review its changes" goes to the Review.
+A conversation per agent: the list on the left (at work first, `J` `K` to move), the chat on the right. The chat shows your requests, the agent's full answers rendered as Markdown, its tool calls grouped between answers (click to unfold, with the files it edited), its plan, its questions with their answer buttons, and the end of each run. It updates live. The field at the bottom answers a question or gives a finished agent more work in the same session and worktree. "Edit and rerun" opens the composer with the request. Under the header, the files the agent changed that still wait for you, with their size: a click opens that file in the Review. The tier of each agent (high, medium, low) shows in the list. Up next sits in the bar of this view, so it never covers the chat; the file tree drawer is hidden here.
 
 ## Your changes in the code view
 
@@ -93,8 +95,8 @@ Before a commit, run in parallel on the staged diff only: reviewer agent (non in
 | `Enter` / `Shift Enter` | Up next / next space waiting |
 | `[` `]`, `Alt 1..9` | Previous, next space / jump to space |
 | `1` `2` `3` `4` | Code, Review, Agents, Pull requests |
-| `J` `K` | Next, previous proposal |
-| `Y` `N` `E` `U` | Accept, reject, accept and edit, undo |
+| `J` `K` | Next, previous proposal (Review: file) |
+| `Y` `N` `E` `U` | Accept, reject, accept and edit, undo (Review: accept the file, reject its agent changes, open it, back to review) |
 | `F` | Ask the author to fix the reviewer note (`Shift Y` resolves it) |
 | `M` | Review: comment the hunk under the cursor, a reviewer or a developer agent answers |
 | `Ctrl W` | Close the file tab of the editor |

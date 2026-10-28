@@ -1,6 +1,7 @@
 //! Agent worktrees: `VELA_HOME/worktrees/<space>/.agents/<agent>/<repo>`, on the branch
-//! `<space-branch>--<agent>`, created from the commit the user's worktree is on. The user's
-//! uncommitted changes are not copied: an agent starts from what is committed.
+//! `<space-branch>--<agent>`, created from the commit the user's worktree is on, then filled with
+//! the user's files as they are (uncommitted edits and new files included): an agent works on
+//! what you see, so what it proposes merges with your edits.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,7 +15,8 @@ use vela_core::{Error, Result, Vela, paths};
 pub struct Tree {
     pub repo: String,
     pub path: PathBuf,
-    /// The commit the agent branch was created at; proposals are the changes since.
+    /// The tree the agent started from (your files when it was created); proposals are the
+    /// changes since.
     pub base: String,
 }
 
@@ -43,6 +45,7 @@ pub fn create(vela: &Vela, space: &Space, agent: &str) -> Result<Vec<Tree>> {
             }
             let p = path.to_string_lossy().into_owned();
             git(user_wt, &["worktree", "add", "-b", &branch, &p, &base])?;
+            let base = sync_to(user_wt, &path)?;
             Ok(Tree {
                 repo: r.name.clone(),
                 path,
@@ -59,6 +62,15 @@ pub fn create(vela: &Vela, space: &Space, agent: &str) -> Result<Vec<Tree>> {
         }
     }
     Ok(made)
+}
+
+/// Put the user's files as they are now (tracked, modified and new, ignored ones left out) in
+/// an agent worktree, index included, so the agent's own `git diff` shows only its work.
+/// Returns the tree the agent starts from.
+pub fn sync_to(user_wt: &Path, agent_wt: &Path) -> Result<String> {
+    let tree = vela_core::diff::snapshot_tree(user_wt)?;
+    git(agent_wt, &["read-tree", "-u", "--reset", &tree])?;
+    Ok(tree)
 }
 
 fn remove_trees(space: &Space, trees: &[Tree], branch: &str) {

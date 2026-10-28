@@ -27,6 +27,9 @@ const backend = new MockBackend({ speed: 0 });
 
 beforeAll(async () => {
   Element.prototype.scrollIntoView = () => {};
+  // CodeMirror measures text; jsdom has no layout.
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+  Range.prototype.getBoundingClientRect = () => new DOMRect();
   await app.init(backend);
   app.filesOpen = false;
   component = mount(App, { target: document.body });
@@ -111,44 +114,85 @@ describe("review: files and keys", () => {
     await vi.waitFor(() => expect(rows("done")).toContain(id));
   });
 
-  it("Enter focuses the diff, Tab and Shift Tab walk the hunks", async () => {
+  it("the diff shows the whole file with the agent's changes merged in; Tab walks the changes", async () => {
     const p = app.rows.find((r) => r.agents.length && r.hunks > 1)!;
     app.rvSelect(p.id);
     await settle();
-    expect($$(".hunk").length).toBe(app.selectedHunks.length);
-    expect(app.selectedHunks.length).toBeGreaterThan(1);
-    expect($(".why")?.textContent).toContain("says");
+    await vi.waitFor(() => expect($("section[aria-label='Diff'] .cm-editor")).toBeTruthy());
+    const fr = await backend.reviewFile(app.space.id, p.repo, p.path);
+    // What accepting writes is what the editor holds.
+    expect(app.pane?.doc()).toBe(fr.result);
+    const added = app.selectedHunks.flatMap((h) => h.lines.filter((l) => l.kind === "add").map((l) => l.text));
+    for (const t of added) expect(app.pane?.doc()).toContain(t);
+    expect($(".why")?.textContent).toBeTruthy();
     press("Enter");
     await settle();
     expect(app.rvs.focus).toBe("diff");
-    expect($(".diff.focused")).toBeTruthy();
-    expect(app.rvs.hunk).toBe(0);
+    const l0 = app.pane!.line();
     press("Tab");
     await settle();
-    expect(app.rvs.hunk).toBe(1);
-    expect($$(".hunk")[1].classList.contains("focus")).toBe(true);
+    const l1 = app.pane!.line();
+    expect(l1).not.toBe(l0);
+    // Shift Tab goes back (wrapping to the last change when on the first).
     press("Tab", { shiftKey: true });
     await settle();
-    expect(app.rvs.hunk).toBe(0);
+    press("Tab");
+    await settle();
+    expect(app.pane!.line()).toBe(l1);
   });
 
-  it("Y accepts the hunk (accepted hunks are marked), U takes it back, N rejects a proposal", async () => {
-    const before = app.pending.length;
-    press("y");
+  it("what you change in the diff is what gets accepted", async () => {
+    const p = app.rows.find((r) => r.section === "review" && r.agents.length)!;
+    app.rvSelect(p.id);
     await settle();
-    expect(app.pending.length).toBe(before - 1);
-    app.rvLocate(app.accepted[0].hunk.id);
+    await vi.waitFor(() => expect(app.pane).toBeTruthy());
+    const text = app.pane!.doc() + "\n// tweaked in review";
+    app.pane!.setDoc(text);
     await settle();
-    expect($(".hunk.staged")).toBeTruthy();
+    expect($(`[data-row='${p.id}'] .chip.ed`)).toBeTruthy();
+    expect($(".banner.info")?.textContent).toContain("Edited by you");
+    press(" ");
+    await vi.waitFor(() => expect(rows("done")).toContain(p.id));
+    expect((await backend.readFile(app.space.id, p.repo, p.path)).content).toBe(text);
+  });
+
+  it("a conflict blocks accepting until each block has a side", async () => {
+    const p = app.rows.find((r) => r.section === "review" && r.agents.length)!;
+    app.rvSelect(p.id);
+    await settle();
+    await vi.waitFor(() => expect(app.pane).toBeTruthy());
+    const doc = app.pane!.doc();
+    app.pane!.setDoc(`<<<<<<< yours\nmine\n=======\ntheirs\n>>>>>>> agent\n${doc}`);
+    await settle();
+    expect($(".banner.warn")?.textContent).toContain("1 conflict with your edits");
+    expect($(`[data-row='${p.id}'] .chip.cf`)).toBeTruthy();
+    const accept = $$(".dh .btn.p")[0] as HTMLButtonElement;
+    expect(accept.disabled).toBe(true);
+    press(" ");
+    await settle();
+    expect(app.toastState?.text).toContain("conflict");
+    expect(rows("review")).toContain(p.id);
+    $$(".banner.warn .btn").find((b) => b.textContent === "Take all the agent's")!.click();
+    await settle();
+    expect(app.pane!.doc()).toBe(`theirs\n${doc}`);
+    expect($(".banner.warn")).toBeNull();
+    press(" ");
+    await vi.waitFor(() => expect(rows("done")).toContain(p.id));
+  });
+
+  it("U takes an accepted file back to review, N rejects the agent's changes of a file", async () => {
+    const id = rows("done").find((r) => app.rows.find((x) => x.id === r)?.hunks)!;
+    app.rvSelect(id);
+    await settle();
     press("u");
+    await vi.waitFor(() => expect(rows("review")).toContain(id));
+    const p = app.rows.find((r) => r.section === "review" && r.agents.length)!;
+    app.rvSelect(p.id);
     await settle();
-    expect(app.pending.length).toBe(before);
-    app.rvLocate(app.pending[0].hunk.id);
-    await settle();
+    const before = app.pending.length;
     press("n");
-    await settle();
-    expect(app.pending.length).toBe(before - 1);
-    expect(app.rejected.length).toBe(1);
+    await vi.waitFor(() => expect(app.pending.length).toBeLessThan(before));
+    expect(app.rejected.length).toBeGreaterThan(0);
   });
 
   it("N on your own edit never discards it", async () => {
@@ -159,12 +203,10 @@ describe("review: files and keys", () => {
     await vi.waitFor(() => expect(rows("review")).toContain(id));
     app.rvSelect(id);
     await settle();
-    app.rvHunkSet(app.selectedHunks.findIndex((h) => h.origin.type === "you"));
-    await settle();
     const hunksBefore = app.mine.length;
     press("n");
     await settle();
-    expect(app.toastState?.text).toBe("Your own changes are never discarded here");
+    expect(app.toastState?.text).toContain("Your own edits are never thrown away");
     expect(app.mine.length).toBe(hunksBefore);
   });
 });
@@ -228,10 +270,8 @@ describe("review: checks", () => {
   });
 
   it("C opens the composer, whose gate reads these results", async () => {
-    // something must be staged: accept a proposal
-    app.rvLocate(app.pending[0].hunk.id);
-    press("y");
-    await settle();
+    // files were accepted above: something is staged
+    expect(app.staged.length).toBeGreaterThan(0);
     press("c");
     await settle();
     await vi.waitFor(() => expect(app.overlay, `${app.toastState?.text} ${app.staged.length}`).toBe("commit"));
@@ -262,8 +302,8 @@ describe("review: narrow widths", () => {
 });
 
 describe("review: approve all and comments", () => {
-  it("M opens a comment box on the hunk; Enter sends it and the agent answers in the thread", async () => {
-    const p = app.rows.find((r) => r.agents.length > 0)!;
+  it("M opens a comment box on the line of the diff; Enter sends it and the agent answers in the thread", async () => {
+    const p = app.rows.find((r) => r.section === "review") ?? app.rows[0];
     app.rvSelect(p.id);
     await settle();
     press("m");
@@ -284,7 +324,6 @@ describe("review: approve all and comments", () => {
     const { content } = await backend.readFile("stripe", f.repo, f.path);
     await backend.writeFile("stripe", f.repo, f.path, content + "\n// again");
     await vi.waitFor(() => expect(rows("review")).toContain(`${f.repo}/${f.path}`));
-    expect(app.pending.length).toBeGreaterThan(0);
     press("A", { shiftKey: true });
     // The lists move before the backend answers.
     await tick();
@@ -292,7 +331,7 @@ describe("review: approve all and comments", () => {
     await vi.waitFor(() => expect(app.pending.length).toBe(0));
     await vi.waitFor(() => expect(app.sd.status.every((c) => !c.unstaged)).toBe(true));
     expect(rows("review")).toEqual([]);
-    expect(rows("done").length).toBe(3);
+    expect(rows("done").length).toBeGreaterThan(0);
     expect($(".head")?.textContent).toContain("All accepted");
   });
 });

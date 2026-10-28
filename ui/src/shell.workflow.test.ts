@@ -117,15 +117,14 @@ describe("review", () => {
     const proposed = app.rows.find((r) => r.agents.length > 0)!;
     app.rvSelect(proposed.id);
     await settle();
-    expect($(".split")).toBeNull();
+    expect($(".cm-mergeView")).toBeNull();
     press("v");
     await settle();
-    expect($$(".split").length).toBeGreaterThan(0);
-    expect($(".split .hd")?.textContent).toContain("Before");
+    expect($$(".cm-mergeView .cm-editor").length).toBe(2);
     expect(app.view).toBe("review");
     press("v");
     await settle();
-    expect($(".split")).toBeNull();
+    expect($(".cm-mergeView")).toBeNull();
   });
 
   it("a note shows on its hunk; Shift Y resolves it and Reopen opens it again", async () => {

@@ -44,31 +44,25 @@ describe("shell", () => {
     expect($(".island")).toBeNull();
     // the files to review, the diff of the first one with what its agents say, the checks
     expect($$("[data-section='review'] .frow").length).toBe(2);
-    expect($$(".hunk").length).toBe(2);
-    expect($$(".hunk.focus").length).toBe(1);
-    expect($(".hunk.focus")?.textContent).toContain("constructEvent");
-    expect($(".why")?.textContent).toContain("says");
+    // the whole file, as accepting it would write it
+    expect($("section[aria-label='Diff'] .cm-editor")).toBeTruthy();
+    expect(app.pane?.doc()).toContain("constructEvent");
+    expect(app.pane?.doc()).toContain("log.info");
+    expect($(".why")?.textContent).toBeTruthy();
     expect($("aside[aria-label='Checks']")).toBeTruthy();
     expect(document.documentElement.style.getPropertyValue("--space")).toBe("#E8A14A");
   });
 
-  it("Tab moves the hunk cursor, Y accepts, U undoes", async () => {
-    press("Tab");
-    await settle();
-    expect($(".hunk.focus")?.textContent).toContain("log.info");
+  it("Y accepts the file and moves to the next, U takes it back", async () => {
+    const first = app.rvs.sel!;
     press("y");
     await settle();
-    expect($$(".hunk[data-state='staged']").length).toBe(1);
-    expect(app.upNext.title).toBe("Review 2 proposals");
-    // after accepting, the cursor moved on to the next pending proposal
-    expect($(".hunk.focus")?.textContent).toContain("constructEvent");
-    press("Tab");
+    await vi.waitFor(() => expect(app.upNext.title).toBe("Review 1 proposal"));
+    expect(app.rvs.sel).not.toBe(first);
+    app.rvSelect(first);
     await settle();
-    expect($(".hunk.focus")?.textContent).toContain("log.info");
     press("u");
-    await settle();
-    expect($$(".hunk[data-state='staged']").length).toBe(0);
-    expect(app.upNext.title).toBe("Review 3 proposals");
+    await vi.waitFor(() => expect(app.upNext.title).toBe("Review 3 proposals"));
   });
 
   it("switching space changes the accent, Alt 2 jumps, [ goes back", async () => {
@@ -78,7 +72,8 @@ describe("shell", () => {
     expect(document.documentElement.style.getPropertyValue("--space")).toBe("#7DB8F5");
     // pg opens in the agents view with its question
     await vi.waitFor(() => expect($(".chat .question p")?.textContent).toContain("pg_trgm"));
-    expect($(".island b")?.textContent).toBe("Crush is waiting for you");
+    // in the agents view, up next sits in the bar: the island would cover the chat
+    expect($(".next b")?.textContent).toBe("Crush is waiting for you");
     press("[");
     await settle();
     expect($("h1")?.textContent).toContain("Stripe v2 billing");
@@ -195,7 +190,9 @@ describe("shell", () => {
     expect(app.sd.notes[0].resolved).toBe(true);
   });
 
-  it("E accepts, opens the code view and puts the cursor in the editor", async () => {
+  it("E in the code view accepts the proposal and puts the cursor in the editor", async () => {
+    press("1");
+    await settle();
     app.cui.hi = "s1f";
     await settle();
     press("e");

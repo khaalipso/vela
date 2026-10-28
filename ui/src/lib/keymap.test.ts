@@ -260,10 +260,11 @@ describe("review view", () => {
     expect(r("Tab", { shiftKey: true })).toEqual({ type: "rv-hunk", delta: -1 });
   });
 
-  it("Y stages a hunk, U unstages it, N rejects a proposal", () => {
-    expect(r("y")).toEqual({ type: "rv-hunk-stage" });
-    expect(r("u")).toEqual({ type: "rv-hunk-unstage" });
-    expect(r("n")).toEqual({ type: "reject" });
+  it("Y accepts the file, U takes it back, N rejects the agent's changes, E opens it", () => {
+    expect(r("y")).toEqual({ type: "rv-accept-file" });
+    expect(r("u")).toEqual({ type: "rv-unaccept-file" });
+    expect(r("n")).toEqual({ type: "rv-reject-file" });
+    expect(r("e")).toEqual({ type: "rv-open-editor" });
   });
 
   it("R runs the checks, Shift R the focused one, O opens the log, C commits", () => {
@@ -297,10 +298,10 @@ describe("find, terminal, preview, split, notes", () => {
     expect(resolveKey({ key: "v" }, base)).toEqual({ type: "toggle-preview" });
     expect(resolveKey({ key: "v" }, { ...base, view: "review" })).toEqual({ type: "rv-split" });
   });
-  it("Shift Y resolves a note in the review, Y still stages", () => {
+  it("Shift Y resolves a note in the review, Y still accepts", () => {
     const rv = { ...base, view: "review" as const };
     expect(resolveKey({ key: "Y", shiftKey: true }, rv)).toEqual({ type: "rv-note-resolve" });
-    expect(resolveKey({ key: "y" }, rv)).toEqual({ type: "rv-hunk-stage" });
+    expect(resolveKey({ key: "y" }, rv)).toEqual({ type: "rv-accept-file" });
   });
   it("the settings sheet takes its own keys", () => {
     expect(resolveKey({ key: "t" }, { ...base, overlay: "settings" })).toBeNull();

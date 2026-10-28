@@ -25,7 +25,7 @@ use crate::event::{AgentEvent, one_line};
 #[serde(rename_all = "camelCase")]
 pub struct Entry {
     pub agent: Agent,
-    /// Repo name → commit the agent branch started at.
+    /// Repo name → tree the agent started from (proposals are the changes since).
     #[serde(default)]
     pub bases: Vec<(String, String)>,
     #[serde(default)]

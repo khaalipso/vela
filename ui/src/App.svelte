@@ -46,7 +46,7 @@
       stackOpen: app.stackOpen,
       view: app.view,
       hasQuestion: app.spaces.length > 0 && !!app.sd.question,
-      filesOpen: app.filesOpen && app.view !== "review",
+      filesOpen: app.filesOpen && app.view !== "review" && app.view !== "agents",
       inFiles: !!(e.target as HTMLElement | null)?.closest?.("[data-files]"),
       inTerm: !!(e.target as HTMLElement | null)?.closest?.(".xterm"),
     });
@@ -99,7 +99,7 @@
       <TopBar />
       <div class="body">
         <!-- The Review view lists its own files: the tree would only take room there. -->
-        {#if app.filesOpen && app.view !== "review"}<FilesDrawer />{/if}
+        {#if app.filesOpen && app.view !== "review" && app.view !== "agents"}<FilesDrawer />{/if}
         {#key surfaceKey}
           {#if app.elsewhere}
             <section class="surface enter">
@@ -122,7 +122,7 @@
         {#await import("./components/TerminalPanel.svelte") then { default: TerminalPanel }}<TerminalPanel />{/await}
       {/if}
       <!-- In the Review view the list already says what is next: the island only brings news. -->
-      {#if app.overlay !== "composer" && !(app.view === "review" && ["review", "commit", "nothing"].includes(app.upNext.kind.type))}<Island />{/if}
+      {#if app.overlay !== "composer" && app.view !== "agents" && !(app.view === "review" && ["review", "commit", "nothing"].includes(app.upNext.kind.type))}<Island />{/if}
       <BottomHints />
       {#if app.stackOpen}<StackPopover />{/if}
       {#if app.overlay === "composer"}<Composer />{/if}
@@ -210,6 +210,12 @@
     overflow: auto;
     position: relative;
     padding-bottom: 96px;
+  }
+  /* The Review fills the height: its diff scrolls on its own. */
+  .surface[aria-label="review"],
+  .surface[aria-label="agents"] {
+    padding-bottom: 0;
+    overflow: hidden;
   }
   .surface.enter {
     animation: enter 320ms var(--ease);

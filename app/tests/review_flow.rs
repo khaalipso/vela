@@ -235,3 +235,112 @@ fn a_follow_up_next_to_accepted_lines_offers_only_the_new_change() {
     assert_eq!(proposals(&e), Vec::<String>::new());
     assert_eq!(pending_mine(&e), Vec::<String>::new());
 }
+
+#[test]
+fn your_uncommitted_edits_reach_the_agent_so_its_work_merges() {
+    let e = env();
+    // You edit line 3 and leave it uncommitted, then the agent edits lines 2 and 4.
+    let a = fs::read_to_string(e.wt.join("a.txt")).unwrap();
+    fs::write(e.wt.join("a.txt"), a.replace("line 3\n", "mine 3\n")).unwrap();
+    run_developer(&e);
+    let failed = commands::accept_hunks(&e.vela, "refunds", &agent_ids(&e)).unwrap();
+    assert!(failed.is_empty(), "{failed:?}");
+    assert_eq!(proposals(&e), Vec::<String>::new());
+    let a = fs::read_to_string(e.wt.join("a.txt")).unwrap();
+    assert!(a.contains("LINE TWO\nmine 3\nLINE FOUR\n"), "{a}");
+}
+
+#[test]
+fn accept_file_merges_your_edits_made_after_the_agent_started() {
+    let e = env();
+    run_developer(&e);
+    // While the agent worked, you changed line 8 (near nothing it touched) and line 30 (its line).
+    let a = fs::read_to_string(e.wt.join("a.txt")).unwrap();
+    fs::write(e.wt.join("a.txt"), a.replace("line 8\n", "mine 8\n")).unwrap();
+    let r = commands::review_file(&e.vela, "refunds", "api", "a.txt").unwrap();
+    assert_eq!(r.conflicts, 0, "{:?}", r.result);
+    let res = r.result.unwrap();
+    assert!(res.contains("LINE TWO") && res.contains("mine 8") && res.contains("LINE THIRTY"));
+    commands::accept_file(&e.vela, "refunds", "api", "a.txt", None).unwrap();
+    assert!(!proposals(&e).iter().any(|p| p.starts_with("a.txt")));
+    let st = commands::status(&e.vela, "refunds").unwrap();
+    let a = st.iter().find(|c| c.path == "a.txt").unwrap();
+    assert!(a.staged.is_some() && a.unstaged.is_none(), "{a:?}");
+}
+
+#[test]
+fn a_conflict_is_shown_and_never_staged_half_merged() {
+    let e = env();
+    run_developer(&e);
+    let a = fs::read_to_string(e.wt.join("a.txt")).unwrap();
+    fs::write(e.wt.join("a.txt"), a.replace("line 30\n", "mine 30\n")).unwrap();
+    let r = commands::review_file(&e.vela, "refunds", "api", "a.txt").unwrap();
+    assert_eq!(r.conflicts, 1);
+    let merged = r.result.unwrap();
+    assert!(
+        merged.contains("<<<<<<< yours\nmine 30\n=======\nLINE THIRTY\n>>>>>>> agent\n"),
+        "{merged}"
+    );
+    // As is: refused, nothing written.
+    assert!(commands::accept_file(&e.vela, "refunds", "api", "a.txt", None).is_err());
+    assert!(commands::accept_file(&e.vela, "refunds", "api", "a.txt", Some(&merged)).is_err());
+    assert!(
+        fs::read_to_string(e.wt.join("a.txt"))
+            .unwrap()
+            .contains("mine 30")
+    );
+    // Accept all leaves it out and says why, the rest goes in.
+    let skipped = commands::accept_files(
+        &e.vela,
+        "refunds",
+        &[
+            ("api".into(), "a.txt".into()),
+            ("api".into(), "b.txt".into()),
+        ],
+    )
+    .unwrap();
+    assert_eq!(skipped.len(), 1, "{skipped:?}");
+    assert!(!proposals(&e).iter().any(|p| p.starts_with("b.txt")));
+    // Resolved by hand in the Review: written as you made it and staged.
+    let fixed = merged.replace(
+        "<<<<<<< yours\nmine 30\n=======\nLINE THIRTY\n>>>>>>> agent\n",
+        "both 30\n",
+    );
+    commands::accept_file(&e.vela, "refunds", "api", "a.txt", Some(&fixed)).unwrap();
+    assert_eq!(fs::read_to_string(e.wt.join("a.txt")).unwrap(), fixed);
+    assert!(!proposals(&e).iter().any(|p| p.starts_with("a.txt")));
+}
+
+#[test]
+fn new_and_deleted_files_are_accepted_whole() {
+    let e = env();
+    run_developer(&e);
+    let skipped = commands::accept_files(
+        &e.vela,
+        "refunds",
+        &[
+            ("api".into(), "src/new.rs".into()),
+            ("api".into(), "gone.txt".into()),
+        ],
+    )
+    .unwrap();
+    assert!(skipped.is_empty(), "{skipped:?}");
+    assert!(e.wt.join("src/new.rs").exists());
+    assert!(!e.wt.join("gone.txt").exists());
+    let left = proposals(&e);
+    assert!(
+        left.iter()
+            .all(|p| p.starts_with("a.txt") || p.starts_with("b.txt")),
+        "{left:?}"
+    );
+}
+
+#[test]
+fn reject_file_drops_the_agent_changes_of_that_file_only() {
+    let e = env();
+    run_developer(&e);
+    assert!(commands::reject_file(&e.vela, "refunds", "api", "a.txt").unwrap() >= 2);
+    let left = proposals(&e);
+    assert!(!left.iter().any(|p| p.starts_with("a.txt")), "{left:?}");
+    assert!(left.iter().any(|p| p.starts_with("b.txt")), "{left:?}");
+}

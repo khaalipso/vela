@@ -10,6 +10,7 @@
 //! - [`detect`]: which harnesses are installed.
 //! - [`worktree`]: the worktree and branch of each agent.
 //! - [`proposals`]: the agents' changes as hunks the user accepts or rejects.
+//! - [`merge`]: three-way merge of an agent's changes into your files.
 //! - [`registry`]: agents and their event logs on disk, restart recovery.
 //! - [`manager`]: runs agents on background threads and ties it all together.
 
@@ -21,6 +22,7 @@ pub mod detect;
 pub mod driver;
 pub mod event;
 pub mod manager;
+pub mod merge;
 pub mod notes;
 pub mod opencode;
 pub mod proposals;

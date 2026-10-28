@@ -97,6 +97,25 @@ export interface ReviewComment {
 }
 
 /** Where a new comment goes and what it says. */
+/**
+ * One file of the Review: your file now, the file you get when you accept (every pending
+ * proposal of agents merged in, conflict markers where you both changed the same lines), and
+ * the file at the last commit. null: the file does not exist on that side.
+ */
+export interface FileReview {
+  repo: string;
+  path: string;
+  mine: string | null;
+  result: string | null;
+  head: string | null;
+  conflicts: number;
+  /** Conflicts that markers cannot show (a deleted or binary file). */
+  notes: string[];
+  /** Agents with proposals in the file. */
+  agents: string[];
+  binary: boolean;
+}
+
 export interface NewComment {
   repo: string;
   path: string;
@@ -340,6 +359,14 @@ export interface Backend {
   unstageFiles(spaceId: string, files: FileRef[]): Promise<void>;
   /** Accept several hunks at once; returns why the ones that did not apply failed. */
   acceptHunks(spaceId: string, hunkIds: string[]): Promise<string[]>;
+  /** What accepting a file gives, before anything is written. */
+  reviewFile(spaceId: string, repo: string, path: string): Promise<FileReview>;
+  /** Accept a file: write `content` (or the merged result as is) and stage it. Refused with conflict markers. */
+  acceptFile(spaceId: string, repo: string, path: string, content?: string | null): Promise<void>;
+  /** Accept files as they are; returns why the ones left out (conflicts) were left. */
+  acceptFiles(spaceId: string, files: FileRef[]): Promise<string[]>;
+  /** Reject what the agents propose in a file; your edits stay. Returns how many changes. */
+  rejectFile(spaceId: string, repo: string, path: string): Promise<number>;
   readFile(spaceId: string, repo: string, path: string): Promise<FileContent>;
   writeFile(spaceId: string, repo: string, path: string, content: string): Promise<void>;
 
@@ -1732,6 +1759,55 @@ export class MockBackend implements Backend {
     return failed;
   }
 
+  async reviewFile(spaceId: string, repo: string, path: string): Promise<FileReview> {
+    const s = this.sp(spaceId);
+    const f = this.file(s, repo, path);
+    const mine = f.lines.slice();
+    const pending = s.hunks.filter((h) => h.repo === repo && h.path === path && h.state === "pending").sort((a, b) => b.at - a.at);
+    const result = mine.slice();
+    for (const h of pending) result.splice(h.at, h.del.length, ...h.add);
+    const head = (f.orig ?? mine).slice();
+    // Staged proposals are in the file but not in the last commit.
+    for (const h of s.hunks.filter((x) => x.repo === repo && x.path === path && x.state === "staged").sort((a, b) => b.at - a.at)) {
+      if (!f.orig) head.splice(h.at, h.add.length, ...h.del);
+    }
+    return {
+      repo,
+      path,
+      mine: mine.join("\n"),
+      result: result.join("\n"),
+      head: head.join("\n"),
+      conflicts: 0,
+      notes: [],
+      agents: [...new Set(pending.map((h) => h.agent))],
+      binary: false,
+    };
+  }
+
+  async acceptFile(spaceId: string, repo: string, path: string, content?: string | null): Promise<void> {
+    if (content && /^<<<<<<< /m.test(content) && /^>>>>>>> /m.test(content)) throw new Error(`${path} still has conflict markers. Keep one side of each first`);
+    const s = this.sp(spaceId);
+    for (const h of s.hunks.filter((x) => x.repo === repo && x.path === path && x.state === "pending").sort((a, b) => b.at - a.at)) {
+      this.apply(s, h);
+      h.state = "staged";
+    }
+    if (typeof content === "string" && content !== this.file(s, repo, path).lines.join("\n")) await this.writeFile(spaceId, repo, path, content);
+    await this.stageFile(spaceId, repo, path);
+  }
+
+  async acceptFiles(spaceId: string, files: FileRef[]): Promise<string[]> {
+    for (const f of files) await this.acceptFile(spaceId, f.repo, f.path);
+    return [];
+  }
+
+  async rejectFile(spaceId: string, repo: string, path: string): Promise<number> {
+    const s = this.sp(spaceId);
+    const list = s.hunks.filter((h) => h.repo === repo && h.path === path && h.state === "pending");
+    for (const h of list) h.state = "rejected";
+    if (list.length) this.emit(spaceId);
+    return list.length;
+  }
+
   async unstageFile(spaceId: string, repo: string, path: string): Promise<void> {
     const s = this.sp(spaceId);
     const fs = s.fileStage.get(fileKey(repo, path));
@@ -2299,6 +2375,18 @@ export class TauriBackend implements Backend {
   }
   acceptHunks(spaceId: string, hunkIds: string[]) {
     return call<string[]>("accept_hunks", { spaceId, hunkIds });
+  }
+  reviewFile(spaceId: string, repo: string, path: string) {
+    return call<FileReview>("review_file", { spaceId, repo, path });
+  }
+  acceptFile(spaceId: string, repo: string, path: string, content?: string | null) {
+    return call<void>("accept_file", { spaceId, repo, path, content: content ?? null });
+  }
+  acceptFiles(spaceId: string, files: FileRef[]) {
+    return call<string[]>("accept_files", { spaceId, files: files.map((f) => [f.repo, f.path]) });
+  }
+  rejectFile(spaceId: string, repo: string, path: string) {
+    return call<number>("reject_file", { spaceId, repo, path });
   }
   async readFile(spaceId: string, repo: string, path: string): Promise<FileContent> {
     const content = await call<string>("read_file", { spaceId, repo, path });

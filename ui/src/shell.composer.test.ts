@@ -147,7 +147,8 @@ describe("links", () => {
 });
 
 describe("commit composer", () => {
-  it("accepting proposals stages them; C plans one commit per repo with the ticket footer", async () => {
+  it("accepting a file stages it; C plans one commit per repo with the ticket footer", async () => {
+    // Y accepts the file to review (both proposals of webhook.ts), then the next one.
     press("y");
     await settle();
     press("y");
@@ -166,7 +167,7 @@ describe("commit composer", () => {
       "fix(lib): update stripe",
     ]);
     expect(($('[data-field="footers"]') as HTMLTextAreaElement).value).toBe("Refs: PAY-412, PAY-9");
-    expect($$(".card.focus .hk .p").map((e) => e.textContent)).toEqual(["src/billing/webhook.ts", "src/billing/checkout.ts"]);
+    expect($$(".card.focus .hk .p").map((e) => e.textContent)).toEqual(["src/billing/webhook.ts", "src/billing/webhook.ts", "src/billing/checkout.ts"]);
     expect($$(".card.focus .hk .n").map((e) => e.textContent)).toEqual(["staged earlier"]);
   });
 
@@ -187,7 +188,7 @@ describe("commit composer", () => {
     press("2", {});
     await settle();
     expect(app.toastState?.text).toBe("Commit 2 is in web, this hunk is in api");
-    expect(app.cc!.groups.map((g) => g.hunks.length)).toEqual([2, 1]);
+    expect(app.cc!.groups.map((g) => g.hunks.length)).toEqual([3, 1]);
     press("m");
     expect(app.toastState?.text).toBe("Already one commit per repo");
   });

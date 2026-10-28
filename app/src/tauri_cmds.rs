@@ -349,6 +349,68 @@ pub async fn accept_hunks(
     Ok(failed)
 }
 
+/// One file of the Review: your file, what accepting gives, the last commit.
+#[tauri::command]
+pub async fn review_file(
+    vela: State<'_, Vela>,
+    space_id: String,
+    repo: String,
+    path: String,
+) -> AppResult<commands::FileReview> {
+    blocking(&vela, move |v| {
+        commands::review_file(v, &space_id, &repo, &path)
+    })
+    .await
+}
+
+/// Accept one file: write what the Review shows (or `content`), stage it.
+#[tauri::command]
+pub async fn accept_file(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    repo: String,
+    path: String,
+    content: Option<String>,
+) -> AppResult<()> {
+    let id = space_id.clone();
+    blocking(&vela, move |v| {
+        commands::accept_file(v, &id, &repo, &path, content.as_deref())
+    })
+    .await?;
+    notify_state(&app, &space_id);
+    Ok(())
+}
+
+/// Accept several files as they are; returns the ones left for conflicts.
+#[tauri::command]
+pub async fn accept_files(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    files: Vec<(String, String)>,
+) -> AppResult<Vec<String>> {
+    let id = space_id.clone();
+    let skipped = blocking(&vela, move |v| commands::accept_files(v, &id, &files)).await?;
+    notify_state(&app, &space_id);
+    Ok(skipped)
+}
+
+/// Reject what the agents propose in one file.
+#[tauri::command]
+pub async fn reject_file(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    repo: String,
+    path: String,
+) -> AppResult<usize> {
+    let id = space_id.clone();
+    let n = blocking(&vela, move |v| commands::reject_file(v, &id, &repo, &path)).await?;
+    notify_state(&app, &space_id);
+    Ok(n)
+}
+
 #[tauri::command]
 pub async fn unstage_file(
     app: AppHandle,

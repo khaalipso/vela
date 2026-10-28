@@ -20,6 +20,9 @@ import type {
   TermEvent,
   Unsubscribe,
 } from "./backend";
+import type { FileReview } from "./backend";
+import { findConflicts } from "./conflicts";
+import type { Pane } from "./mergeview";
 import { composeMessage, cycleType, mergeAll, moveHunk, splitHunk } from "./commitplan";
 import { fileKey, plural, roleLabel, ROLES, toolLabel, uniq } from "./format";
 import type { Action, Overlay, View } from "./keymap";
@@ -334,6 +337,8 @@ export class AppState {
   rvWidth = $state(0);
   /** The Review diff shows before and after side by side (V), remembered per window. */
   rvSplit = $state(readFlag("vela.rvSplit", false));
+  /** What the diff of a file with agent changes compares: your file now, or the last commit. */
+  rvCompare: "incoming" | "commit" = $state("incoming");
 
   /** Markdown files shown as source instead of the preview (key `space:repo/path`). */
   mdSource = $state<Record<string, true>>({});
@@ -438,7 +443,13 @@ export class AppState {
   private async onEvent(e: BackendEvent) {
     await this.syncSpaces();
     if (!this.data[e.spaceId] || !this.spaces.some((s) => s.id === e.spaceId)) return;
-    await this.load(e.spaceId, e.kind === "file");
+    try {
+      await this.load(e.spaceId, e.kind === "file");
+    } catch (err) {
+      // The space went away while it reloaded (removed, archived): nothing to show.
+      if (this.spaces.some((s) => s.id === e.spaceId)) this.fail(err);
+      return;
+    }
     if (e.kind !== "file") this.contentRev[e.spaceId] = (this.contentRev[e.spaceId] ?? 0) + 1;
     if (e.toast) this.toast(e.toast);
   }
@@ -586,6 +597,12 @@ export class AppState {
     this.rv[this.space.id] = moveSelection(this.rvs, this.rows, delta);
     this.setRv({ focus: "files" });
   }
+  /** Tab, Shift Tab: next, previous change of the file in the diff. */
+  rvChange(delta: 1 | -1) {
+    if (!this.pane) return;
+    const ok = delta > 0 ? this.pane.next() : this.pane.prev();
+    if (!ok && this.selectedRow) this.toast(delta > 0 ? "Last change of the file. J for the next file" : "First change of the file");
+  }
   rvHunkMove(delta: 1 | -1) {
     this.rv[this.space.id] = moveHunkCursor(this.rvs, this.selectedHunks.length, delta);
     this.setRv({ focus: "diff" });
@@ -623,25 +640,54 @@ export class AppState {
   }
 
   /**
-   * Accept files: the proposals of agents in them are applied to your worktree, then each
-   * whole file is staged (your edits included). One git call per repo for the lot.
+   * Accept files: what the Review shows for each (the agents' changes merged into your file,
+   * or what you made of it in the diff) is written and the file is staged. A file with
+   * conflicts left is not touched; the toast says which.
    */
   private async approveRows(sid: string, rows: FileRow[]) {
     if (!rows.length) return;
-    const ids = rows.flatMap((r) => this.pendingAgentHunks(sid, r).map((h) => h.id));
-    this.advanceFrom(sid, rows);
+    const blocked = rows.filter((r) => this.conflictsLeft(sid, r) > 0);
+    if (rows.length === 1 && blocked.length) {
+      const n = this.conflictsLeft(sid, rows[0]);
+      this.toast(`${n === 1 ? "1 conflict" : `${n} conflicts`} left in ${rows[0].path}: keep your lines or the agent's on each first`);
+      const c = findConflicts(this.rvTextOf(sid, rows[0]) ?? "")[0];
+      if (c) this.pane?.reveal(c.line);
+      return;
+    }
+    const go = rows.filter((r) => !blocked.includes(r));
+    const ids = go.flatMap((r) => this.pendingAgentHunks(sid, r).map((h) => h.id));
+    this.advanceFrom(sid, go);
     this.optimistic(sid, (st, hs) => {
       const a = acceptLocally(st, hs, ids);
-      const b = stageLocally(a.status, a.hunks, rows);
-      return { status: b.status, hunks: b.hunks.map((h) => (rows.some((r) => r.repo === h.repo && r.path === h.path) && h.state === "pending" && h.origin.type === "you" ? { ...h, state: "staged" } : h)) };
+      const b = stageLocally(a.status, a.hunks, go);
+      return { status: b.status, hunks: b.hunks.map((h) => (go.some((r) => r.repo === h.repo && r.path === h.path) && h.state === "pending" && h.origin.type === "you" ? { ...h, state: "staged" } : h)) };
     });
+    const left: string[] = blocked.map((r) => r.path);
     try {
-      if (ids.length) this.failedToApply(await this.backend.acceptHunks(sid, ids));
-      await this.backend.stageFiles(sid, rows.map((r) => ({ repo: r.repo, path: r.path })));
+      const drafted = go.filter((r) => this.rvDrafts[draftKey(sid, r.id)] !== undefined);
+      for (const r of drafted) {
+        await this.backend.acceptFile(sid, r.repo, r.path, this.rvDrafts[draftKey(sid, r.id)]);
+        delete this.rvDrafts[draftKey(sid, r.id)];
+      }
+      const rest = go.filter((r) => !drafted.includes(r));
+      if (rest.length) left.push(...(await this.backend.acceptFiles(sid, rest.map((r) => ({ repo: r.repo, path: r.path })))));
     } catch (e) {
       this.fail(e);
     }
+    if (left.length) this.toast(left.length === 1 ? `Left for you, conflicts with your edits: ${left[0]}` : `${left.length} files left for you: conflicts with your edits`);
     await this.refresh(sid);
+  }
+  /** Conflict blocks left in what accepting a file would write (known once its review loaded). */
+  conflictsLeft(sid: string, r: FileRow): number {
+    const t = this.rvTextOf(sid, r);
+    return t ? findConflicts(t).length : 0;
+  }
+  /** What accepting a file writes: your draft in the diff, else the merged result. */
+  rvTextOf(sid: string, r: FileRow): string | null {
+    const d = this.rvDrafts[draftKey(sid, r.id)];
+    if (d !== undefined) return d;
+    const fr = this.reviews[draftKey(sid, r.id)];
+    return fr && fr.agents.length ? fr.result : null;
   }
   /** After the selected file leaves "To review", select the next one still waiting. */
   private advanceFrom(sid: string, rows: FileRow[]) {
@@ -676,22 +722,75 @@ export class AppState {
   /** Accept one file (or take it back to review when it is accepted). */
   async rvStageRow(r: FileRow) {
     const sid = this.space.id;
-    if (r.section === "done") return this.unstageRows(sid, [r]);
+    if (r.section === "done") {
+      delete this.rvDrafts[draftKey(sid, r.id)];
+      return this.unstageRows(sid, [r]);
+    }
     return this.approveRows(sid, [r]);
   }
   /** Reject every proposal of agents in one file; your own edits stay. */
   async rvRejectRow(r: FileRow) {
     const sid = this.space.id;
     const ids = this.pendingAgentHunks(sid, r).map((h) => h.id);
-    if (!ids.length) return this.toast("No proposal of an agent in this file. Your own edits are never thrown away here");
+    if (!ids.length) return this.toast("No change of an agent in this file. Your own edits are never thrown away here");
     if (!r.mine) this.advanceFrom(sid, [r]);
+    delete this.rvDrafts[draftKey(sid, r.id)];
     this.optimistic(sid, (st, hs) => ({ status: st, hunks: hs.map((h) => (ids.includes(h.id) ? { ...h, state: "rejected" } : h)) }));
     try {
-      for (const id of ids) await this.backend.rejectHunk(sid, id);
+      await this.backend.rejectFile(sid, r.repo, r.path);
+      this.toast(`Rejected the agent's changes in ${r.path.slice(r.path.lastIndexOf("/") + 1)}`);
     } catch (e) {
       this.fail(e);
     }
     await this.refresh(sid);
+  }
+  /** N: reject the agents' changes in the selected file. */
+  rvRejectSelected() {
+    const r = this.selectedRow;
+    if (r) return this.rvRejectRow(r);
+  }
+  /** E: open the selected file in the editor, at the line of the diff cursor. */
+  rvOpenInEditor() {
+    const r = this.selectedRow;
+    if (!r) return;
+    this.gotoLine(fileKey(r.repo, r.path), this.pane?.line() ?? 1);
+  }
+
+  // The diff of the selected file, as the Review shows it.
+  /** What accepting each file gives, by `space|row`. */
+  reviews: Record<string, FileReview> = $state({});
+  /** What you made of a file in the diff (typed, reverted a change, resolved a conflict), by `space|row`. */
+  rvDrafts: Record<string, string> = $state({});
+  /** The diff editor on screen, for the keys that act in it. */
+  pane: Pane | null = null;
+  private reviewSeq = 0;
+  /** Load (or reload) what accepting a file gives. */
+  async loadReview(sid: string, r: FileRow) {
+    const seq = ++this.reviewSeq;
+    try {
+      const raw = await this.backend.reviewFile(sid, r.repo, r.path);
+      const fr: FileReview = {
+        repo: r.repo,
+        path: r.path,
+        mine: raw?.mine ?? null,
+        result: raw?.result ?? null,
+        head: raw?.head ?? null,
+        conflicts: raw?.conflicts ?? 0,
+        notes: raw?.notes ?? [],
+        agents: raw?.agents ?? [],
+        binary: !!raw?.binary,
+      };
+      if (seq === this.reviewSeq || !this.reviews[draftKey(sid, r.id)]) this.reviews = { ...this.reviews, [draftKey(sid, r.id)]: fr };
+    } catch (e) {
+      // A file that just went away: the list moves on, nothing to say.
+      if (this.sections.review.concat(this.sections.done).some((g) => g.files.some((x) => x.id === r.id))) this.fail(e);
+    }
+  }
+  setDraft(sid: string, r: FileRow, text: string | null) {
+    const k = draftKey(sid, r.id);
+    if (text === null) {
+      if (k in this.rvDrafts) delete this.rvDrafts[k];
+    } else if (this.rvDrafts[k] !== text) this.rvDrafts[k] = text;
   }
   async rvStageAll() {
     return this.rvApproveAll();
@@ -1289,11 +1388,17 @@ export class AppState {
     const n = line ?? first?.new ?? first?.old ?? h.newStart;
     this.commentDraft = { repo: h.repo, path: h.path, line: n, hunkId: h.id };
   }
-  /** M: comment the hunk under the cursor. */
+  /** M: comment the line under the cursor of the diff. */
   rvComment() {
-    const h = this.currentHunk;
-    if (!h) return this.toast("Pick a hunk to comment");
-    this.openComment(h);
+    const r = this.selectedRow;
+    if (!r) return this.toast("Pick a file to comment");
+    this.openCommentAt(r.repo, r.path, this.pane?.line() ?? 1);
+  }
+  /** Open the comment box on a line of a file (the change around it answers for it). */
+  openCommentAt(repo: string, path: string, line: number) {
+    const hs = fileHunks(this.sd.hunks, repo, path);
+    const h = hs.find((x) => line >= x.newStart && line < x.newStart + Math.max(1, x.newLines)) ?? hs.find((x) => x.state === "pending") ?? hs[0];
+    this.commentDraft = { repo, path, line, hunkId: h?.id ?? "" };
   }
   setCommentRole(r: "reviewer" | "developer") {
     this.commentRole = r;
@@ -2389,9 +2494,25 @@ export class AppState {
       case "rv-comment":
         return this.rvComment();
       case "rv-focus-diff":
-        return this.rvFocusDiff();
+        this.rvFocusDiff();
+        this.pane?.focus();
+        return;
       case "rv-hunk":
-        return this.rvHunkMove(a.delta);
+        return this.rvChange(a.delta);
+      case "rv-reject-file":
+        return this.rvRejectSelected();
+      case "rv-accept-file": {
+        const r = this.selectedRow;
+        if (!r) return;
+        return r.section === "review" ? this.rvStageRow(r) : this.toast("Already accepted. U takes it back to review");
+      }
+      case "rv-unaccept-file": {
+        const r = this.selectedRow;
+        if (!r) return;
+        return r.section === "done" ? this.rvStageRow(r) : this.toast("Not accepted yet");
+      }
+      case "rv-open-editor":
+        return this.rvOpenInEditor();
       case "rv-hunk-stage":
         return this.rvHunkStage();
       case "rv-hunk-unstage":
@@ -2410,6 +2531,9 @@ export class AppState {
     return uniq(this.staged.map((f) => f.repo));
   }
 }
+
+/** Key of a file of the Review in a space: drafts and loaded reviews. */
+export const draftKey = (sid: string, rowId: string) => `${sid}|${rowId}`;
 
 export const app = new AppState();
 

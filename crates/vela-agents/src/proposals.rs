@@ -1,4 +1,5 @@
-//! Proposals: what the agents changed, offered to the user hunk by hunk.
+//! Proposals: what the agents changed. The Review merges them into the user's files file by
+//! file (see [`crate::merge`]); the hunks here say what changed and what was decided.
 //!
 //! The proposals of an agent are the changes in its worktree since the commit it started at
 //! (committed or not). Comparing with the user's worktree instead would offer to undo the
@@ -175,9 +176,10 @@ pub fn decided_ids(vela: &vela_core::Vela, space: &str) -> BTreeSet<String> {
     out
 }
 
-/// Before an agent works again: when the user decided on every change it proposed, what it
-/// has now becomes its new base, so the next run offers only what it changes next (a new
-/// edit next to accepted lines is not merged with them into a hunk offered again).
+/// Before an agent works again: when the user decided on every change it proposed, its
+/// worktree takes the user's files as they are now (what was accepted, rejected or typed by
+/// hand since), and that becomes its new base. The next run offers only what it changes next,
+/// on top of what you have.
 pub fn advance_base(vela: &vela_core::Vela, space: &Space, entry: &Entry) -> Result<()> {
     if entry.read_only || entry.agent.worktrees.is_empty() {
         return Ok(());
@@ -189,7 +191,10 @@ pub fn advance_base(vela: &vela_core::Vela, space: &Space, entry: &Entry) -> Res
     let mut bases = entry.bases.clone();
     let mut moved = false;
     for (repo, path) in &entry.agent.worktrees {
-        let Ok(tree) = diff::snapshot_tree(Path::new(path)) else {
+        let Some(user) = space.repos.iter().find(|r| &r.name == repo) else {
+            continue;
+        };
+        let Ok(tree) = crate::worktree::sync_to(Path::new(&user.worktree), Path::new(path)) else {
             continue;
         };
         if let Some((_, b)) = bases.iter_mut().find(|(r, _)| r == repo)

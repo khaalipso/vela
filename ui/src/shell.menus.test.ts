@@ -469,7 +469,7 @@ describe("spaces", () => {
 });
 
 describe("review", () => {
-  it("a file row and a hunk have their own menus", async () => {
+  it("a file row has its menu; Accept file accepts it as the diff shows it", async () => {
     press("2");
     await settle();
     const frow = $$(".frow").find((r) => r.closest("[data-section='review']"))!;
@@ -477,37 +477,18 @@ describe("review", () => {
     await settle();
     expect(items()).toEqual(["Accept file", "Reject the agent's changes", "Open in editor", "Discard your changes…", "Copy path"]);
     expect(item("Accept file").textContent).toContain("Space");
-    await closeMenu();
-
-    const hunk = $$("article.hunk")[0];
-    rightClick(hunk);
+    expect(item("Reject the agent's changes").textContent).toContain("N");
+    const before = app.sections.counts.review;
+    item("Accept file").click();
     await settle();
-    expect(items()).toEqual(["Accept change", "Back to review", "Reject change", "Edit by hand", "Copy as patch"]);
-    expect(item("Accept change").textContent).toContain("Y");
-    expect(item("Reject change").textContent).toContain("N");
-    expect(item("Edit by hand").textContent).toContain("E");
-    const before = app.pending.length;
-    item("Accept change").click();
-    await settle();
-    await vi.waitFor(() => expect(app.pending.length).toBe(before - 1));
+    await vi.waitFor(() => expect(app.sections.counts.review).toBe(before - 1));
   });
 
-  it("Copy hunk as patch writes a unified diff", async () => {
-    clip.mockClear();
-    const hunk = $$("article.hunk")[0];
-    rightClick(hunk);
-    await settle();
-    item("Copy as patch").click();
-    await settle();
-    await vi.waitFor(() => expect(clip).toHaveBeenCalled());
-    expect(clip.mock.calls[0][0]).toMatch(/^--- a\/.+\n\+\+\+ b\/.+\n@@ -\d+/);
-  });
-
-  it("Menu key opens the menu of the focused hunk when nothing else has the focus", async () => {
+  it("Menu key opens the menu of the selected file when nothing else has the focus", async () => {
     (document.activeElement as HTMLElement | null)?.blur();
     press("ContextMenu");
     await settle();
-    expect(items()).toContain("Copy as patch");
+    expect(items()).toContain("Open in editor");
     press("Escape");
     await settle();
   });

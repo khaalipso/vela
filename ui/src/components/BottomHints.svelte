@@ -5,7 +5,7 @@
   import Kbd from "./Kbd.svelte";
 
   const HINTS: Record<View, [string, string][]> = {
-    review: [["J K", "move"], ["Y", "accept"], ["N", "reject"], ["E", "edit by hand"], ["F", "ask to fix"]],
+    review: [["J K", "file"], ["Space", "accept file"], ["N", "reject"], ["Tab", "next change"], ["Enter", "edit"], ["M", "comment"]],
     code: [["Click", "type anywhere"], ["J K", "proposals"], ["Y N", "accept, reject"], ["B", "files"], ["Ctrl P", "go to file"]],
     agents: [["@", "ask"], ["Y N", "answer"]],
     prs: [["R", "refresh"], ["@", "ask an agent"]],

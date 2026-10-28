@@ -92,10 +92,11 @@ describe("tidy", () => {
 
 describe("shortcuts come from the keymap", () => {
   it("finds the key that really runs the action", () => {
-    expect(shortcutFor({ type: "rv-hunk-stage" }, "review")).toBe("Y");
-    expect(shortcutFor({ type: "rv-hunk-unstage" }, "review")).toBe("U");
-    expect(shortcutFor({ type: "reject" }, "review")).toBe("N");
-    expect(shortcutFor({ type: "edit" }, "review")).toBe("E");
+    expect(shortcutFor({ type: "rv-accept-file" }, "review")).toBe("Y");
+    expect(shortcutFor({ type: "rv-unaccept-file" }, "review")).toBe("U");
+    expect(shortcutFor({ type: "rv-reject-file" }, "review")).toBe("N");
+    expect(shortcutFor({ type: "rv-open-editor" }, "review")).toBe("E");
+    expect(shortcutFor({ type: "edit" }, "code")).toBe("E");
     expect(shortcutFor({ type: "toggle-window" })).toBe("W");
     expect(shortcutFor({ type: "rv-approve-all" }, "review")).toBe("Shift A");
     expect(shortcutFor({ type: "rv-toggle-file" }, "review")).toBe("Space");

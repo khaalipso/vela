@@ -31,6 +31,11 @@
     </span>
     <button class="btn ghost" onclick={() => app.dispatch({ type: "open-prompts" })} title="Edit the brief each role gets">Prompts</button>
     <button class="btn ghost" onclick={() => app.dispatch({ type: "open-settings" })} title="Model and reasoning effort per tier">Tiers</button>
+    {#if app.upNext.kind.type !== "nothing"}
+      <button class="next" onclick={() => app.upNextGo()} title="Up next">
+        <span class="nd"></span><b>{app.upNext.title}</b><Kbd k={app.upNext.key} />
+      </button>
+    {/if}
     <button class="btn p ask-btn" onclick={() => app.openComposer()}>Ask an agent <Kbd k="Ctrl K" /></button>
   </header>
 
@@ -77,7 +82,7 @@
     <span class="dot" class:pulse={a.status === "working"} style:--c={agentStatusColor(a.status)}></span>
     <span class="body">
       <span class="top"
-        ><b>{roleLabel(a.role)}</b><span class="tool">{toolLabel(a.tool)}{a.tier ? ` · ${a.tier}` : ""}</span><span class="when"
+        ><b>{roleLabel(a.role)}</b><span class="tool">{toolLabel(a.tool)}</span>{#if a.tier}<span class="tier" data-tier={a.tier}>{a.tier}</span>{/if}<span class="when"
           >{a.status === "waiting" ? "asks" : isRunning(a) ? "working" : ago(a)}</span
         ></span
       >
@@ -94,7 +99,52 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    margin-bottom: -96px;
+  }
+  .next {
+    all: unset;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px 5px 12px;
+    border-radius: 9999px;
+    background: var(--hover);
+    font-size: 12.5px;
+    max-width: 40ch;
+  }
+  .next:hover {
+    background: var(--line);
+  }
+  .next b {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nd {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--space);
+  }
+  .tier {
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 0 6px;
+    border-radius: 9999px;
+    color: var(--c);
+    background: color-mix(in srgb, var(--c) 15%, transparent);
+    --c: var(--muted);
+  }
+  .tier[data-tier="high"] {
+    --c: var(--del);
+  }
+  .tier[data-tier="medium"] {
+    --c: var(--warn);
+  }
+  .tier[data-tier="low"] {
+    --c: var(--add);
   }
   .bar {
     display: flex;
@@ -122,7 +172,6 @@
     display: grid;
     grid-template-columns: 260px minmax(0, 1fr);
     gap: 12px;
-    padding-bottom: 84px;
   }
   .list {
     overflow-y: auto;

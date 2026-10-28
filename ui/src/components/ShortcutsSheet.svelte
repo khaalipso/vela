@@ -78,8 +78,17 @@
     [
       "In the review",
       [
+        ["J  K", "Next, previous file"],
+        ["Space  Y", "Accept the file as the diff shows it, go to the next"],
+        ["U", "Take an accepted file back to review"],
+        ["Shift A", "Accept every file waiting (conflicts are left for you)"],
+        ["N", "Reject what the agents propose in the file"],
+        ["Tab  Shift Tab", "Next, previous change"],
+        ["Enter", "Edit the result in the diff (Esc leaves)"],
+        ["E", "Open the file in the editor"],
+        ["M", "Comment the line (or click a line number)"],
         ["V", "Before and after side by side, or unified"],
-        ["F", "Ask for a fix of the note on the hunk"],
+        ["F", "Ask for a fix of the note on the file"],
         ["Shift Y", "Resolve the note"],
       ],
     ],

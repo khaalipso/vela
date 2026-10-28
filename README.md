@@ -12,8 +12,8 @@ folders.
 
 Vela does not ship its own coding agent. It drives the ones you already use (Claude Code, Codex,
 opencode) and adds what sits around them: worktrees, review, checks, commits, links, terminals.
-Agents never write in your worktree: they propose hunks from their own worktrees, and you accept,
-reject or edit each one.
+Agents never write in your worktree: they work on a copy of your files and you review what they
+changed, file by file, as a diff you can edit before you accept it.
 
 ## Features
 
@@ -24,10 +24,12 @@ reject or edit each one.
   only read. Questions land in the *Up next* island and as a desktop notification.
 - **Tiers, not models**: each request runs at `high`, `medium` or `low`; the *Agent tiers* sheet
   sets the model and the reasoning effort of each tier, per tool.
-- **Review** in three zones: files (staged, not staged, proposed by agents), the diff (unified or
-  before and after side by side, <kbd>V</kbd>), and the checks (hooks, lint, types, tests) run on
-  the staged set and cached by tree.
-- **Reviewer notes**: findings of the reviewer and security agents show on the hunk they target;
+- **Review** like a diff tool: the files to review on the left, the whole selected file on the
+  right (unified or side by side, <kbd>V</kbd>), showing exactly what accepting writes. Agent changes
+  are merged into your edits (three-way); conflicts show in place with "Keep yours" / "Take the
+  agent's". Edit the result, revert one change, then <kbd>Space</kbd> accepts and stages the file.
+  Checks (hooks, lint, types, tests) run on the staged set and are cached by tree.
+- **Reviewer notes**: findings of the reviewer and security agents show on the file they target;
   <kbd>F</kbd> sends one back to its author for a fix, <kbd>Shift</kbd>+<kbd>Y</kbd> resolves it.
 - **Commit composer** (<kbd>C</kbd>): conventional commits inferred from the diff, split
   suggestions, ticket footers, one commit per repo.

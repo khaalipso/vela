@@ -322,7 +322,7 @@ const peekField = StateField.define<DecorationSet>({
 
 // -- theme ---------------------------------------------------------------------
 
-const theme = EditorView.theme({
+export const editorTheme = EditorView.theme({
   "&": { backgroundColor: "transparent", color: "var(--fg)", fontSize: "13px" },
   "&.cm-focused": { outline: "none" },
   ".cm-scroller": { fontFamily: "var(--code)", lineHeight: "22px", overflowX: "auto" },
@@ -389,7 +389,7 @@ const theme = EditorView.theme({
   ".cm-selectionMatch": { backgroundColor: "color-mix(in srgb, var(--space) 14%, transparent)" },
 });
 
-const highlight = HighlightStyle.define([
+export const editorHighlight = HighlightStyle.define([
   { tag: [t.keyword, t.modifier, t.operatorKeyword, t.controlKeyword, t.definitionKeyword, t.moduleKeyword], color: "var(--info)" },
   { tag: [t.self, t.atom, t.bool, t.null], color: "var(--warn)" },
   { tag: [t.string, t.special(t.string), t.character, t.inserted], color: "var(--add)" },
@@ -448,8 +448,8 @@ export function createState(f: FileContent, onUserChange: (content: string) => v
       highlightSelectionMatches(),
       keymap.of([...searchKeymap, ...defaultKeymap, ...historyKeymap]),
       languageSlot.of([]),
-      syntaxHighlighting(highlight),
-      theme,
+      syntaxHighlighting(editorHighlight),
+      editorTheme,
       hunkField,
       changeField,
       peekField,

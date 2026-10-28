@@ -7,7 +7,6 @@ import { app } from "./app.svelte";
 import { buildTree, dirId, fileId, repoId, revealIds, type FileEntry } from "./filetree";
 import { files } from "./files.svelte";
 import { fileKey, plural } from "./format";
-import { hunkPatch } from "./patch";
 import { closeOthers, closeToRight, currentAfter, renameKeys, setPinned } from "./tabs";
 import type { FileChange, Hunk, Link, Space } from "./types";
 
@@ -142,9 +141,6 @@ class Ops {
   }
   copyUrl(link: Link) {
     return this.copy(link.url, "the URL");
-  }
-  copyPatch(h: Hunk) {
-    return this.copy(hunkPatch(h), "the hunk as a patch");
   }
   /** `repo/path:line` for a line of the open file. */
   copyLineLink(key: string, line: number) {
