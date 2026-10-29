@@ -25,6 +25,7 @@
   let now = $state(Date.now());
   $effect(() => {
     if (!active.some(isRunning)) return;
+    now = Date.now();
     const t = setInterval(() => (now = Date.now()), 15_000);
     return () => clearInterval(t);
   });

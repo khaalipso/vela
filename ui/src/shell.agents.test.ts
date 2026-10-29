@@ -275,6 +275,20 @@ describe("agents view", () => {
     log.mockRestore();
   });
 
+  it("a refresh of the spaces (a file event) does not empty and reload the chat", async () => {
+    const log = vi.spyOn(backend, "agentLog").mockResolvedValue([{ ts: "t", event: { type: "prompt", text: "Run the tests" } }]);
+    press("2");
+    await settle();
+    withAgents([{ ...live, status: "done", session: "s1" }]);
+    await vi.waitFor(() => expect($(".chat .you .bubble")?.textContent).toBe("Run the tests"));
+    const calls = log.mock.calls.length;
+    await app.syncSpaces();
+    await settle();
+    expect($(".chat .skel")).toBeNull();
+    expect(log.mock.calls.length).toBe(calls);
+    log.mockRestore();
+  });
+
   it("a working agent shows what it does; quiet for long, it offers to stop and ask", async () => {
     const log = vi.spyOn(backend, "agentLog").mockResolvedValue([{ ts: "t", event: { type: "prompt", text: "Run the tests" } }]);
     const cancel = vi.spyOn(backend, "cancelAgent").mockResolvedValue();

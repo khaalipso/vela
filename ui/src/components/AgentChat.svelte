@@ -83,13 +83,17 @@
   }
 
   // A new agent: load its log from the top. (Its id, not the agent: that object is replaced on
-  // each event, which would close the open groups.)
+  // each event, which would close the open groups.) Only the id is tracked: `load` reads
+  // `app.space`, which is a new object each time the spaces are refreshed (every file event),
+  // and that would empty the chat and paint the skeleton again and again.
   $effect(() => {
     const id = agentId;
-    log = null;
-    stick = true;
-    openTools = {};
-    void load(id);
+    untrack(() => {
+      log = null;
+      stick = true;
+      openTools = {};
+      void load(id);
+    });
   });
 
   // The agent moved on (a new event, another status): read its log again, groups stay open.
