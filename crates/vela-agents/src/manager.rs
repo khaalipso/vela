@@ -138,8 +138,13 @@ pub fn is_read_only(role: AgentRole) -> bool {
     )
 }
 
-/// Ground rules every role gets, before its own brief (`prompts/_common.md`).
-pub const COMMON_BRIEF: &str = include_str!("../prompts/_common.md");
+/// The Vela prompt every role gets before its own brief (`prompts/vela.md`): language, one
+/// answer at the end, how to work, boundaries.
+pub const VELA_PROMPT: &str = include_str!("../prompts/vela.md");
+
+/// Said again after the request: the last thing the agent reads before it starts.
+const CLOSING: &str = "Answer in the language of the request above, headings included. Work \
+     without writing between tool calls, then give one complete answer at the end.";
 
 /// The built in brief of a role (`prompts/<role>.md`). `[agents.prompts]` replaces it; the
 /// common rules stay.
@@ -187,8 +192,9 @@ pub fn space_context(space: &Space, read_only: bool, worktrees: &[(String, Strin
     )
 }
 
-/// The prompt of a request: the common rules, the brief of the role (the custom one when
-/// set), the notes format for the roles that report notes, the context, then the request.
+/// The prompt of a request: the Vela prompt, the brief of the role (the custom one when set),
+/// the notes format for the roles that report notes, the context, the request, then a
+/// reminder of the language and of the single answer.
 pub fn compose_prompt(
     role: AgentRole,
     prompt: &str,
@@ -199,7 +205,7 @@ pub fn compose_prompt(
         .map(str::trim)
         .filter(|c| !c.is_empty())
         .unwrap_or_else(|| role_brief(role));
-    let mut out = format!("{}\n\n{}", COMMON_BRIEF.trim(), brief);
+    let mut out = format!("{}\n\n{}", VELA_PROMPT.trim(), brief);
     if crate::notes::reports_notes(role) {
         out.push_str("\n\n");
         out.push_str(crate::notes::FORMAT);
@@ -210,6 +216,8 @@ pub fn compose_prompt(
     }
     out.push_str("\n\n## Request\n");
     out.push_str(prompt.trim());
+    out.push_str("\n\n---\n");
+    out.push_str(CLOSING);
     out
 }
 

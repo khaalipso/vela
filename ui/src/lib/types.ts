@@ -172,6 +172,7 @@ export interface RoleDefault {
 export type AgentEvent =
   | { type: "sessionStarted"; session: string }
   | { type: "message"; text: string }
+  | { type: "reasoning"; text: string }
   | { type: "plan"; steps: string[] }
   | { type: "toolCall"; name: string; summary: string }
   | { type: "fileChanged"; path: string }

@@ -25,6 +25,7 @@
         ["C", "Commit composer"],
         ["L", "Links of this space"],
         ["T  Ctrl `  Ctrl ↓", "Terminal panel"],
+        ["Ctrl ↑", "Terminal on top (both can be open)"],
         ["Ctrl Shift `", "One more terminal"],
         ["Right click", "Actions of what is under the pointer"],
         ["Menu  Shift F10", "The same from the keyboard, on the focused item"],

@@ -108,6 +108,9 @@
     {/if}
     <div class="main" style:--termh={app.termOpen && !app.elsewhere ? `${app.termHeight + 8}px` : "0px"}>
       <TopBar />
+      {#if app.termTopOpen || app.terms.some((t) => t.dock === "top")}
+        {#await import("./components/TerminalPanel.svelte") then { default: TerminalPanel }}<TerminalPanel dock="top" />{/await}
+      {/if}
       <div class="body">
         <!-- The Review view lists its own files: the tree would only take room there. -->
         {#if app.filesOpen && app.view === "code"}<FilesDrawer />{/if}
@@ -128,10 +131,10 @@
           {/if}
         {/key}
       </div>
-      {#if app.termOpen || app.terms.length}
-        <!-- xterm.js is loaded the first time a terminal opens. Hidden, the panel stays mounted:
+      {#if app.termOpen || app.terms.some((t) => t.dock === "bottom")}
+        <!-- xterm.js is loaded the first time a terminal opens. Hidden, a panel stays mounted:
              its shells keep running and their screens are there when it comes back. -->
-        {#await import("./components/TerminalPanel.svelte") then { default: TerminalPanel }}<TerminalPanel />{/await}
+        {#await import("./components/TerminalPanel.svelte") then { default: TerminalPanel }}<TerminalPanel dock="bottom" />{/await}
       {/if}
       <!-- In the Review view the list already says what is next: the island only brings news. -->
       {#if app.overlay !== "composer" && app.view !== "agents" && !(app.view === "review" && ["review", "commit", "nothing"].includes(app.upNext.kind.type))}<Island />{/if}
@@ -207,9 +210,10 @@
     gap: 8px;
     position: relative;
   }
+  /* The view keeps a third of the height when the terminals are open: they shrink first. */
   .body {
-    flex: 1;
-    min-height: 0;
+    flex: 1 1 0;
+    min-height: min(240px, 34%);
     display: flex;
     gap: 8px;
   }

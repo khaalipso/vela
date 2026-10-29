@@ -43,7 +43,7 @@ fn spec(harness: &str) -> RunSpec {
 #[test]
 fn claude_dev_run() {
     let mut p = ClaudeParser::new(Path::new("/w/api"), None);
-    let ev = parse_stream(&mut p, CLAUDE_DEV);
+    let mut ev = parse_stream(&mut p, CLAUDE_DEV);
     assert_eq!(
         ev[0],
         AgentEvent::SessionStarted {
@@ -60,7 +60,8 @@ fn claude_dev_run() {
             steps: vec!["Read the webhook".into(), "Add the refund branch".into()]
         }
     );
-    // The malformed line, the unknown event and the thinking block give nothing; Read is a tool call.
+    // The thinking block is reasoning; the malformed line and the unknown event give nothing.
+    assert_eq!(ev.remove(3), AgentEvent::Reasoning { text: "hmm".into() });
     assert_eq!(
         ev[3],
         AgentEvent::ToolCall {
@@ -556,4 +557,27 @@ fn effort_resolves_per_harness_and_tier() {
     assert_eq!(r.effort.as_deref(), Some("max"));
     let r = resolve(&cfg, AgentRole::Developer, &Overrides::default(), None);
     assert_eq!(r.effort, None);
+}
+
+#[test]
+fn reasoning_of_codex_and_opencode() {
+    let mut c = CodexParser::new(Path::new("/w"), None);
+    let ev = parse_stream(
+        &mut c,
+        r#"{"type":"item.completed","item":{"id":"r1","type":"reasoning","text":"Look at the config first"}}"#,
+    );
+    assert_eq!(
+        ev,
+        vec![AgentEvent::Reasoning {
+            text: "Look at the config first".into()
+        }]
+    );
+    let mut o = OpencodeParser::new(Path::new("/w"), None);
+    let ev = parse_stream(
+        &mut o,
+        r#"{"type":"reasoning","sessionID":"s1","part":{"type":"reasoning","text":"Which file?"}}"#,
+    );
+    assert!(ev.contains(&AgentEvent::Reasoning {
+        text: "Which file?".into()
+    }));
 }

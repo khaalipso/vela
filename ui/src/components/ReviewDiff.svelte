@@ -38,7 +38,23 @@
     });
   });
 
+  /**
+   * An editor that keeps the focus writes its selection again each time it redraws, and the
+   * webview then scrolls back to it: once the cursor is off screen, the editor lets go of it.
+   */
+  function releaseOffscreenCursor() {
+    const active = document.activeElement;
+    if (!scroller || !(active instanceof HTMLElement) || !scroller.contains(active)) return;
+    // CodeMirror draws its own cursor; a collapsed DOM range can measure as an empty box.
+    const cursor = active.closest(".cm-editor")?.querySelector<HTMLElement>(".cm-cursor-primary");
+    const r = (cursor ?? active).getBoundingClientRect();
+    if (!r.height && !r.width) return;
+    const box = scroller.getBoundingClientRect();
+    if (r.bottom < box.top || r.top > box.bottom) active.blur();
+  }
+
   function onScroll() {
+    releaseOffscreenCursor();
     if (!scroller || performance.now() < quietUntil) return;
     const line = scroller.scrollTop + 48;
     let at: string | null = null;

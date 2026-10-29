@@ -26,9 +26,13 @@ use crate::event::AgentEvent;
 use crate::registry::{self, Entry};
 
 /// The instruction appended to the brief of the roles that report notes.
-pub const FORMAT: &str = "End your answer with one line per finding, exactly in this form: \
+pub const FORMAT: &str = "## Notes\n\nVela turns findings into notes next to the code. End your \
+     answer with one line per finding, exactly in this form: \
      `NOTE <blocking|warning|info> <path>:<line> <what is wrong and what to do>`, with the \
-     path relative to the repo. Write no NOTE line when there is nothing to report.";
+     path relative to the repo (prefixed with the repo name when the space has several). Keep \
+     `NOTE` and the level in English, write the rest in the language of your answer. \
+     `blocking`: must be fixed before this ships; `warning`: should be fixed; `info`: worth \
+     knowing. Write no NOTE line when there is nothing to report.";
 
 /// Roles whose findings become notes.
 pub fn reports_notes(role: AgentRole) -> bool {
@@ -258,7 +262,7 @@ fn capitalize(s: &str) -> String {
 /// The prompt sent to the agent asked to fix a note.
 pub fn fix_prompt(n: &Note) -> String {
     format!(
-        "The {} left this note on {}:{} ({}):\n{}\n\nFix it. Change only what the note asks for.",
+        "The {} left this note on {}:{} ({}):\n{}\n\nFix it. Change only what the note asks for. Answer in the language of the note.",
         n.by.to_lowercase(),
         n.path,
         n.line,

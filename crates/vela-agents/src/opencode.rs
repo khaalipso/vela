@@ -47,7 +47,10 @@ impl Default for OpencodeDriver {
 
 /// The arguments of `opencode` for a run, prompt last.
 pub fn args(spec: &RunSpec) -> Vec<String> {
-    let mut a: Vec<String> = ["run", "--format", "json"].map(String::from).to_vec();
+    // `--thinking`: the reasoning parts come in the JSON stream too.
+    let mut a: Vec<String> = ["run", "--format", "json", "--thinking"]
+        .map(String::from)
+        .to_vec();
     if let Some(m) = &spec.model {
         a.extend(["-m".to_string(), m.clone()]);
     }
@@ -150,6 +153,13 @@ impl LineParser for OpencodeParser {
             "text" => {
                 if let Some(t) = part["text"].as_str().filter(|t| !t.trim().is_empty()) {
                     out.push(AgentEvent::Message {
+                        text: t.trim().to_string(),
+                    });
+                }
+            }
+            "reasoning" => {
+                if let Some(t) = part["text"].as_str().filter(|t| !t.trim().is_empty()) {
+                    out.push(AgentEvent::Reasoning {
                         text: t.trim().to_string(),
                     });
                 }

@@ -115,11 +115,11 @@ pub fn first_prompt(
     text: &str,
 ) -> String {
     let what = if role == AgentRole::Developer {
-        "Answer in a few sentences. When the comment asks for a change, make it, then say what \
-         you changed."
+        "Answer in a few sentences, in the language of the comment. When the comment asks for \
+         a change, make it, then say what you changed."
     } else {
-        "Answer in a few sentences: explain, or say what should change and why. Do not change \
-         any file."
+        "Answer in a few sentences, in the language of the comment: explain, or say what \
+         should change and why. Do not change any file."
     };
     let code = if code.trim().is_empty() {
         String::new()
@@ -135,7 +135,18 @@ pub fn first_prompt(
 /// What the agent said after `from` in its log, up to `to` (the next turn).
 fn answer(log: &[LogEntry], from: usize, to: usize) -> String {
     let seg = &log[from.min(log.len())..to.min(log.len())];
-    let msgs: Vec<&str> = seg
+    // What the agent said between two tool calls is work in progress: the answer is what
+    // follows its last tool call.
+    let after_tools = seg
+        .iter()
+        .rposition(|e| {
+            matches!(
+                e.event,
+                AgentEvent::ToolCall { .. } | AgentEvent::FileChanged { .. }
+            )
+        })
+        .map_or(0, |i| i + 1);
+    let msgs: Vec<&str> = seg[after_tools..]
         .iter()
         .filter_map(|e| match &e.event {
             AgentEvent::Message { text } => Some(text.as_str()),
@@ -244,6 +255,23 @@ mod tests {
         assert_eq!(answer(&log, 0, 3), "because");
         assert_eq!(answer(&log, 3, 5), "Failed: boom");
         assert_eq!(answer(&log, 9, 12), "");
+    }
+
+    #[test]
+    fn what_the_agent_said_between_tool_calls_is_not_the_answer() {
+        let log = vec![
+            entry(AgentEvent::Message {
+                text: "Je regarde le fichier.".into(),
+            }),
+            entry(AgentEvent::ToolCall {
+                name: "Read".into(),
+                summary: "a.rs".into(),
+            }),
+            entry(AgentEvent::Message {
+                text: "C'est voulu.".into(),
+            }),
+        ];
+        assert_eq!(answer(&log, 0, 3), "C'est voulu.");
     }
 
     #[test]

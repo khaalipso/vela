@@ -256,6 +256,8 @@ struct Session {
     setup: VecDeque<Value>,
     next_setup: u64,
     text: String,
+    /// The thought chunks since the last flush.
+    thought: String,
     last_text: String,
     tools: HashMap<String, (String, String)>,
     announced: HashSet<String>,
@@ -276,6 +278,7 @@ impl Session {
             setup: VecDeque::new(),
             next_setup: ID_SETUP,
             text: String::new(),
+            thought: String::new(),
             last_text: String::new(),
             tools: HashMap::new(),
             announced: HashSet::new(),
@@ -296,7 +299,17 @@ impl Session {
         let _ = self.tx.send(e);
     }
 
+    fn flush_thought(&mut self) {
+        let t = self.thought.trim().to_string();
+        self.thought.clear();
+        if !t.is_empty() {
+            self.emit(AgentEvent::Reasoning { text: t });
+        }
+    }
+
+    /// What was thought, then what was said, before the next tool call, plan or end.
     fn flush_text(&mut self) {
+        self.flush_thought();
         let t = self.text.trim().to_string();
         self.text.clear();
         if !t.is_empty() {
@@ -627,11 +640,20 @@ impl Session {
         match kind {
             "agent_message_chunk" => {
                 if let Some(t) = u["content"]["text"].as_str() {
+                    self.flush_thought();
                     self.text.push_str(t);
                 }
             }
-            "agent_thought_chunk"
-            | "user_message_chunk"
+            "agent_thought_chunk" => {
+                if let Some(t) = u["content"]["text"].as_str() {
+                    // Thinking again after some text: that text came first.
+                    if !self.text.trim().is_empty() {
+                        self.flush_text();
+                    }
+                    self.thought.push_str(t);
+                }
+            }
+            "user_message_chunk"
             | "available_commands_update"
             | "current_mode_update"
             | "config_option_update" => {}

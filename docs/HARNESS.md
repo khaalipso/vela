@@ -87,7 +87,7 @@ Each tier also has a reasoning effort per harness (`[agents.effort.<harness>]`),
 
 ## Prompts
 
-A request is sent as: Vela's ground rules (`crates/vela-agents/prompts/_common.md`: investigate before answering, cite `file:line`, follow the project's conventions, never commit), the brief of the role (`prompts/<role>.md`: how to work and what the answer must contain), the NOTE format for reviewer and security, a `## Context` section (space, branch, repos and where the agent runs), then `## Request` and what you asked.
+A request is sent as: the Vela prompt (`crates/vela-agents/prompts/vela.md`: answer in the language of the request, work silently and give one answer at the end, investigate before answering, cite `file:line`, follow the project's conventions, stay in scope, never commit), the brief of the role (`prompts/<role>.md`: how to work and what the answer must contain), the NOTE format for reviewer and security, a `## Context` section (space, branch, repos and where the agent runs), `## Request` and what you asked, then a one-line reminder of the language and of the single answer.
 
 Read only roles used to run in Claude Code's plan mode, where Claude writes a plan to investigate instead of investigating ("Here is the plan to verify it"). They now run with `--permission-mode dontAsk`: reading, searching and read-only commands are allowed, writes are refused without a question. The briefs can be edited in the app (Agents view, "Prompts", or Ctrl T "Agent prompts"); they are stored in `[agents.prompts]` of the global config, and a repo can override them in `.vela/config.toml`. The NOTE format is still appended for the reviewer and security roles.
 

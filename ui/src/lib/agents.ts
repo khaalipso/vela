@@ -101,7 +101,7 @@ export function currentActivity(a: Agent, log?: { event: AgentEvent }[] | null):
 /** What you send to an agent that went quiet: it reads it when it resumes. */
 export const NUDGE =
   "You were stopped because nothing happened for a while. Say in two lines where you are and what blocked you " +
-  "(a command that does not end, a prompt waiting for input, a server you started), then continue without it.";
+  "(a command that does not end, a prompt waiting for input, a server you started), then continue without it. Keep writing in the language of the conversation so far.";
 
 // -- search ---------------------------------------------------------------------
 
@@ -117,52 +117,82 @@ export function matchesAgent(a: Agent, query: string): boolean {
 
 // -- chat ---------------------------------------------------------------------
 
+/** What the agent thought (its reasoning) or said while it worked, between its tool calls. */
+export type WorkNote = { kind: "thought" | "said"; before: number; text: string };
+
 /** One block of the conversation with an agent. */
 export type ChatItem =
   | { kind: "you"; text: string; ts: string }
   | { kind: "agent"; text: string; ts: string }
-  /** A run of tool calls between two messages, with the files it changed. */
-  | { kind: "tools"; calls: { name: string; summary: string }[]; files: string[]; ts: string }
+  /**
+   * The work between two answers: tool calls, the files they changed, and what the agent thought
+   * or said along the way (`before`: the index of the call it came before).
+   */
+  | { kind: "tools"; calls: { name: string; summary: string }[]; notes: WorkNote[]; files: string[]; ts: string }
   | { kind: "plan"; steps: string[]; ts: string }
   | { kind: "question"; text: string; options: string[]; ts: string }
   | { kind: "end"; ok: boolean; text: string; ts: string };
 
 /**
- * The event log of an agent as a conversation: your requests and answers, its messages in
- * full, its tool calls grouped between messages, plans, questions and the end of each run.
- * A `done` whose summary repeats the last message adds no text.
+ * The event log of an agent as a conversation: your requests and answers, its answers in
+ * full, its tool calls grouped between answers, plans, questions and the end of each run.
+ * A message followed by more tool calls is work in progress, not an answer: it goes into the
+ * group of those calls, with the reasoning. A `done` whose summary repeats the last answer adds
+ * no text.
  */
 export function chatItems(log: { ts: string; event: AgentEvent }[]): ChatItem[] {
   const out: ChatItem[] = [];
   let lastAgent = "";
+  /** The latest message, until we know whether tool calls follow it. */
+  let pending: { text: string; ts: string } | null = null;
+  const flush = () => {
+    if (!pending) return;
+    lastAgent = pending.text.trim();
+    out.push({ kind: "agent", text: pending.text, ts: pending.ts });
+    pending = null;
+  };
   for (const { ts, event: e } of log) {
-    const prev = out[out.length - 1];
     switch (e.type) {
       case "prompt":
+        flush();
         out.push({ kind: "you", text: e.text, ts });
         break;
       case "message":
         if (!e.text.trim()) break;
-        lastAgent = e.text.trim();
-        out.push({ kind: "agent", text: e.text, ts });
+        flush();
+        pending = { text: e.text, ts };
         break;
+      case "reasoning":
       case "toolCall":
       case "fileChanged": {
+        if (e.type === "reasoning" && !e.text.trim()) break;
+        const prev = out[out.length - 1];
         const group =
-          prev?.kind === "tools" ? prev : (out[out.push({ kind: "tools", calls: [], files: [], ts }) - 1] as Extract<ChatItem, { kind: "tools" }>);
-        if (e.type === "toolCall") group.calls.push({ name: e.name, summary: e.summary });
+          prev?.kind === "tools"
+            ? prev
+            : (out[out.push({ kind: "tools", calls: [], notes: [], files: [], ts }) - 1] as Extract<ChatItem, { kind: "tools" }>);
+        if (pending) {
+          group.notes.push({ kind: "said", before: group.calls.length, text: pending.text.trim() });
+          pending = null;
+        }
+        if (e.type === "reasoning") group.notes.push({ kind: "thought", before: group.calls.length, text: e.text.trim() });
+        else if (e.type === "toolCall") group.calls.push({ name: e.name, summary: e.summary });
         else if (!group.files.includes(e.path)) group.files.push(e.path);
         break;
       }
-      case "plan":
+      case "plan": {
+        const prev = out[out.length - 1];
         // A plan that only ticks steps off replaces the one just before it.
         if (prev?.kind === "plan") prev.steps = e.steps;
         else out.push({ kind: "plan", steps: e.steps, ts });
         break;
+      }
       case "question":
+        flush();
         out.push({ kind: "question", text: e.text, options: e.options, ts });
         break;
       case "done": {
+        flush();
         const s = e.summary.trim();
         if (s && s !== lastAgent && !lastAgent.endsWith(s)) out.push({ kind: "agent", text: s, ts });
         out.push({ kind: "end", ok: true, text: "Finished", ts });
@@ -170,6 +200,7 @@ export function chatItems(log: { ts: string; event: AgentEvent }[]): ChatItem[] 
         break;
       }
       case "failed":
+        flush();
         out.push({ kind: "end", ok: false, text: e.error === "cancelled" ? "Cancelled" : e.error, ts });
         lastAgent = "";
         break;
@@ -177,5 +208,6 @@ export function chatItems(log: { ts: string; event: AgentEvent }[]): ChatItem[] 
         break;
     }
   }
+  flush();
   return out;
 }

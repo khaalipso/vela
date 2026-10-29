@@ -71,7 +71,7 @@ export type Action =
   | { type: "open-file"; space: number; file: string }
   | { type: "context-menu" } // Menu key / Shift F10: the right-click menu of the focused item
   | { type: "find" } // Ctrl F: find in the open file
-  | { type: "toggle-terminal" } // Ctrl ` or T: the terminal panel
+  | { type: "toggle-terminal"; dock?: "top" } // Ctrl ` or T or Ctrl Down: the terminal panel; Ctrl Up: the one on top
   | { type: "new-terminal" } // Ctrl Shift `: one more terminal
   | { type: "toggle-preview" } // V in the code view: Markdown preview
   | { type: "open-settings" } // agent tiers: model and effort per harness
@@ -175,10 +175,12 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
   if (ctrl && !alt && (k === "`" || e.code === "Backquote") && (!c.overlay || c.overlay === "palette")) {
     return shift ? { type: "new-terminal" } : { type: "toggle-terminal" };
   }
-  // Ctrl Down shows or hides the terminal, from the terminal too; Ctrl Left / Right go through
-  // the views. In a text field or the editor these keys keep moving the caret.
+  // Ctrl Down shows or hides the terminal at the bottom, Ctrl Up the one on top, from a terminal
+  // too; Ctrl Left / Right go through the views. In a text field or the editor these keys keep
+  // moving the caret.
   if (ctrl && !alt && !shift && (!c.overlay || c.overlay === "palette")) {
     if (k === "ArrowDown" && (!c.typing || c.inTerm)) return { type: "toggle-terminal" };
+    if (k === "ArrowUp" && (!c.typing || c.inTerm)) return { type: "toggle-terminal", dock: "top" };
     if ((k === "ArrowLeft" || k === "ArrowRight") && !c.typing) {
       return { type: "view-step", delta: k === "ArrowRight" ? 1 : -1 };
     }

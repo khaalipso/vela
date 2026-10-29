@@ -406,16 +406,21 @@ export class AppState {
   /** Bumped by Ctrl F so the code view opens its find bar. */
   findSeq = $state(0);
 
-  /** The terminal panel is open, remembered per window. */
+  /** The terminal panel at the bottom is open, remembered per window. */
   termOpen = $state(readFlag("vela.termOpen", false));
+  /** The terminal panel on top is open, remembered per window. */
+  termTopOpen = $state(readFlag("vela.termTopOpen", false));
   /** Terminals of every space, in the order they were opened. */
   terms = $state<TermTab[]>([]);
-  /** The terminal shown, per space. */
+  /** The terminal shown, per space and panel (see `termKey`). */
   termActive = $state<Record<string, number>>({});
-  /** Height of the panel in px. */
+  /** Height of the panel at the bottom in px. */
   termHeight = $state(260);
-  /** Bumped when a terminal should take the focus. */
+  /** Height of the panel on top in px. */
+  termTopHeight = $state(220);
+  /** Bumped when a terminal should take the focus: the shown one of `termFocusDock`. */
   termFocusSeq = $state(0);
+  termFocusDock = $state<TermDock>("bottom");
   /** Where the output of each terminal goes once its view is up; buffered until then. */
   private termSinks = new Map<number, (data: string) => void>();
   private termBuf = new Map<number, string[]>();
@@ -1555,13 +1560,38 @@ export class AppState {
 
   // -- terminals ------------------------------------------------------------
 
-  /** Terminals of the current space. */
+  /** Terminals of the current space, both panels. */
   get spaceTerms(): TermTab[] {
     return this.terms.filter((t) => t.spaceId === this.space.id);
   }
+  /** Terminals of the current space in one panel. */
+  termsOf(dock: TermDock): TermTab[] {
+    return this.spaceTerms.filter((t) => t.dock === dock);
+  }
+  /** The key of `termActive` for a panel of the current space. */
+  termKey(dock: TermDock): string {
+    return dock === "top" ? `${this.space.id}:top` : this.space.id;
+  }
+  activeTermOf(dock: TermDock): TermTab | null {
+    const list = this.termsOf(dock);
+    return list.find((t) => t.id === this.termActive[this.termKey(dock)]) ?? list[list.length - 1] ?? null;
+  }
   get activeTerm(): TermTab | null {
-    const list = this.spaceTerms;
-    return list.find((t) => t.id === this.termActive[this.space.id]) ?? list[list.length - 1] ?? null;
+    return this.activeTermOf("bottom");
+  }
+  isTermOpen(dock: TermDock): boolean {
+    return dock === "top" ? this.termTopOpen : this.termOpen;
+  }
+  private setTermOpen(dock: TermDock, open: boolean) {
+    if (dock === "top") this.termTopOpen = open;
+    else this.termOpen = open;
+    writeFlag(dock === "top" ? "vela.termTopOpen" : "vela.termOpen", open);
+  }
+  /** Show a terminal of a panel and give it the focus. */
+  focusTerm(dock: TermDock, id?: number) {
+    if (id !== undefined) this.termActive[this.termKey(dock)] = id;
+    this.termFocusDock = dock;
+    this.termFocusSeq++;
   }
   /** The view of a terminal takes its output: what came before is replayed first. */
   attachTerm(id: number, write: (data: string) => void): () => void {
@@ -1587,28 +1617,27 @@ export class AppState {
     if (t) t.exited = true;
     this.termSinks.get(e.id)?.(`\r\n[process exited${e.code === null ? "" : ` with ${e.code}`}]\r\n`);
   }
-  toggleTerminal() {
-    this.termOpen = !this.termOpen;
-    writeFlag("vela.termOpen", this.termOpen);
-    if (this.termOpen) {
-      if (!this.spaceTerms.length) void this.newTerminal();
-      else this.termFocusSeq++;
+  toggleTerminal(dock: TermDock = "bottom") {
+    const open = !this.isTermOpen(dock);
+    this.setTermOpen(dock, open);
+    if (open) {
+      if (!this.termsOf(dock).length) void this.newTerminal(null, 100, 24, dock);
+      else this.focusTerm(dock);
+    } else if (this.isTermOpen(dock === "top" ? "bottom" : "top")) {
+      // The other panel is still there: the keys go back to it.
+      this.focusTerm(dock === "top" ? "bottom" : "top");
     }
   }
-  /** Open one more shell in the current space (in `repo`, or the first repo). */
-  async newTerminal(repo: string | null = null, cols = 100, rows = 24) {
+  /** Open one more shell in the current space (in `repo`, or the first repo), in a panel. */
+  async newTerminal(repo: string | null = null, cols = 100, rows = 24, dock: TermDock = "bottom") {
     const sid = this.space.id;
-    if (!this.termOpen) {
-      this.termOpen = true;
-      writeFlag("vela.termOpen", true);
-    }
+    if (!this.isTermOpen(dock)) this.setTermOpen(dock, true);
     try {
       const id = await this.backend.termOpen(sid, repo, cols, rows);
       const n = this.terms.filter((t) => t.spaceId === sid).length + 1;
       const name = repo ?? this.spaces.find((x) => x.id === sid)?.repos[0]?.name ?? "shell";
-      this.terms.push({ id, spaceId: sid, title: n > 1 ? `${name} ${n}` : name, exited: false });
-      this.termActive[sid] = id;
-      this.termFocusSeq++;
+      this.terms.push({ id, spaceId: sid, title: n > 1 ? `${name} ${n}` : name, exited: false, dock });
+      this.focusTerm(dock, id);
     } catch (e) {
       this.fail(e);
     }
@@ -1619,9 +1648,8 @@ export class AppState {
     this.termSinks.delete(id);
     this.termBuf.delete(id);
     if (t && !t.exited) await this.backend.termClose(id).catch(() => {});
-    if (t && !this.terms.some((x) => x.spaceId === t.spaceId) && t.spaceId === this.space.id) {
-      this.termOpen = false;
-      writeFlag("vela.termOpen", false);
+    if (t && !this.terms.some((x) => x.spaceId === t.spaceId && x.dock === t.dock) && t.spaceId === this.space.id) {
+      this.setTermOpen(t.dock, false);
     }
   }
 
@@ -2591,7 +2619,7 @@ export class AppState {
         writeFlag("vela.railHidden", this.railHidden);
         return;
       case "toggle-terminal":
-        return this.toggleTerminal();
+        return this.toggleTerminal(a.dock ?? "bottom");
       case "new-terminal":
         return this.newTerminal();
       case "toggle-preview": {
@@ -2743,11 +2771,15 @@ export const draftKey = (sid: string, rowId: string) => `${sid}|${rowId}`;
 export const app = new AppState();
 
 /** A terminal tab of the panel. */
+/** Where a terminal panel sits: under the view, or above it. */
+export type TermDock = "top" | "bottom";
+
 export interface TermTab {
   id: number;
   spaceId: string;
   title: string;
   exited: boolean;
+  dock: TermDock;
 }
 
 export function isMarkdown(key: string): boolean {

@@ -4,9 +4,9 @@
   import { Terminal } from "@xterm/xterm";
   import "@xterm/xterm/css/xterm.css";
   import { onDestroy, onMount } from "svelte";
-  import { app } from "../lib/app.svelte";
+  import { app, type TermDock } from "../lib/app.svelte";
 
-  let { id, active }: { id: number; active: boolean } = $props();
+  let { id, active, dock = "bottom" }: { id: number; active: boolean; dock?: TermDock } = $props();
   let host: HTMLDivElement | undefined = $state();
   let term: Terminal | null = null;
   let fit: FitAddon | null = null;
@@ -70,7 +70,7 @@
 
   $effect(() => {
     const seq = app.termFocusSeq;
-    if (active && seq !== handledFocus) {
+    if (active && seq !== handledFocus && app.termFocusDock === dock) {
       handledFocus = seq;
       queueMicrotask(() => {
         resize();

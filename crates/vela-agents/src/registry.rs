@@ -189,6 +189,7 @@ pub fn apply_event(entry: &mut Entry, ev: &AgentEvent, ts: &str) {
             a.summary = one_line(text, 160);
             a.activity = "Writing".to_string();
         }
+        AgentEvent::Reasoning { .. } => a.activity = "Thinking".to_string(),
         AgentEvent::Plan { steps } => a.plan = steps.clone(),
         AgentEvent::ToolCall { name, summary } => {
             a.activity = if summary.trim().is_empty() {

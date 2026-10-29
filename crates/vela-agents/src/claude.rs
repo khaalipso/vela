@@ -370,6 +370,15 @@ impl LineParser for ClaudeParser {
                                 });
                             }
                         }
+                        Some("thinking") => {
+                            if let Some(t) =
+                                block["thinking"].as_str().filter(|t| !t.trim().is_empty())
+                            {
+                                out.push(AgentEvent::Reasoning {
+                                    text: t.trim().to_string(),
+                                });
+                            }
+                        }
                         Some("tool_use") => self.tool_use(block, &mut out),
                         _ => {}
                     }

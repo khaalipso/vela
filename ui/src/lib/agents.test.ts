@@ -74,12 +74,40 @@ describe("chatItems", () => {
       at({ type: "prompt", text: "Fix them" }),
       at({ type: "failed", error: "cancelled" }),
     ]);
-    expect(items.map((i) => i.kind)).toEqual(["you", "tools", "agent", "tools", "plan", "end", "you", "end"]);
+    // The message between two tool calls is work in progress: it goes into the group.
+    expect(items.map((i) => i.kind)).toEqual(["you", "tools", "plan", "agent", "end", "you", "end"]);
     const tools = items[1] as Extract<ChatItem, { kind: "tools" }>;
-    expect(tools.calls.map((c) => c.name)).toEqual(["Read", "Grep"]);
-    expect((items[3] as Extract<ChatItem, { kind: "tools" }>).files).toEqual(["docs/SPEC.md"]);
-    expect((items[4] as Extract<ChatItem, { kind: "plan" }>).steps).toEqual(["a", "b", "c"]);
-    expect(items[7]).toMatchObject({ ok: false, text: "Cancelled" });
+    expect(tools.calls.map((c) => c.name)).toEqual(["Read", "Grep", "Edit"]);
+    expect(tools.notes).toEqual([{ kind: "said", before: 2, text: "Mostly. Two gaps:\n- keys\n- PRs" }]);
+    expect(tools.files).toEqual(["docs/SPEC.md"]);
+    expect((items[2] as Extract<ChatItem, { kind: "plan" }>).steps).toEqual(["a", "b", "c"]);
+    expect(items[3]).toMatchObject({ kind: "agent", text: "Two gaps:\n- keys\n- PRs" });
+    expect(items[6]).toMatchObject({ ok: false, text: "Cancelled" });
+  });
+
+  it("shows the last message of a run as the answer", () => {
+    const items = chatItems([
+      at({ type: "message", text: "Je regarde." }),
+      at({ type: "toolCall", name: "Read", summary: "a.ts" }),
+      at({ type: "message", text: "Voici la réponse." }),
+      at({ type: "done", summary: "Voici la réponse." }),
+    ]);
+    expect(items.map((i) => i.kind)).toEqual(["tools", "agent", "end"]);
+    expect(items[1]).toMatchObject({ text: "Voici la réponse." });
+  });
+
+  it("puts the reasoning with the work, even right before the answer", () => {
+    const items = chatItems([
+      at({ type: "reasoning", text: "Where is it set?" }),
+      at({ type: "toolCall", name: "Grep", summary: "timeout" }),
+      at({ type: "reasoning", text: "It is the default." }),
+      at({ type: "message", text: "It is 30 s by default." }),
+    ]);
+    expect(items.map((i) => i.kind)).toEqual(["tools", "agent"]);
+    expect((items[0] as Extract<ChatItem, { kind: "tools" }>).notes).toEqual([
+      { kind: "thought", before: 0, text: "Where is it set?" },
+      { kind: "thought", before: 1, text: "It is the default." },
+    ]);
   });
 
   it("keeps a final summary that says more than the last message", () => {

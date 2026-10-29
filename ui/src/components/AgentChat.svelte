@@ -4,8 +4,8 @@
   // Updates live; the field at the bottom answers it or gives it more work.
   import DOMPurify from "dompurify";
   import { marked } from "marked";
-  import { tick } from "svelte";
-  import { chatItems, currentActivity, isRunning, NUDGE, QUIET_WARN_MS, quietFor, shortDuration, usageLine, type ChatItem } from "../lib/agents";
+  import { tick, untrack } from "svelte";
+  import { chatItems, currentActivity, isRunning, NUDGE, QUIET_WARN_MS, quietFor, shortDuration, usageLine, type ChatItem, type WorkNote } from "../lib/agents";
   import { app } from "../lib/app.svelte";
   import { agentStatusColor, ROLE_COLORS, roleLabel, toolLabel } from "../lib/format";
   import { rowId } from "../lib/review";
@@ -19,6 +19,7 @@
   let text = $state("");
   let scroller: HTMLDivElement | undefined = $state();
   let input: HTMLTextAreaElement | undefined = $state();
+  /** Open groups of work, by their place among the groups: new events do not close them. */
   let openTools = $state<Record<number, boolean>>({});
   /** Follow the bottom while new things arrive, unless you scrolled up. */
   let stick = true;
@@ -27,6 +28,12 @@
   let now = $state(Date.now());
 
   const items = $derived(log ? chatItems(log) : []);
+  /** The place of each group of work among the groups: stable while the log grows. */
+  const groupNo = $derived.by(() => {
+    let n = 0;
+    return items.map((it) => (it.kind === "tools" ? n++ : -1));
+  });
+  const agentId = $derived(agent.id);
   const running = $derived(isRunning(agent));
   const waiting = $derived(agent.status === "waiting");
   const q = $derived(waiting && app.sd.question?.agentId === agent.id ? app.sd.question : null);
@@ -96,18 +103,29 @@
     stick = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
   }
 
-  // A new agent: load its log from the top.
+  // A new agent: load its log from the top. (Its id, not the agent: that object is replaced on
+  // each event, which would close the open groups.)
   $effect(() => {
-    const id = agent.id;
+    const id = agentId;
     log = null;
     stick = true;
     openTools = {};
     void load(id);
   });
 
+  // The agent moved on (a new event, another status): read its log again, groups stay open.
+  let seenState = "";
+  $effect(() => {
+    const state = `${agent.status}|${agent.lastEvent ?? ""}|${agent.session ?? ""}`;
+    if (state === seenState) return;
+    const first = !seenState;
+    seenState = state;
+    if (!first) untrack(() => void load(agentId));
+  });
+
   // Its events, live: reload the log (cheap, it is a file) a moment after a burst.
   $effect(() => {
-    const id = agent.id;
+    const id = agentId;
     const off = app.onAgentNotice((n) => {
       if (n.agentId !== id || n.spaceId !== app.space.id) return;
       clearTimeout(timer);
@@ -166,13 +184,19 @@
     const n = it.calls.length;
     const names = [...new Set(it.calls.map((c) => c.name))].slice(0, 4).join(", ");
     const files = it.files.length ? ` · edited ${it.files.length} file${it.files.length > 1 ? "s" : ""}` : "";
-    return `${n} tool call${n > 1 ? "s" : ""} (${names})${files}`;
+    const thought = it.notes.some((x) => x.kind === "thought");
+    if (!n) return thought ? "Thought" : "Worked";
+    return `${thought ? "Thought · " : ""}${n} tool call${n > 1 ? "s" : ""} (${names})${files}`;
   }
 
   export function focus() {
     input?.focus();
   }
 </script>
+
+{#snippet workNote(nt: WorkNote)}
+  <li class={nt.kind}>{#if nt.kind === "thought"}<small>Thinking</small>{/if}{nt.text}</li>
+{/snippet}
 
 <section class="chat" aria-label="Conversation with {agent.id}" style:--rc={ROLE_COLORS[agent.role]}>
   <header class="ch">
@@ -225,16 +249,19 @@
       {:else if it.kind === "agent"}
         <div class="agent-msg md">{@html md(it.text)}</div>
       {:else if it.kind === "tools"}
+        {@const g = groupNo[i]}
         <div class="tools">
-          <button class="tsum" aria-expanded={!!openTools[i]} onclick={() => (openTools = { ...openTools, [i]: !openTools[i] })}>
-            <span class="chev" class:open={openTools[i]}>▸</span>
+          <button class="tsum" aria-expanded={!!openTools[g]} onclick={() => (openTools = { ...openTools, [g]: !openTools[g] })}>
+            <span class="chev" class:open={openTools[g]}>▸</span>
             {toolsLabel(it)}
           </button>
-          {#if openTools[i]}
+          {#if openTools[g]}
             <ul>
               {#each it.calls as c, j (j)}
+                {#each it.notes.filter((x) => x.before === j) as nt, k (k)}{@render workNote(nt)}{/each}
                 <li><b>{c.name}</b> <span class="mono">{c.summary}</span></li>
               {/each}
+              {#each it.notes.filter((x) => x.before >= it.calls.length) as nt, k (k)}{@render workNote(nt)}{/each}
               {#each it.files as f (f)}
                 <li class="file"><b>edited</b> <span class="mono">{f}</span></li>
               {/each}
@@ -571,6 +598,23 @@
   .tools li b {
     color: var(--muted);
     font-weight: 600;
+  }
+  .tools li.said,
+  .tools li.thought {
+    white-space: pre-wrap;
+    color: var(--muted);
+  }
+  .tools li.said {
+    font-style: italic;
+  }
+  .tools li.thought {
+    border-left: 2px solid var(--line);
+    padding-left: 8px;
+  }
+  .tools li.thought small {
+    display: block;
+    color: var(--faint);
+    font-size: 11px;
   }
   .tools li.file b {
     color: var(--add);

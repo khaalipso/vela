@@ -140,6 +140,13 @@ impl CodexParser {
                     });
                 }
             }
+            "reasoning" if phase == "completed" => {
+                if let Some(t) = item["text"].as_str().filter(|t| !t.trim().is_empty()) {
+                    out.push(AgentEvent::Reasoning {
+                        text: t.trim().to_string(),
+                    });
+                }
+            }
             "command_execution" => {
                 if self.seen.insert(id) {
                     out.push(AgentEvent::ToolCall {

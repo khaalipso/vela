@@ -47,6 +47,7 @@ export function buildPaletteItems(src: PaletteSource): PaletteItem[] {
     ["Go to file", "Ctrl P", { type: "quick-open" }],
     ["Show the stack", "S", { type: "open-stack" }],
     ["Terminal", "T", { type: "toggle-terminal" }],
+    ["Terminal on top", "Ctrl ↑", { type: "toggle-terminal", dock: "top" }],
     ["New terminal", "Ctrl Shift `", { type: "new-terminal" }],
     ["Find in file", "Ctrl F", { type: "find" }],
     ["Markdown preview or source", "V", { type: "toggle-preview" }],

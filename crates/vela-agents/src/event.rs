@@ -14,6 +14,10 @@ pub enum AgentEvent {
     Message {
         text: String,
     },
+    /// What the model thought before acting, when the harness shows it.
+    Reasoning {
+        text: String,
+    },
     Plan {
         steps: Vec<String>,
     },

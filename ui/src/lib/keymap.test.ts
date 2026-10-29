@@ -289,6 +289,10 @@ describe("find, terminal, preview, split, notes", () => {
     expect(resolveKey({ key: "ArrowDown", ctrlKey: true }, base)).toEqual({ type: "toggle-terminal" });
     expect(resolveKey({ key: "ArrowDown", metaKey: true }, { ...base, view: "review" })).toEqual({ type: "toggle-terminal" });
     expect(resolveKey({ key: "ArrowDown", ctrlKey: true }, { ...base, typing: true, inTerm: true })).toEqual({ type: "toggle-terminal" });
+    // Ctrl Up: the terminal on top, from a terminal too, never from the editor.
+    expect(resolveKey({ key: "ArrowUp", ctrlKey: true }, base)).toEqual({ type: "toggle-terminal", dock: "top" });
+    expect(resolveKey({ key: "ArrowUp", ctrlKey: true }, { ...base, typing: true, inTerm: true })).toEqual({ type: "toggle-terminal", dock: "top" });
+    expect(resolveKey({ key: "ArrowUp", ctrlKey: true }, { ...base, typing: true })).toBeNull();
     expect(resolveKey({ key: "ArrowRight", ctrlKey: true }, base)).toEqual({ type: "view-step", delta: 1 });
     expect(resolveKey({ key: "ArrowLeft", metaKey: true }, base)).toEqual({ type: "view-step", delta: -1 });
     // In a text field, the editor or a shell they still move the caret by word.
