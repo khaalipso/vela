@@ -1,5 +1,6 @@
 <script lang="ts">
-  // Terminals of the space, under the current view. T or Ctrl ` toggles, Ctrl Shift ` adds one.
+  // Terminals of the space, under the current view. T or Ctrl ` hides and shows them again (the
+  // shells keep running), Ctrl Shift ` adds one.
   import { app } from "../lib/app.svelte";
   import { colorOfRepo } from "../lib/colors";
   import Kbd from "./Kbd.svelte";
@@ -32,7 +33,7 @@
   }
 </script>
 
-<section class="tp" style:height="{app.termHeight}px" aria-label="Terminal">
+<section class="tp" class:hidden={!app.termOpen || app.elsewhere} style:height="{app.termHeight}px" aria-label="Terminal" aria-hidden={!app.termOpen || app.elsewhere}>
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
   <div class="handle" role="separator" aria-orientation="horizontal" aria-label="Resize the terminal" tabindex="0" onpointerdown={drag} onkeydown={nudge}></div>
   <header>
@@ -72,6 +73,9 @@
 </section>
 
 <style>
+  .tp.hidden {
+    display: none;
+  }
   .tp {
     flex: none;
     position: relative;

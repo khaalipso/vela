@@ -100,6 +100,7 @@ pub async fn list_spaces(vela: State<'_, Vela>) -> AppResult<Vec<Space>> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn create_space(
     app: AppHandle,
     vela: State<'_, Vela>,
@@ -108,9 +109,19 @@ pub async fn create_space(
     repos: Vec<String>,
     branch: Option<String>,
     base: Option<String>,
+    repo_branches: Option<Vec<Option<String>>>,
+    ticket: Option<String>,
 ) -> AppResult<Space> {
     let space = blocking(&vela, move |v| {
-        commands::create_space(v, &name, &repos, branch.as_deref(), base.as_deref())
+        commands::create_space_with(
+            v,
+            &name,
+            &repos,
+            branch.as_deref(),
+            base.as_deref(),
+            &repo_branches.unwrap_or_default(),
+            ticket.as_deref(),
+        )
     })
     .await?;
     let (v, w, e) = (
@@ -129,9 +140,10 @@ pub async fn add_repo_to_space(
     watchers: State<'_, Arc<Watchers>>,
     space_id: String,
     path: String,
+    branch: Option<String>,
 ) -> AppResult<Space> {
     let space = blocking(&vela, move |v| {
-        commands::add_repo_to_space(v, &space_id, &path)
+        commands::add_repo_to_space_on(v, &space_id, &path, branch.as_deref())
     })
     .await?;
     watchers.restart(&space, &emitter(&app));
@@ -1145,14 +1157,58 @@ pub async fn rename_branch(
     vela: State<'_, Vela>,
     space_id: String,
     branch: String,
+    repo: Option<String>,
 ) -> AppResult<Space> {
     let sid = space_id.clone();
-    let s = blocking(&vela, move |v| commands::rename_branch(v, &sid, &branch)).await?;
+    let s = blocking(&vela, move |v| {
+        commands::rename_branch(v, &sid, &branch, repo.as_deref())
+    })
+    .await?;
     notify_state(&app, &space_id);
     Ok(s)
 }
 
 #[tauri::command]
-pub async fn push_branch(vela: State<'_, Vela>, space_id: String) -> AppResult<Vec<String>> {
-    blocking(&vela, move |v| commands::push_branch(v, &space_id)).await
+pub async fn push_branch(
+    vela: State<'_, Vela>,
+    space_id: String,
+    repo: Option<String>,
+) -> AppResult<Vec<String>> {
+    blocking(&vela, move |v| {
+        commands::push_branch(v, &space_id, repo.as_deref())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn set_ticket(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    ticket: String,
+) -> AppResult<Space> {
+    let sid = space_id.clone();
+    let s = blocking(&vela, move |v| commands::set_ticket(v, &sid, &ticket)).await?;
+    notify_state(&app, &space_id);
+    Ok(s)
+}
+
+#[tauri::command]
+pub async fn vela_model(
+    agents: State<'_, Arc<AgentManager>>,
+) -> AppResult<commands::VelaModelSetting> {
+    let a = agents.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || commands::vela_model(&a))
+        .await
+        .map_err(|e| crate::error::AppError::new("internal", e.to_string()))
+}
+
+#[tauri::command]
+pub fn set_vela_model(
+    agents: State<'_, Arc<AgentManager>>,
+    enabled: bool,
+    harness: Option<String>,
+    model: Option<String>,
+) -> AppResult<commands::VelaModelSetting> {
+    commands::set_vela_model(&agents, enabled, harness.as_deref(), model.as_deref())
 }

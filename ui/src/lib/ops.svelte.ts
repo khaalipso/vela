@@ -9,6 +9,7 @@ import { files } from "./files.svelte";
 import { fileKey, plural } from "./format";
 import { closeOthers, closeToRight, currentAfter, renameKeys, setPinned } from "./tabs";
 import type { FileChange, Hunk, Link, Space } from "./types";
+import { repoBranch, spaceBranches } from "./types";
 
 // -- clipboard ------------------------------------------------------------------
 
@@ -136,8 +137,10 @@ class Ops {
   copyRepoPath(repo: string, path: string) {
     return this.copy(`${repo}:${path}`, "repo:path");
   }
-  copyBranch(space: Space) {
-    return this.copy(space.branch, `${space.branch}`);
+  /** The branch of one repo, or the branches of the space. */
+  copyBranch(space: Space, repo?: string) {
+    const b = repo ? repoBranch(space, repo) : spaceBranches(space).join(" ");
+    return this.copy(b, b);
   }
   copyUrl(link: Link) {
     return this.copy(link.url, "the URL");
@@ -461,15 +464,19 @@ class Ops {
 
   // -- spaces ---------------------------------------------------------------------
 
-  askRenameBranch() {
+  /** Rename the branch of one repo, or of every repo when `repo` is left out. */
+  askRenameBranch(repo?: string) {
     const space = app.space;
+    const where = repo ? [repo] : space.repos.map((r) => r.name);
     app.sheet = {
       kind: "prompt",
-      title: "Rename the branch",
+      title: repo ? `Rename the branch of ${repo}` : "Rename the branch",
       label: "Branch",
-      value: space.branch,
+      value: repo ? repoBranch(space, repo) : space.branch,
       submitLabel: "Rename",
-      hint: `Renamed in ${space.repos.map((r) => r.name).join(", ")}, with the branches of its agents. The worktrees stay where they are; a pushed branch keeps its upstream until you push again.`,
+      hint:
+        `Renamed in ${where.join(", ")}, with the branches of its agents. The worktrees stay where they are; a pushed branch keeps its upstream until you push again.` +
+        (!repo && spaceBranches(space).length > 1 ? " Every repo ends up on this one branch." : ""),
       validate: (v) => {
         const b = v.trim();
         if (!b) return "Give the branch a name";
@@ -477,7 +484,32 @@ class Ops {
         return null;
       },
       run: async (v) => {
-        await app.renameBranch(v.trim());
+        await app.renameBranch(v.trim(), repo ?? null);
+      },
+    };
+    app.overlay = "sheet";
+  }
+
+  /** Set the ticket of the space (a key or the URL of the issue). */
+  askTicket() {
+    const space = app.space;
+    app.sheet = {
+      kind: "prompt",
+      title: space.ticket ? "Change the ticket" : "Set the ticket of this task",
+      label: "Ticket",
+      value: space.ticket ?? "",
+      submitLabel: space.ticket ? "Save" : "Set",
+      hint:
+        "A key such as PAY-412, or the URL of the issue. It goes in the Refs: footer of the commits and labels the agents; " +
+        "{ticket} in the branch naming uses it for new spaces. Empty removes it.",
+      validate: (v) => {
+        const t = v.trim();
+        if (/^https?:\/\//.test(t)) return /[A-Z][A-Z0-9]+-\d+/.test(t) ? null : "No ticket key in this URL";
+        if (/\s/.test(t)) return "One word, such as PAY-412";
+        return null;
+      },
+      run: async (v) => {
+        await app.setTicket(v.trim());
       },
     };
     app.overlay = "sheet";
@@ -539,7 +571,7 @@ class Ops {
       kind: "confirm",
       title: `Remove ${space.name}?`,
       body:
-        `The worktrees of this space are removed from disk. Branch ${space.branch} is deleted only when it is fully merged; ` +
+        `The worktrees of this space are removed from disk. Branch ${spaceBranches(space).join(", ")} is deleted only when it is fully merged; ` +
         "a branch with unmerged commits stays in your repo." +
         (dirty ? ` ${plural(dirty, "file with uncommitted changes", "files with uncommitted changes")} will be lost.` : ""),
       items: space.repos.map((r) => `${r.name}  ${r.worktree}`),

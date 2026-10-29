@@ -13,7 +13,7 @@
   const TIER_HINT: Record<Tier, string> = {
     high: "Planning, review, security, hard bugs",
     medium: "Implementation",
-    low: "Tests, small fixes, Vela's own tasks",
+    low: "Tests, small fixes",
   };
 
   function rolesOf(tier: Tier): string {
@@ -114,12 +114,13 @@
           />
         </label>
         <p class="hint">
-          <code>{"{slug}"}</code> the space name as a slug · <code>{"{user}"}</code> your user name · <code>{"{date}"}</code> today (YYYY-MM-DD).
+          <code>{"{slug}"}</code> the space name as a slug · <code>{"{ticket}"}</code> the ticket of the task (left out when there is none) · <code>{"{user}"}</code> your user name · <code>{"{date}"}</code> today (YYYY-MM-DD).
           Examples: <button class="ex" onclick={() => (tplDraft = "feat/{slug}")}>feat/{"{slug}"}</button>
           <button class="ex" onclick={() => (tplDraft = "{user}/{slug}")}>{"{user}"}/{"{slug}"}</button>
           <button class="ex" onclick={() => (tplDraft = "{date}-{slug}")}>{"{date}"}-{"{slug}"}</button>
+          <button class="ex" onclick={() => (tplDraft = "feat/{ticket}-{slug}")}>feat/{"{ticket}"}-{"{slug}"}</button>
         </p>
-        <p class="preview">"Refunds in checkout" → <b class="mono">{renderBranch(tplDraft ?? app.branchTemplate, "Refunds in checkout")}</b></p>
+        <p class="preview">"Refunds in checkout", ticket PAY-412 → <b class="mono">{renderBranch(tplDraft ?? app.branchTemplate, "Refunds in checkout", "PAY-412")}</b></p>
         <div class="acts">
           <span class="hint">The branch of an existing space: click it in the top bar to rename it.</span>
           <button class="btn p" disabled={tplDraft === null || tplDraft === app.branchTemplate} onclick={saveTpl}>Save</button>
@@ -170,6 +171,52 @@
             {/each}
           </section>
         {/each}
+        <section class="h velam" aria-label="Vela model">
+          <h4>
+            Vela
+            <small>the small model Vela runs for its own tasks: it gives each conversation one or two labels to find it again</small>
+          </h4>
+          <datalist id="models-vela">
+            {#each app.tierSettings.find((h) => h.harness === (app.velaModel?.harness ?? app.velaModel?.effectiveHarness))?.models ?? [] as m (m)}<option value={m}></option>{/each}
+          </datalist>
+          <div class="row">
+            <label class="on">
+              <input
+                type="checkbox"
+                checked={app.velaModel?.enabled ?? true}
+                aria-label="Label the conversations"
+                onchange={(e) => void app.setVelaModel({ enabled: (e.currentTarget as HTMLInputElement).checked })}
+              />
+              <span>Labels</span>
+            </label>
+            <label>
+              <span>Tool</span>
+              <select
+                value={app.velaModel?.harness ?? ""}
+                aria-label="Vela model tool"
+                disabled={app.velaModel ? !app.velaModel.enabled : false}
+                onchange={(e) => void app.setVelaModel({ harness: (e.currentTarget as HTMLSelectElement).value || null })}
+              >
+                <option value="">first installed{app.velaModel?.effectiveHarness && !app.velaModel.harness ? ` (${app.velaModel.effectiveHarness})` : ""}</option>
+                {#each app.tierSettings as h (h.harness)}<option value={h.harness} disabled={!h.available}>{h.label}</option>{/each}
+              </select>
+            </label>
+            <label>
+              <span>Model</span>
+              <input
+                list="models-vela"
+                value={app.velaModel?.model ?? ""}
+                placeholder={app.velaModel?.effectiveModel ? `low tier: ${app.velaModel.effectiveModel}` : "low tier model"}
+                aria-label="Vela model"
+                disabled={app.velaModel ? !app.velaModel.enabled : false}
+                onchange={(e) => void app.setVelaModel({ model: (e.currentTarget as HTMLInputElement).value })}
+                onkeydown={(e) => {
+                  if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur();
+                }}
+              />
+            </label>
+          </div>
+        </section>
       </div>
     {:else}
       <div class="prompts" aria-label="Agent prompts">
@@ -295,6 +342,21 @@
   .tier {
     display: flex;
     flex-direction: column;
+  }
+  .velam .row {
+    grid-template-columns: minmax(150px, 1fr) 180px minmax(0, 1.2fr);
+  }
+  label.on {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--fg);
+  }
+  .velam h4 small {
+    display: block;
+    font-weight: 400;
+    margin: 2px 0 0;
   }
   .tier b {
     font-size: 12px;

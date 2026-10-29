@@ -17,13 +17,13 @@ Arc replaced tabs with spaces. Vela replaces the open folder with the **space**:
 
 The types in `crates/vela-core/src/model.rs` are the contract. The UI mirrors them in `ui/src/lib/types.ts`.
 
-- **Space**: id (slug), name, color, branch, repos, window, links (added by hand or pasted; detected and repo links are computed).
+- **Space**: id (slug), name, color, branch (the one it was created with, the default of a repo added later), repos, window, links (added by hand or pasted; detected and repo links are computed), ticket (the issue of the task).
 - **Link**: kind, provider, url, title, key, source (manual, branch, commit, paste, repo). Issue keys come from the branch and commit subjects, tracker URLs from `$XDG_CONFIG_HOME/vela/config.toml` (`[issues] jira = "https://acme.atlassian.net/browse/{key}"`), shared repo links from `<repo>/.vela/links.toml`.
 - **CommitPlan / CommitGroup**: proposed commits for the staged hunks (type, scope, breaking, subject, body, footers, hunk ids), rules from commitlint or history.
-- **SpaceRepo**: source clone, worktree created by Vela, base ref.
+- **SpaceRepo**: source clone, worktree created by Vela, base ref, its own branch.
 - **FileChange**: staged side and unstaged side, like VS Code.
 - **Hunk**: stable id (hash of repo, path, content), lines, origin (`You` or `Agent`), state.
-- **Agent**: role, harness (`tool`: claude, codex, opencode), model, tier, session, its worktrees, status (working, waiting, done, failed, interrupted), summary, last message, plan, question, usage.
+- **Agent**: role, harness (`tool`: claude, codex, opencode), model, tier, session, its worktrees, status (working, waiting, done, failed, interrupted), summary, last message, plan, question, usage, activity (what it does now), last event (when it last said anything), labels.
 - **StackItem**: runtimes from `mise.toml` / `.tool-versions`, containers from `compose.yml`.
 - **UpNext**: computed by the core.
 
@@ -32,7 +32,7 @@ The types in `crates/vela-core/src/model.rs` are the contract. The UI mirrors th
 - `VELA_HOME` (default `$XDG_DATA_HOME/vela`, else `~/.local/share/vela`).
 - `VELA_HOME/spaces/<id>.toml`: one file per space.
 - `VELA_HOME/worktrees/<space>/<repo>`: the user's worktree for that repo.
-- `VELA_HOME/worktrees/<space>/.agents/<agent>/<repo>`: an agent's worktree, on branch `<space-branch>--<agent>`, created from the commit the space branch is on, then filled with your files as they are (uncommitted edits and new files included).
+- `VELA_HOME/worktrees/<space>/.agents/<agent>/<repo>`: an agent's worktree, on branch `<repo-branch>--<agent>`, created from the commit the space branch is on, then filled with your files as they are (uncommitted edits and new files included).
 - `VELA_HOME/spaces/<id>.agents.json`: the agents of a space; `VELA_HOME/spaces/<id>.agents/<agent>.jsonl`: the event log of each agent.
 - Global AI config: `$XDG_CONFIG_HOME/vela/` (default `~/.config/vela/`).
 
@@ -64,9 +64,13 @@ The composer's gate lists the results of these checks (a failing one needs an ov
 
 ## Branches
 
-A space has one branch, the same name in every repo. When you create a space you can type it, or leave it empty for the naming pattern (`[spaces] branch`, `feat/{slug}` by default, edited in Settings, Branches), and pick the base it starts from (each repo's current branch by default). A name that already exists is used as it is: a local branch gets the worktree, a remote one (`origin/<branch>`, a PR or a teammate's branch) gets a local branch that tracks it. A branch checked out in another worktree is refused with the path of that checkout. A failed creation removes only the branches it made.
+Each repo of a space has its own branch. When you create a space you type one branch for all of them, or leave it empty for the naming pattern (`[spaces] branch`, `feat/{slug}` by default, `{ticket}` takes the ticket, edited in Settings, Branches), give some repos a branch of their own, and pick the base it starts from (each repo's current branch by default). A repo added later takes the branch the space was created with, or the one you type. A name that already exists is used as it is: a local branch gets the worktree, a remote one (`origin/<branch>`, a PR or a teammate's branch) gets a local branch that tracks it. A branch checked out in another worktree is refused with the path of that checkout. A failed creation removes only the branches it made.
 
-The branch chip in the top bar renames the branch (`git branch -m` in every repo, the agents' `<branch>--<agent>` branches too; worktrees stay where they are), copies its name, pushes it (`git push -u origin`) and opens the pull requests. From the CLI: `vela space new --branch <b> --base <ref>`, `vela space rename-branch <space> <b>`.
+The branch chip in the top bar shows the branch when every repo is on it, else "n branches" and each repo chip shows its own. Its menu renames (`git branch -m`, the agents' `<branch>--<agent>` branches too; worktrees stay where they are) in every repo or in one, copies, pushes (`git push -u origin`) and opens the pull requests; the menu of a repo chip does the same for that repo. From the CLI: `vela space new --branch <b> --base <ref> --ticket <key>`, `vela space rename-branch <space> <b> [--repo <repo>]`, `vela space ticket <space> <key>`.
+
+## Ticket
+
+A space can have a ticket (`PAY-412`, or the URL of the issue, from which the key is taken): the "+ ticket" chip of the top bar sets it, a click changes it. It is the `Refs:` footer of the commits (alone, instead of the keys found in the branch and the commits), the first label of its agents, the issue link of the space, `{ticket}` in the branch pattern, and the agents read it in their context.
 
 ## Git view
 
@@ -74,7 +78,7 @@ The Git view (`4`) shows, for each repo, the space branch against its base (`ori
 
 ## Agents view
 
-A conversation per agent: the list on the left (at work first, `J` `K` to move), the chat on the right. The chat shows your requests, the agent's full answers rendered as Markdown, its tool calls grouped between answers (click to unfold, with the files it edited), its plan, its questions with their answer buttons, and the end of each run. It updates live. The field at the bottom answers a question or gives a finished agent more work in the same session and worktree. While the agent works you can still write: the message is queued ("Sends when it stops", removable) and sent as soon as its run ends. "Edit and rerun" opens the composer with the request. Under the header, the files the agent changed that still wait for you, with their size: a click opens that file in the Review. The tier of each agent (high, medium, low) shows in the list. Up next sits in the bar of this view, so it never covers the chat; the file tree drawer is hidden here.
+A conversation per agent: the list on the left (at work first, `J` `K` to move), the chat on the right. A search field above the list finds a conversation by its labels, request, summary, role, harness or session id, every word must match; the labels of the space under it filter in one click. Labels come from the Vela model, the small model Vela runs for its own tasks (`[agents.vela]`: on by default, its own harness and model in the Vela row of the Agent tiers sheet), which reads the request and gives one or two words; the ticket of the space comes first. The header of the chat shows the session id of the harness, a click copies it. While an agent works, the chat and the list show what it does now (its last tool call, "Bash: pnpm test") and, after 30 seconds of silence, for how long it has said nothing. After 5 minutes it is flagged as maybe stuck, with "Stop and ask where it is" (cancels the run and resumes the same session with a message asking what blocked it) and Cancel. The chat shows your requests, the agent's full answers rendered as Markdown, its tool calls grouped between answers (click to unfold, with the files it edited), its plan, its questions with their answer buttons, and the end of each run. It updates live. The field at the bottom answers a question or gives a finished agent more work in the same session and worktree. While the agent works you can still write: the message is queued ("Sends when it stops", removable) and sent as soon as its run ends. "Edit and rerun" opens the composer with the request. Under the header, the files the agent changed that still wait for you, with their size: a click opens that file in the Review. The tier of each agent (high, medium, low) shows in the list. Up next sits in the bar of this view, so it never covers the chat; the file tree drawer is hidden here.
 
 ## Your changes in the code view
 
@@ -86,7 +90,7 @@ Under the history, the Git view shows, for each repo of the space, the PR of the
 
 ## Commit gate
 
-Before a commit, run in parallel on the staged diff only: reviewer agent (non interactive CLI call), tests touched by the diff, lint, secret scan, repo rules. Results are cached per hunk id. One commit is made per repo with the same message; push goes to the same branch name everywhere. Override needs a written reason, stored in the commit trailer `Vela-Override:`.
+Before a commit, run in parallel on the staged diff only: reviewer agent (non interactive CLI call), tests touched by the diff, lint, secret scan, repo rules. Results are cached per hunk id. A commit is for one repo: the composer opens on the repo of the open file (else the first with staged changes), a tab per repo with staged changes switches (`R`), and only that repo is committed; the others keep their staged changes for the next `C`. Override needs a written reason, stored in the commit trailer `Vela-Override:`.
 
 ## Keys
 

@@ -132,6 +132,19 @@ pub struct RoleConfig {
     pub harness: Option<String>,
 }
 
+/// `[agents.vela]`: the Vela model, the small model Vela runs for its own tasks (labels of the
+/// conversations). Its harness and model are chosen apart from the tiers.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VelaModelConfig {
+    /// Off with `false`. Left out: on.
+    pub enabled: Option<bool>,
+    /// Left out: the first installed harness.
+    pub harness: Option<String>,
+    /// Left out: the `low` tier model of the harness.
+    pub model: Option<String>,
+}
+
 /// `[agents]`: tiers and roles. See `docs/HARNESS.md`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -145,6 +158,7 @@ pub struct AgentsConfig {
     /// `[agents.prompts] <role> = "..."`: replaces the built in brief of the role.
     pub prompts: BTreeMap<String, String>,
     pub roles: BTreeMap<String, RoleConfig>,
+    pub vela: VelaModelConfig,
 }
 
 /// `[issues]`: tracker URL templates (read by `links`).
@@ -241,6 +255,7 @@ fn is_known(path: &str) -> bool {
             | ["agents", "roles", _, "tier" | "harness"]
             | ["agents", "transport", _]
             | ["agents", "prompts", _]
+            | ["agents", "vela", "enabled" | "harness" | "model"]
             | ["spaces", "branch"]
     )
 }

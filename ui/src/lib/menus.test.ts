@@ -254,7 +254,19 @@ describe("folder and repo menus", () => {
 
   it("the top bar chip of a repo", () => {
     const m = repoChipMenu("api");
-    expect(labels(m)).toEqual(["Show files", "-", "Copy worktree path", "Reveal worktree", "Open terminal here", "-", "Remove repo from space"]);
+    expect(labels(m)).toEqual([
+      "Show files",
+      "-",
+      "Rename branch…",
+      "Copy branch name",
+      "Push branch",
+      "-",
+      "Copy worktree path",
+      "Reveal worktree",
+      "Open terminal here",
+      "-",
+      "Remove repo from space",
+    ]);
   });
 });
 

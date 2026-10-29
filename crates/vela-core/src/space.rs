@@ -83,6 +83,11 @@ pub struct CreateOptions {
     /// (`origin/<branch>`) gets a local branch tracking it; otherwise it is created from
     /// `base`. Defaults to the `[spaces] branch` template (`feat/{slug}`).
     pub branch: Option<String>,
+    /// A branch for some repos instead of `branch`, in the order of the repo paths (None or
+    /// empty: the space branch). Each repo of a space has its own branch.
+    pub repo_branches: Vec<Option<String>>,
+    /// The ticket of the task ("PAY-412"), for `{ticket}` in the template and the commits.
+    pub ticket: Option<String>,
 }
 
 fn dir_name(p: &Path) -> String {
@@ -105,12 +110,47 @@ pub fn create<P: AsRef<Path>>(
         repo_paths,
         &CreateOptions {
             base: base.map(str::to_string),
-            branch: None,
+            ..CreateOptions::default()
         },
     )
 }
 
-/// Create a space with the branch and base of `opts` (see [`CreateOptions`]).
+fn checked_branch(b: &str) -> Result<String> {
+    if !crate::branches::is_valid(b) {
+        return Err(Error::Invalid(format!("{b} is not a valid branch name")));
+    }
+    Ok(b.to_string())
+}
+
+/// Add the worktree of `source` on `branch`: the existing local branch, a local branch
+/// tracking the remote one, or a new branch from `base`. True when the branch was made.
+fn add_worktree(source: &Path, worktree: &Path, branch: &str, base: &str) -> Result<bool> {
+    let wt = worktree.to_string_lossy();
+    let src = crate::branches::source_of(source, branch, base);
+    let made = !matches!(src, crate::branches::Source::Local);
+    match &src {
+        crate::branches::Source::Local => git(source, &["worktree", "add", wt.as_ref(), branch]),
+        crate::branches::Source::Remote { upstream } => git(
+            source,
+            &[
+                "worktree",
+                "add",
+                "--track",
+                "-b",
+                branch,
+                wt.as_ref(),
+                upstream,
+            ],
+        ),
+        crate::branches::Source::New { base } => git(
+            source,
+            &["worktree", "add", "-b", branch, wt.as_ref(), base],
+        ),
+    }?;
+    Ok(made)
+}
+
+/// Create a space with the branches and base of `opts` (see [`CreateOptions`]).
 /// If any repo fails, worktrees and branches created so far are removed.
 pub fn create_with<P: AsRef<Path>>(
     vela: &Vela,
@@ -129,9 +169,27 @@ pub fn create_with<P: AsRef<Path>>(
     if store::exists(vela, &id) {
         return Err(Error::SpaceExists(id));
     }
+    let ticket = match opts.ticket.as_deref() {
+        Some(t) => clean_ticket(t)?,
+        None => None,
+    };
+    let branch = match opts
+        .branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+    {
+        Some(b) => checked_branch(b)?,
+        None => crate::branches::render_with(
+            &crate::branches::template_from_env(),
+            name,
+            ticket.as_deref(),
+        ),
+    };
     // Validate everything before touching the disk.
-    let mut sources: Vec<(String, PathBuf, String)> = Vec::new();
-    for p in repo_paths {
+    // (repo name, source, base ref, branch)
+    let mut sources: Vec<(String, PathBuf, String, String)> = Vec::new();
+    for (i, p) in repo_paths.iter().enumerate() {
         let p = p.as_ref();
         let top = git(p, &["rev-parse", "--show-toplevel"])
             .map_err(|_| Error::NotARepo(p.to_path_buf()))?;
@@ -143,35 +201,28 @@ pub fn create_with<P: AsRef<Path>>(
         let stem = dir_name(&top);
         let mut repo_name = stem.clone();
         let mut n = 2;
-        while sources
-            .iter()
-            .any(|(existing, _, _)| *existing == repo_name)
-        {
+        while sources.iter().any(|(existing, ..)| *existing == repo_name) {
             repo_name = format!("{stem}-{n}");
             n += 1;
         }
-        sources.push((repo_name, top, base_ref));
+        let repo_branch = match opts
+            .repo_branches
+            .get(i)
+            .and_then(|b| b.as_deref())
+            .map(str::trim)
+            .filter(|b| !b.is_empty())
+        {
+            Some(b) => checked_branch(b)?,
+            None => branch.clone(),
+        };
+        sources.push((repo_name, top, base_ref, repo_branch));
     }
 
-    let branch = match opts
-        .branch
-        .as_deref()
-        .map(str::trim)
-        .filter(|b| !b.is_empty())
-    {
-        Some(b) => {
-            if !crate::branches::is_valid(b) {
-                return Err(Error::Invalid(format!("{b} is not a valid branch name")));
-            }
-            b.to_string()
-        }
-        None => crate::branches::render(&crate::branches::template_from_env(), name),
-    };
     // An existing branch checked out elsewhere cannot get a second worktree: say where.
-    for (repo_name, source, _) in &sources {
-        if let Some(path) = crate::branches::checked_out_in(source, &branch) {
+    for (repo_name, source, _, b) in &sources {
+        if let Some(path) = crate::branches::checked_out_in(source, b) {
             return Err(Error::Invalid(format!(
-                "{branch} is checked out in {path} ({repo_name}): switch that checkout to another branch first"
+                "{b} is checked out in {path} ({repo_name}): switch that checkout to another branch first"
             )));
         }
     }
@@ -179,37 +230,13 @@ pub fn create_with<P: AsRef<Path>>(
     fs::create_dir_all(&root)?;
     let mut created: Vec<Created> = Vec::new();
     let mut repos = Vec::new();
-    for (repo_name, source, base_ref) in &sources {
+    for (repo_name, source, base_ref, repo_branch) in &sources {
         let worktree = paths::space_worktree(&vela.home, &id, repo_name);
-        let wt = worktree.to_string_lossy();
-        let src = crate::branches::source_of(source, &branch, base_ref);
-        let made = !matches!(src, crate::branches::Source::Local);
-        let added = match &src {
-            crate::branches::Source::Local => {
-                git(source, &["worktree", "add", wt.as_ref(), &branch])
-            }
-            crate::branches::Source::Remote { upstream } => git(
-                source,
-                &[
-                    "worktree",
-                    "add",
-                    "--track",
-                    "-b",
-                    &branch,
-                    wt.as_ref(),
-                    upstream,
-                ],
-            ),
-            crate::branches::Source::New { base } => git(
-                source,
-                &["worktree", "add", "-b", &branch, wt.as_ref(), base],
-            ),
-        };
-        match added {
-            Ok(_) => created.push(Created {
+        match add_worktree(source, &worktree, repo_branch, base_ref) {
+            Ok(made) => created.push(Created {
                 source: source.clone(),
                 worktree: worktree.clone(),
-                branch: branch.clone(),
+                branch: repo_branch.clone(),
                 made,
             }),
             Err(e) => {
@@ -222,6 +249,7 @@ pub fn create_with<P: AsRef<Path>>(
             source: source.to_string_lossy().into_owned(),
             worktree: worktree.to_string_lossy().into_owned(),
             base: base_ref.clone(),
+            branch: repo_branch.clone(),
         });
     }
 
@@ -236,11 +264,50 @@ pub fn create_with<P: AsRef<Path>>(
         window: None,
         archived: false,
         links: Vec::new(),
+        ticket,
     };
     if let Err(e) = store::save(vela, &space) {
         rollback(&created, &root);
         return Err(e);
     }
+    Ok(space)
+}
+
+/// A ticket as stored: trimmed, the key of a tracker URL ("…/browse/PAY-412" gives "PAY-412"),
+/// None when empty.
+pub fn clean_ticket(ticket: &str) -> Result<Option<String>> {
+    let t = ticket.trim();
+    if t.is_empty() {
+        return Ok(None);
+    }
+    if t.starts_with("http://") || t.starts_with("https://") {
+        if let Some(k) = crate::links::detect_keys(t).into_iter().last() {
+            return Ok(Some(k));
+        }
+        return Err(Error::Invalid(format!("no ticket key in {t}")));
+    }
+    if t.chars().count() > 64 || t.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(Error::Invalid(format!(
+            "{t} is not a ticket: one word such as PAY-412"
+        )));
+    }
+    // "pay-412" is a Jira key typed fast.
+    let upper = t.to_ascii_uppercase();
+    if crate::links::detect_keys(&upper)
+        .first()
+        .map(String::as_str)
+        == Some(upper.as_str())
+    {
+        return Ok(Some(upper));
+    }
+    Ok(Some(t.to_string()))
+}
+
+/// Set or clear (empty) the ticket of a space.
+pub fn set_ticket(vela: &Vela, id: &str, ticket: &str) -> Result<Space> {
+    let mut space = store::load(vela, id)?;
+    space.ticket = clean_ticket(ticket)?;
+    store::save(vela, &space)?;
     Ok(space)
 }
 
@@ -315,7 +382,7 @@ pub fn remove(vela: &Vela, id: &str) -> Result<()> {
                 }
             }
         }
-        let pattern = format!("refs/heads/{}--*", space.branch);
+        let pattern = format!("refs/heads/{}--*", repo.branch);
         if let Ok(refs) = git(
             source,
             &["for-each-ref", "--format=%(refname:short)", &pattern],
@@ -329,15 +396,20 @@ pub fn remove(vela: &Vela, id: &str) -> Result<()> {
         }
         let _ = git(source, &["worktree", "prune"]);
         // `-d` refuses unmerged branches, which is what we want.
-        let _ = git(source, &["branch", "-d", &space.branch]);
+        let _ = git(source, &["branch", "-d", &repo.branch]);
     }
     let _ = fs::remove_dir_all(paths::space_root(&vela.home, id));
     store::delete(vela, id)
 }
 
-/// Add a repo to an existing space: a worktree on the space branch, created from the
-/// repo's current branch (or the existing space branch if the repo already has it).
+/// Add a repo to an existing space: a worktree on the space branch (see [`add_repo_on`]).
 pub fn add_repo(vela: &Vela, id: &str, repo_path: &Path) -> Result<Space> {
+    add_repo_on(vela, id, repo_path, None)
+}
+
+/// Add a repo to an existing space, on `branch` (default: the space branch). An existing
+/// local or remote branch is used; otherwise it is created from the repo's current branch.
+pub fn add_repo_on(vela: &Vela, id: &str, repo_path: &Path, branch: Option<&str>) -> Result<Space> {
     let mut space = store::load(vela, id)?;
     let top = git(repo_path, &["rev-parse", "--show-toplevel"])
         .map_err(|_| Error::NotARepo(repo_path.to_path_buf()))?;
@@ -349,6 +421,10 @@ pub fn add_repo(vela: &Vela, id: &str, repo_path: &Path) -> Result<Space> {
             dir_name(&top)
         )));
     }
+    let branch = match branch.map(str::trim).filter(|b| !b.is_empty()) {
+        Some(b) => checked_branch(b)?,
+        None => space.branch.clone(),
+    };
     let stem = dir_name(&top);
     let mut repo_name = stem.clone();
     let mut n = 2;
@@ -356,32 +432,20 @@ pub fn add_repo(vela: &Vela, id: &str, repo_path: &Path) -> Result<Space> {
         repo_name = format!("{stem}-{n}");
         n += 1;
     }
+    if let Some(path) = crate::branches::checked_out_in(&top, &branch) {
+        return Err(Error::Invalid(format!(
+            "{branch} is checked out in {path}: switch that checkout to another branch first"
+        )));
+    }
     let base_ref = current_ref(&top)?;
     let worktree = paths::space_worktree(&vela.home, &space.id, &repo_name);
-    let wt = worktree.to_string_lossy().into_owned();
-    let has_branch = git(
-        &top,
-        &[
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("refs/heads/{}", space.branch),
-        ],
-    )
-    .is_ok();
-    if has_branch {
-        git(&top, &["worktree", "add", &wt, &space.branch])?;
-    } else {
-        git(
-            &top,
-            &["worktree", "add", "-b", &space.branch, &wt, &base_ref],
-        )?;
-    }
+    add_worktree(&top, &worktree, &branch, &base_ref)?;
     space.repos.push(SpaceRepo {
         name: repo_name,
         source: top_s,
-        worktree: wt,
+        worktree: worktree.to_string_lossy().into_owned(),
         base: base_ref,
+        branch,
     });
     store::save(vela, &space)?;
     Ok(space)

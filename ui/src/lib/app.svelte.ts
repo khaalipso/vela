@@ -15,12 +15,14 @@ import type {
   RepoPr,
   RolePrompt,
   ReviewComment,
+  VelaModelSetting,
   NewComment,
   ReviewNote,
   TermEvent,
   Unsubscribe,
 } from "./backend";
 import type { FileReview, RepoHistory } from "./backend";
+import { matchesAgent } from "./agents";
 import { findConflicts } from "./conflicts";
 import type { Pane } from "./mergeview";
 import { composeMessage, cycleType, mergeAll, moveHunk, splitHunk } from "./commitplan";
@@ -66,6 +68,7 @@ import type {
   StackItem,
   Tier,
 } from "./types";
+import { repoBranch, spaceBranches } from "./types";
 import { computeUpNext, readyToCommit, waitingCount, type UpNextInput, type UpNextView } from "./upnext";
 
 const TIERS: Tier[] = ["high", "medium", "low"];
@@ -128,7 +131,12 @@ export interface Proposal {
 export interface ComposerState {
   conventional: boolean;
   rules: CommitRules;
+  /** The repo being committed: a commit is for one repo of the space, never all of them. */
+  repo: string;
+  /** Its commits. */
   groups: CommitGroup[];
+  /** The proposed commits of the other repos with staged changes, by repo. */
+  rest: Record<string, CommitGroup[]>;
   /** Focused commit and focused hunk inside it. */
   gi: number;
   hi: number;
@@ -214,12 +222,23 @@ export class AppState {
   /** The tier picked in the composer; null keeps the role's default. */
   tier = $state<Tier | null>(null);
   pal = $state({ q: "", i: 0 });
-  newSp = $state<{ name: string; repos: string[]; missingName: boolean; branch: string; base: string }>({
+  newSp = $state<{
+    name: string;
+    repos: string[];
+    missingName: boolean;
+    branch: string;
+    base: string;
+    /** A branch for one repo (by path) instead of `branch`. */
+    repoBranches: Record<string, string>;
+    ticket: string;
+  }>({
     name: "",
     repos: [],
     missingName: false,
     branch: "",
     base: "",
+    repoBranches: {},
+    ticket: "",
   });
   /** The naming template of new branches (`[spaces] branch`). */
   branchTemplate = $state("feat/{slug}");
@@ -246,12 +265,13 @@ export class AppState {
     }
   }
 
-  async renameBranch(branch: string): Promise<boolean> {
+  /** Rename the branch of one repo, or of every repo when `repo` is left out. */
+  async renameBranch(branch: string, repo?: string | null): Promise<boolean> {
     const sid = this.space.id;
     try {
-      const s = await this.backend.renameBranch(sid, branch);
+      const s = await this.backend.renameBranch(sid, branch, repo ?? null);
       await this.syncSpaces();
-      this.toast(`Now on ${s.branch}`);
+      this.toast(repo ? `${repo} is now on ${repoBranch(s, repo)}` : `Now on ${s.branch}`);
       return true;
     } catch (e) {
       this.fail(e);
@@ -259,14 +279,29 @@ export class AppState {
     }
   }
 
-  async pushBranch() {
-    const b = this.space.branch;
+  /** Push the branch of one repo, or of every repo when `repo` is left out. */
+  async pushBranch(repo?: string | null) {
+    const b = repo ? repoBranch(this.space, repo) : spaceBranches(this.space).join(", ");
     this.toast(`Pushing ${b}…`);
     try {
-      const repos = await this.backend.pushBranch(this.space.id);
+      const repos = await this.backend.pushBranch(this.space.id, repo ?? null);
       this.toast(`Pushed ${b} (${repos.join(", ")})`);
     } catch (e) {
       this.fail(e);
+    }
+  }
+
+  /** Set the ticket of the space; "" removes it. */
+  async setTicket(ticket: string): Promise<boolean> {
+    try {
+      const s = await this.backend.setTicket(this.space.id, ticket);
+      await this.syncSpaces();
+      await this.refresh(s.id);
+      this.toast(s.ticket ? `Ticket ${s.ticket}: in the Refs footer of the next commits` : "Ticket removed");
+      return true;
+    } catch (e) {
+      this.fail(e);
+      return false;
     }
   }
 
@@ -284,6 +319,7 @@ export class AppState {
   openAddRepo() {
     this.sheetMode = "add";
     this.newSp.repos = [];
+    this.newSp.branch = "";
     this.repoFilter = "";
     this.overlay = "newspace";
   }
@@ -297,12 +333,14 @@ export class AppState {
     }
     const id = this.space.id;
     try {
-      for (const p of paths) await this.backend.addRepoToSpace(id, p);
+      const branch = this.newSp.branch.trim().replace(/^origin\//, "") || null;
+      for (const p of paths) await this.backend.addRepoToSpace(id, p, branch);
       await this.syncSpaces();
       await this.load(id);
       this.overlay = null;
       this.sheetMode = "new";
       this.newSp.repos = this.defaultRepos();
+      this.newSp.branch = "";
       this.toast(`Added ${paths.map((p) => p.split("/").pop()).join(", ")} to ${this.space.name}`);
     } catch (e) {
       this.fail(e);
@@ -1094,7 +1132,9 @@ export class AppState {
     return groupLinks(this.sd.links);
   }
   get chips(): Chips {
-    return topBarChips(groupLinks(this.sd.links));
+    // The ticket has its own chip.
+    const t = this.space.ticket;
+    return topBarChips(groupLinks(this.sd.links.filter((l) => l.source !== "ticket" && !(t && l.key === t))));
   }
   /** What the URL field would add, for the live preview. */
   get linkPreview(): Link | null {
@@ -1557,9 +1597,10 @@ export class AppState {
   private async loadSettings() {
     const b = this.backend;
     try {
-      const [tiers, prompts] = await Promise.all([b.agentTiers(), b.agentPrompts()]);
+      const [tiers, prompts, velaModel] = await Promise.all([b.agentTiers(), b.agentPrompts(), b.velaModel().catch(() => null)]);
       this.tierSettings = tiers;
       this.rolePrompts = prompts;
+      this.velaModel = velaModel;
       this.settingsLoaded = true;
     } catch (e) {
       this.fail(e);
@@ -1659,6 +1700,22 @@ export class AppState {
       this.fail(e);
     }
     await this.refresh();
+  }
+
+  /** The Vela model: the small model that labels the conversations (null until loaded). */
+  velaModel = $state<VelaModelSetting | null>(null);
+  /** Change the Vela model; what is left out keeps its latest value. */
+  async setVelaModel(patch: { enabled?: boolean; harness?: string | null; model?: string | null }) {
+    const cur = this.velaModel;
+    const enabled = patch.enabled ?? cur?.enabled ?? true;
+    const harness = patch.harness !== undefined ? patch.harness?.trim() || null : (cur?.harness ?? null);
+    const model = patch.model !== undefined ? patch.model?.trim() || null : (cur?.model ?? null);
+    if (cur) this.velaModel = { ...cur, enabled, harness, model };
+    try {
+      this.velaModel = await this.backend.setVelaModel(enabled, harness, model);
+    } catch (e) {
+      this.fail(e);
+    }
   }
 
   /** Change the model and/or the effort of a tier; what is left out keeps its latest value. */
@@ -1767,6 +1824,16 @@ export class AppState {
 
   /** The agent whose conversation is open, per space. */
   agentSel = $state<Record<string, string>>({});
+  /** The search of the Agents view: words found in the labels, request, summary, role, session. */
+  agentQuery = $state("");
+  /** The agents of the space the search keeps, at work first. */
+  get agentList(): Agent[] {
+    const list = this.sd.agents.filter((a) => matchesAgent(a, this.agentQuery));
+    return [
+      ...list.filter((x) => x.status === "working" || x.status === "waiting"),
+      ...list.filter((x) => x.status !== "working" && x.status !== "waiting"),
+    ];
+  }
   private noticeListeners = new Set<(n: AgentNotice) => void>();
   /** Every agent event as it happens (the chat appends them live). */
   onAgentNotice(fn: (n: AgentNotice) => void): () => void {
@@ -1949,11 +2016,16 @@ export class AppState {
     }
     if (token !== this.gateSeq) return;
     const hunks = Object.fromEntries(this.sd.hunks.filter((h) => h.state === "staged").map((h) => [h.id, h]));
+    const byRepo: Record<string, CommitGroup[]> = {};
+    for (const g of plan.groups) (byRepo[g.repo] ??= []).push(g);
+    const repo = this.commitRepoFor(Object.keys(byRepo));
+    const groups = byRepo[repo];
+    delete byRepo[repo];
     this.gate = {
       checks: [],
       done: false,
       reason: "",
-      composer: { ...plan, gi: 0, hi: 0, problems: {}, hunks },
+      composer: { ...plan, repo, groups, rest: byRepo, gi: 0, hi: 0, problems: {}, hunks },
     };
     this.overlay = "commit";
     void this.revalidate();
@@ -1972,6 +2044,42 @@ export class AppState {
   }
 
   // -- commit composer ------------------------------------------------------
+
+  /** The repo the composer opens on: the one of the file open in the code view, else the first
+   *  repo of the space with staged changes. */
+  private commitRepoFor(repos: string[]): string {
+    const here = this.view === "code" && this.cui.file ? this.cui.file.split("/")[0] : undefined;
+    if (here && repos.includes(here)) return here;
+    return this.space.repos.map((r) => r.name).find((r) => repos.includes(r)) ?? repos[0];
+  }
+
+  /** The repos with staged changes, in the order of the space. */
+  get ccRepos(): string[] {
+    const c = this.cc;
+    if (!c) return [];
+    const has = new Set([c.repo, ...Object.keys(c.rest)]);
+    return this.space.repos.map((r) => r.name).filter((r) => has.has(r));
+  }
+
+  /** Commit another repo: its proposed commits come in, the ones you edited wait on the side. */
+  ccRepo(repo: string) {
+    const c = this.cc;
+    if (!c || repo === c.repo || !c.rest[repo]) return;
+    const rest = { ...c.rest, [c.repo]: c.groups };
+    c.groups = rest[repo];
+    delete rest[repo];
+    c.rest = rest;
+    c.repo = repo;
+    c.gi = 0;
+    c.hi = 0;
+    void this.revalidate();
+  }
+  ccRepoMove(delta: 1 | -1) {
+    const list = this.ccRepos;
+    const c = this.cc;
+    if (!c || list.length < 2) return this.toast("Only this repo has staged changes");
+    this.ccRepo(list[(list.indexOf(c.repo) + delta + list.length) % list.length]);
+  }
 
   /** Validate the message of one commit (or all of them) against the repo rules. */
   async revalidate(groupId?: string) {
@@ -2067,12 +2175,12 @@ export class AppState {
     const c = this.cc;
     if (!c) return;
     const next = mergeAll($state.snapshot(c.groups));
-    if (next.length === c.groups.length) return this.toast("Already one commit per repo");
+    if (next.length === c.groups.length) return this.toast("Already one commit");
     c.groups = next;
     c.gi = 0;
     c.hi = 0;
     void this.revalidate();
-    this.toast(next.length === 1 ? "Merged into one commit" : `Merged into ${plural(next.length, "commit", "commits")}, one per repo`);
+    this.toast(next.length === 1 ? "Merged into one commit" : `Merged into ${plural(next.length, "commit", "commits")}`);
   }
   ccEdit() {
     const c = this.cc;
@@ -2194,7 +2302,11 @@ export class AppState {
       this.gateSeq++;
       this.cui.hi = null;
       const n = r.commits?.length ?? r.repos.length;
-      this.toast(`${r.pushed === false ? "Committed" : "Pushed"} ${plural(n, "commit", "commits")} on ${r.branch}`);
+      const left = Object.keys(c.rest);
+      this.toast(
+        `${r.pushed === false ? "Committed" : "Pushed"} ${plural(n, "commit", "commits")} in ${c.repo} on ${r.branch}` +
+          (left.length ? `. ${left.join(", ")} ${left.length > 1 ? "have" : "has"} staged changes too: C to commit` : ""),
+      );
       await this.refresh(s.id);
     } catch (e) {
       this.fail(e);
@@ -2252,14 +2364,21 @@ export class AppState {
     }
     try {
       const branch = this.newSp.branch.trim().replace(/^origin\//, "");
-      const s = await this.backend.createSpace(name, [...this.newSp.repos], { branch: branch || null, base: this.newSp.base.trim() || null });
+      const repos = [...this.newSp.repos];
+      const own = repos.map((r) => this.newSp.repoBranches[r]?.trim().replace(/^origin\//, "") || null);
+      const s = await this.backend.createSpace(name, repos, {
+        branch: branch || null,
+        base: this.newSp.base.trim() || null,
+        repoBranches: own.some(Boolean) ? own : undefined,
+        ticket: this.newSp.ticket.trim() || null,
+      });
       await this.syncSpaces();
       await this.load(s.id);
       this.ui[s.id].view = this.data[s.id].agents.length ? "agents" : "code";
       this.active = Math.max(0, this.spaces.findIndex((x) => x.id === s.id));
       this.overlay = null;
-      this.newSp = { name: "", repos: this.defaultRepos(), missingName: false, branch: "", base: "" };
-      this.toast(`Created ${plural(s.repos.length, "worktree", "worktrees")} on ${s.branch}`);
+      this.newSp = { name: "", repos: this.defaultRepos(), missingName: false, branch: "", base: "", repoBranches: {}, ticket: "" };
+      this.toast(`Created ${plural(s.repos.length, "worktree", "worktrees")} on ${spaceBranches(s).join(", ")}`);
     } catch (e) {
       this.fail(e);
     }
@@ -2416,10 +2535,7 @@ export class AppState {
         this.findSeq++;
         return;
       case "agent-move": {
-        const list = [
-          ...this.sd.agents.filter((x) => x.status === "working" || x.status === "waiting"),
-          ...this.sd.agents.filter((x) => x.status !== "working" && x.status !== "waiting"),
-        ];
+        const list = this.agentList;
         if (!list.length) return;
         const i = list.findIndex((x) => x.id === this.selectedAgent?.id);
         this.selectAgent(list[Math.max(0, Math.min(list.length - 1, i + a.delta))].id);
@@ -2507,6 +2623,8 @@ export class AppState {
         return this.ccEdit();
       case "cc-conventional":
         return this.ccConventional();
+      case "cc-repo":
+        return this.ccRepoMove(a.delta);
       case "toggle-window":
         return this.toggleWindow();
       case "open-composer":

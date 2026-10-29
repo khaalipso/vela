@@ -118,8 +118,9 @@
           {/if}
         {/key}
       </div>
-      {#if app.termOpen && !app.elsewhere}
-        <!-- xterm.js is loaded the first time a terminal opens. -->
+      {#if app.termOpen || app.terms.length}
+        <!-- xterm.js is loaded the first time a terminal opens. Hidden, the panel stays mounted:
+             its shells keep running and their screens are there when it comes back. -->
         {#await import("./components/TerminalPanel.svelte") then { default: TerminalPanel }}<TerminalPanel />{/await}
       {/if}
       <!-- In the Review view the list already says what is next: the island only brings news. -->

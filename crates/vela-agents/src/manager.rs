@@ -119,6 +119,8 @@ pub struct AgentManager {
     live: Mutex<HashMap<String, Live>>,
     /// Harnesses with their versions, detected at most once per [`DETECT_TTL`].
     detected: Mutex<Option<(Instant, Vec<HarnessInfo>)>>,
+    /// The Vela model labels conversations unless `[agents.vela] enabled = false` (tests: off).
+    labels_default: bool,
 }
 
 /// How long a harness detection (which runs `--version` of each) is reused.
@@ -165,13 +167,17 @@ pub fn space_context(space: &Space, read_only: bool, worktrees: &[(String, Strin
                 .find(|(n, _)| n == &r.name)
                 .map(|(_, p)| p.as_str())
                 .unwrap_or(&r.worktree);
-            format!("- `{}`: {}", r.name, wt)
+            format!("- `{}` (branch `{}`): {}", r.name, r.branch, wt)
         })
         .collect();
     format!(
-        "Space: \"{}\", branch `{}`.\n{}\nRepos:\n{}",
+        "Space: \"{}\"{}.\n{}\nRepos:\n{}",
         space.name,
-        space.branch,
+        space
+            .ticket
+            .as_deref()
+            .map(|t| format!(", ticket {t}"))
+            .unwrap_or_default(),
         if read_only {
             "You run in the person's own worktree, read only."
         } else {
@@ -228,6 +234,7 @@ impl AgentManager {
             config_dir: vela_core::paths::config_dir_from_env(),
             live: Mutex::new(HashMap::new()),
             detected: Mutex::new(None),
+            labels_default: true,
         })
     }
 
@@ -238,6 +245,7 @@ impl AgentManager {
             config_dir,
             live: Mutex::new(HashMap::new()),
             detected: Mutex::new(None),
+            labels_default: false,
         })
     }
 
@@ -476,6 +484,9 @@ impl AgentManager {
                     usage: AgentUsage::default(),
                     started: registry::now(),
                     finished: None,
+                    activity: "Starting".to_string(),
+                    last_event: Some(registry::now()),
+                    labels: crate::labels::known(space.ticket.as_deref(), &req.prompt),
                 },
                 bases: Vec::new(),
                 read_only,
@@ -537,7 +548,96 @@ impl AgentManager {
         })?;
         let agent = entry.agent.clone();
         self.watch(vela, &space.id, &id, handle, req.prompt.trim(), emit);
+        self.label(vela, space, &id, &req.prompt, &cfg, emit);
         Ok(agent)
+    }
+
+    /// Ask the Vela model for the labels of a new conversation, on a thread. Nothing happens when it
+    /// is off; a failure keeps the labels known without it.
+    fn label(
+        self: &Arc<Self>,
+        vela: &Vela,
+        space: &Space,
+        agent_id: &str,
+        request: &str,
+        cfg: &AgentsConfig,
+        emit: &Emit,
+    ) {
+        let installed = self.installed();
+        let Some((harness, model)) = crate::labels::pick(cfg, &installed, self.labels_default)
+        else {
+            return;
+        };
+        let Some(driver) = self.drivers.get(&harness) else {
+            return;
+        };
+        // An empty directory: no instructions of the repo to read, nothing to look at.
+        let cwd = vela_core::paths::space_root(&vela.home, &space.id).join(".vela-model");
+        if std::fs::create_dir_all(&cwd).is_err() {
+            return;
+        }
+        let spec = RunSpec {
+            harness,
+            model,
+            effort: None,
+            tier: Some(Tier::Low),
+            role: AgentRole::Planner,
+            prompt: crate::labels::prompt(request),
+            cwd,
+            session: None,
+            read_only: true,
+            extra_args: Vec::new(),
+        };
+        let known = crate::labels::known(space.ticket.as_deref(), request);
+        let (vela, space_id, agent_id, emit) = (
+            vela.clone(),
+            space.id.clone(),
+            agent_id.to_string(),
+            emit.clone(),
+        );
+        std::thread::spawn(move || {
+            let Ok(handle) = driver.start(spec) else {
+                return;
+            };
+            let end = Instant::now() + Duration::from_secs(120);
+            let mut text = String::new();
+            loop {
+                let left = end.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    handle.cancel();
+                    return;
+                }
+                match handle.next_timeout(left) {
+                    Some(AgentEvent::Message { text: t }) if !t.trim().is_empty() => text = t,
+                    Some(AgentEvent::Done { summary }) => {
+                        if text.is_empty() {
+                            text = summary;
+                        }
+                        break;
+                    }
+                    Some(AgentEvent::Failed { .. }) | Some(AgentEvent::Question { .. }) => {
+                        handle.cancel();
+                        return;
+                    }
+                    Some(_) => {}
+                    None => break,
+                }
+            }
+            let labels = crate::labels::join(&known, crate::labels::parse(&text));
+            let event = AgentEvent::Labels { labels };
+            let ts = registry::now();
+            if registry::update(&vela, &space_id, &agent_id, |e| {
+                registry::apply_event(e, &event, &ts)
+            })
+            .is_ok()
+            {
+                emit(Notice {
+                    space_id,
+                    agent_id,
+                    event,
+                });
+            }
+        });
     }
 
     /// Answer an agent: a resumed run of its session with the answer as the prompt. A yes to

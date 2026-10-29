@@ -78,9 +78,19 @@ enum SpaceCmd {
         /// Default: the `[spaces] branch` template (feat/{slug}).
         #[arg(long)]
         branch: Option<String>,
+        /// The ticket of the task (PAY-412): `{ticket}` in the template, `Refs:` in commits.
+        #[arg(long)]
+        ticket: Option<String>,
     },
-    /// Rename the branch of a space (and of its agents) in every repo.
-    RenameBranch { id: String, branch: String },
+    /// Rename the branch of a space (and of its agents): one repo with --repo, else every repo.
+    RenameBranch {
+        id: String,
+        branch: String,
+        #[arg(long)]
+        repo: Option<String>,
+    },
+    /// Set the ticket of a space (an empty one clears it).
+    Ticket { id: String, ticket: String },
     /// List spaces.
     Ls,
     /// Remove a space and its worktrees.
@@ -135,28 +145,40 @@ fn run(cli: Cli) -> Result<()> {
     let load = |id: &str| -> Result<Space> { Ok(store::load(&vela, id)?) };
     match cli.command {
         Command::Space { action } => match action {
-            SpaceCmd::RenameBranch { id, branch } => {
-                let s = vela_core::branches::rename(&vela, &id, &branch)?;
-                println!("{} is now on {}", s.id, s.branch);
+            SpaceCmd::RenameBranch { id, branch, repo } => {
+                let s = vela_core::branches::rename(&vela, &id, &branch, repo.as_deref())?;
+                for r in &s.repos {
+                    println!("{}  {}", r.name, r.branch);
+                }
+            }
+            SpaceCmd::Ticket { id, ticket } => {
+                let s = space::set_ticket(&vela, &id, &ticket)?;
+                println!("{}: {}", s.id, s.ticket.as_deref().unwrap_or("no ticket"));
             }
             SpaceCmd::New {
                 name,
                 repos,
                 base,
                 branch,
+                ticket,
             } => {
                 let s = space::create_with(
                     &vela,
                     &name,
                     &repos,
-                    &space::CreateOptions { base, branch },
+                    &space::CreateOptions {
+                        base,
+                        branch,
+                        ticket,
+                        ..Default::default()
+                    },
                 )?;
                 if cli.json {
                     print_json(&s)?;
                 } else {
-                    println!("created {} on {}", s.id, s.branch);
+                    println!("created {}", s.id);
                     for r in &s.repos {
-                        println!("  {}  {}", r.name, r.worktree);
+                        println!("  {}  {}  {}", r.name, r.branch, r.worktree);
                     }
                 }
             }
@@ -166,11 +188,14 @@ fn run(cli: Cli) -> Result<()> {
                     print_json(&all)?;
                 } else {
                     for s in &all {
-                        let repos: Vec<&str> = s.repos.iter().map(|r| r.name.as_str()).collect();
+                        let repos: Vec<String> = s
+                            .repos
+                            .iter()
+                            .map(|r| format!("{}@{}", r.name, r.branch))
+                            .collect();
                         println!(
-                            "{}  {}  {}{}",
+                            "{}  {}{}",
                             s.id,
-                            s.branch,
                             repos.join(","),
                             if s.archived { "  (archived)" } else { "" }
                         );

@@ -147,7 +147,7 @@ describe("links", () => {
 });
 
 describe("commit composer", () => {
-  it("accepting a file stages it; C plans one commit per repo with the ticket footer", async () => {
+  it("accepting a file stages it; C plans the commits of one repo with the ticket footer", async () => {
     // Y accepts the file to review (both proposals of webhook.ts), then the next one.
     press("y");
     await settle();
@@ -161,11 +161,11 @@ describe("commit composer", () => {
     await vi.waitFor(() =>
       expect($$(".checks li em").every((e) => e.textContent !== "running" && e.textContent !== "not run")).toBe(true),
     );
-    expect($$(".card").length).toBe(2);
-    expect($$(".card .prev").map((e) => e.textContent)).toEqual([
-      "fix(billing): update webhook and checkout",
-      "fix(lib): update stripe",
-    ]);
+    // One repo per commit: api first, web has its own tab.
+    expect(app.cc!.repo).toBe("api");
+    expect($$(".rtab").map((e) => e.querySelector("b")?.textContent)).toEqual(["api", "web"]);
+    expect($$(".card").length).toBe(1);
+    expect($$(".card .prev").map((e) => e.textContent)).toEqual(["fix(billing): update webhook and checkout"]);
     expect(($('[data-field="footers"]') as HTMLTextAreaElement).value).toBe("Refs: PAY-412, PAY-9");
     expect($$(".card.focus .hk .p").map((e) => e.textContent)).toEqual(["src/billing/webhook.ts", "src/billing/webhook.ts", "src/billing/checkout.ts"]);
     expect($$(".card.focus .hk .n").map((e) => e.textContent)).toEqual(["staged earlier"]);
@@ -184,13 +184,22 @@ describe("commit composer", () => {
     expect($(".card.focus .prev")?.textContent).toBe("feat(billing)!: update webhook and checkout");
     const reason = $('.card.focus [data-field="reason"]') as HTMLInputElement;
     await typeInto(reason, "handleWebhook now needs a signature");
-    // Commit 2 is in another repo.
+    // The commits of web are not in this composer.
     press("2", {});
     await settle();
-    expect(app.toastState?.text).toBe("Commit 2 is in web, this hunk is in api");
-    expect(app.cc!.groups.map((g) => g.hunks.length)).toEqual([3, 1]);
+    expect(app.toastState?.text).toBe("There is no commit 2");
+    expect(app.cc!.groups.map((g) => g.hunks.length)).toEqual([3]);
     press("m");
-    expect(app.toastState?.text).toBe("Already one commit per repo");
+    expect(app.toastState?.text).toBe("Already one commit");
+    // R goes to the next repo and back; what you edited stays.
+    press("r");
+    await settle();
+    expect(app.cc!.repo).toBe("web");
+    expect($$(".card .prev").map((e) => e.textContent)).toEqual(["fix(lib): update stripe"]);
+    press("r");
+    await settle();
+    expect(app.cc!.repo).toBe("api");
+    expect($(".card.focus .prev")?.textContent).toBe("feat(billing)!: update webhook and checkout");
   });
 
   it("a long subject shows the problem inline and blocks the commit", async () => {
@@ -207,7 +216,7 @@ describe("commit composer", () => {
     expect($(".card.focus .probs")).toBeNull();
   });
 
-  it("Ctrl Enter in the override field commits every commit in order", async () => {
+  it("Ctrl Enter in the override field commits the repo, the other one waits", async () => {
     // The stripe gate fails (an open reviewer note): a reason is needed.
     expect(($$(".sheet .btn.p")[0] as HTMLButtonElement).disabled).toBe(true);
     const ov = $("#ov-in") as HTMLInputElement;
@@ -215,14 +224,13 @@ describe("commit composer", () => {
     expect(($$(".sheet .btn.p")[0] as HTMLButtonElement).disabled).toBe(false);
     press("Enter", { ctrlKey: true }, ov);
     await settle();
-    await vi.waitFor(() => expect(backend.commits.length).toBe(2));
-    expect(backend.commits.map((c) => [c.repos, c.group])).toEqual([[["api"], "g1"], [["web"], "g2"]]);
+    await vi.waitFor(() => expect(backend.commits.length).toBe(1));
+    expect(backend.commits.map((c) => [c.repos, c.group])).toEqual([[["api"], "g1"]]);
     expect(backend.commits[0].message).toBe(
       "feat(billing)!: update webhook and checkout\n\nBREAKING CHANGE: handleWebhook now needs a signature\nRefs: PAY-412, PAY-9\nVela-Override: Hotfix, tests are flaky on CI",
     );
-    expect(backend.commits[1].message).toBe("fix(lib): update stripe\n\nRefs: PAY-412, PAY-9\nVela-Override: Hotfix, tests are flaky on CI");
-    expect(app.toastState?.text).toBe("Pushed 2 commits on feat/stripe-v2");
+    expect(app.toastState?.text).toBe("Pushed 1 commit in api on feat/stripe-v2. web has staged changes too: C to commit");
     expect(app.overlay).toBeNull();
-    expect(app.staged).toEqual([]);
+    expect(app.staged.map((f) => f.path)).toEqual(["lib/stripe.ts"]);
   });
 });

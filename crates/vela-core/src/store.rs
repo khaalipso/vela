@@ -21,7 +21,11 @@ pub fn exists(vela: &Vela, id: &str) -> bool {
 pub fn load(vela: &Vela, id: &str) -> Result<Space> {
     let path = paths::space_file(&vela.home, id);
     match fs::read_to_string(&path) {
-        Ok(text) => Ok(toml::from_str(&text)?),
+        Ok(text) => {
+            let mut s: Space = toml::from_str(&text)?;
+            s.normalize();
+            Ok(s)
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             Err(Error::SpaceNotFound(id.to_string()))
         }
@@ -41,7 +45,9 @@ pub fn list(vela: &Vela) -> Result<Vec<Space>> {
     for entry in entries {
         let path = entry?.path();
         if path.extension().and_then(|e| e.to_str()) == Some("toml") {
-            spaces.push(toml::from_str::<Space>(&fs::read_to_string(&path)?)?);
+            let mut s = toml::from_str::<Space>(&fs::read_to_string(&path)?)?;
+            s.normalize();
+            spaces.push(s);
         }
     }
     spaces.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));

@@ -98,7 +98,7 @@ branch = "{user}/{slug}"   # default "feat/{slug}"
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `spaces.branch` | `feat/{slug}` | Branch of a new space. `{slug}` (the space name as a slug), `{user}` (`$USER`), `{date}` (YYYY-MM-DD). Whatever it gives is cleaned into a name git takes. Edited in Settings, Branches. |
+| `spaces.branch` | `feat/{slug}` | Branch of a new space. `{slug}` (the space name as a slug), `{ticket}` (the ticket of the space; without one it goes away with the separator next to it), `{user}` (`$USER`), `{date}` (YYYY-MM-DD). Whatever it gives is cleaned into a name git takes. Edited in Settings, Branches. |
 
 ## `[agents]`
 
@@ -125,6 +125,11 @@ opencode = "cli"                         # acp or cli
 
 [agents.prompts]
 reviewer = "Review like a staff engineer: correctness first, then naming."
+
+[agents.vela]
+enabled = true                           # labels of the conversations
+harness = "claude"                       # default: the first installed harness
+model = "haiku"                          # default: the low tier model of that harness
 ```
 
 | Key | Default | Meaning |
@@ -135,7 +140,10 @@ reviewer = "Review like a staff engineer: correctness first, then naming."
 | `agents.transport.<harness>` | ACP when installed | `acp` or `cli`. See `docs/HARNESS.md`. |
 | `agents.roles.<role>.tier` | planner, reviewer, debugger, product, security `high`; developer `medium`; tester `low` | Tier of the role. |
 | `agents.roles.<role>.harness` | `claude` | Harness of the role. If it is not installed, the first installed one (claude, codex, opencode) is used. |
+| `agents.vela.enabled` | `true` | The Vela model, the small model Vela runs for its own tasks, gives each new conversation one or two labels (plus the ticket of the space) to find it again. `false` turns it off. |
+| `agents.vela.harness` | first installed | Harness the Vela model runs on, chosen apart from the tiers. |
+| `agents.vela.model` | low tier model | Model Vela runs (`haiku` for Claude Code when the low tier has none). |
 
-The "Agent tiers" sheet of the app (Ctrl T, "Agent tiers") edits `agents.tiers` and `agents.effort` in the global layer; clearing a field removes the key.
+The "Agent tiers" sheet of the app (Ctrl T, "Agent tiers") edits `agents.tiers`, `agents.effort` and `agents.vela` in the global layer; clearing a field removes the key.
 
 A request can override both: the composer's harness picker (`Shift Tab`) and tier (`Ctrl ↑` / `Ctrl ↓`). An agent asks for the layers of the first repo of its space.

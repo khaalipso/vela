@@ -9,7 +9,8 @@ export interface Space {
   name: string;
   /** Hex color, e.g. "#E8A14A". Drives the accent of the whole window. */
   color: string;
-  /** Branch shared by every repo of the space, e.g. "feat/refunds". */
+  /** The branch the space was created with, e.g. "feat/refunds": what a repo added later gets.
+   *  Each repo has its own branch (`SpaceRepo.branch`); read it with `repoBranch`. */
   branch: string;
   repos: SpaceRepo[];
   /** RFC 3339 timestamp. */
@@ -19,6 +20,8 @@ export interface Space {
   archived?: boolean;
   /** Links added by hand or pasted. Detected and repo links come from `Backend.links`. */
   links?: Link[];
+  /** The issue of the task ("PAY-412"): `Refs:` footer of the commits, label of the agents. */
+  ticket?: string | null;
 }
 
 export interface SpaceRepo {
@@ -30,6 +33,23 @@ export interface SpaceRepo {
   worktree: string;
   /** Ref the branch was created from, e.g. "main". */
   base: string;
+  /** The branch of this repo's worktree (absent in old mock data: the space branch). */
+  branch?: string;
+}
+
+/** The branch of a repo of the space. */
+export function repoBranch(space: Space, repo: string): string {
+  return space.repos.find((r) => r.name === repo)?.branch || space.branch;
+}
+
+/** The branches of the space, without duplicates, in the order of its repos. */
+export function spaceBranches(space: Space): string[] {
+  const out: string[] = [];
+  for (const r of space.repos) {
+    const b = r.branch || space.branch;
+    if (!out.includes(b)) out.push(b);
+  }
+  return out.length ? out : [space.branch];
 }
 
 /** Status letter of one side (index or worktree) of a file change. */
@@ -123,6 +143,12 @@ export interface Agent {
   usage?: AgentUsage;
   started?: string;
   finished?: string | null;
+  /** What it does right now while it works, e.g. "Bash: cargo test". */
+  activity?: string;
+  /** RFC 3339 time of its last event: how long it has been quiet. */
+  lastEvent?: string | null;
+  /** One or two words to find the conversation again (and the ticket). */
+  labels?: string[];
 }
 
 /** A harness Vela can drive, and whether it is installed. */
@@ -153,7 +179,8 @@ export type AgentEvent =
   | { type: "usage"; inputTokens: number; outputTokens: number; costUsd: number | null; model: string }
   | { type: "done"; summary: string }
   | { type: "failed"; error: string }
-  | { type: "prompt"; text: string };
+  | { type: "prompt"; text: string }
+  | { type: "labels"; labels: string[] };
 
 /** One line of an agent's log. */
 export interface AgentLogEntry {
@@ -215,7 +242,7 @@ export type Provider =
   | "url";
 
 /** Where a link came from. */
-export type LinkSource = "manual" | "branch" | "commit" | "paste" | "repo";
+export type LinkSource = "manual" | "branch" | "commit" | "paste" | "repo" | "ticket";
 
 export interface Link {
   /** Stable id: hash of the url, or of the key when there is no url. */

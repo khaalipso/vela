@@ -767,6 +767,7 @@ fn opts(branch: Option<&str>, base: Option<&str>) -> space::CreateOptions {
     space::CreateOptions {
         branch: branch.map(str::to_string),
         base: base.map(str::to_string),
+        ..Default::default()
     }
 }
 
@@ -861,7 +862,7 @@ fn renaming_the_branch_renames_the_agent_branches_too() {
     let a = repo(&e.root, "api", &[("a", "a\n")]);
     let s = space::create(&e.vela, "Billing", &[&a], None).unwrap();
     sh(&a, &["branch", &format!("{}--developer-1", s.branch)]);
-    let s2 = vela_core::branches::rename(&e.vela, &s.id, "louis/billing").unwrap();
+    let s2 = vela_core::branches::rename(&e.vela, &s.id, "louis/billing", None).unwrap();
     assert_eq!(s2.branch, "louis/billing");
     assert_eq!(
         sh(&wt(&s2, 0), &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
@@ -873,8 +874,70 @@ fn renaming_the_branch_renames_the_agent_branches_too() {
         "{branches}"
     );
     assert!(!branches.contains(&s.branch), "{branches}");
-    assert!(vela_core::branches::rename(&e.vela, &s.id, "bad name").is_err());
+    assert!(vela_core::branches::rename(&e.vela, &s.id, "bad name", None).is_err());
     let listed = vela_core::branches::list(&a).unwrap();
     assert!(listed.iter().any(|b| b.name == "louis/billing"));
     assert!(!listed.iter().any(|b| b.name.contains("--")));
+}
+
+#[test]
+fn each_repo_has_its_own_branch() {
+    let e = env();
+    let a = repo(&e.root, "api", &[("a", "a\n")]);
+    let w = repo(&e.root, "web", &[("w", "w\n")]);
+    let s = space::create_with(
+        &e.vela,
+        "Billing",
+        &[&a, &w],
+        &space::CreateOptions {
+            branch: Some("feat/billing".into()),
+            repo_branches: vec![None, Some("fix/web-billing".into())],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(s.repos[0].branch, "feat/billing");
+    assert_eq!(s.repos[1].branch, "fix/web-billing");
+    assert_eq!(
+        sh(&wt(&s, 1), &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "fix/web-billing"
+    );
+    // Renaming one repo leaves the other alone.
+    let s2 = vela_core::branches::rename(&e.vela, &s.id, "feat/web-v2", Some("web")).unwrap();
+    assert_eq!(s2.repos[0].branch, "feat/billing");
+    assert_eq!(s2.repos[1].branch, "feat/web-v2");
+    assert_eq!(s2.branch, "feat/billing");
+    assert_eq!(
+        sh(&wt(&s2, 1), &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "feat/web-v2"
+    );
+    assert!(vela_core::branches::rename(&e.vela, &s.id, "x", Some("nope")).is_err());
+    // A space saved before repos had their own branch reads the space branch.
+    let mut old = vela_core::store::load(&e.vela, &s.id).unwrap();
+    old.repos[0].branch.clear();
+    vela_core::store::save(&e.vela, &old).unwrap();
+    let back = vela_core::store::load(&e.vela, &s.id).unwrap();
+    assert_eq!(back.repos[0].branch, "feat/billing");
+}
+
+#[test]
+fn the_ticket_of_a_space() {
+    let e = env();
+    let a = repo(&e.root, "api", &[("a", "a\n")]);
+    let s = space::create_with(
+        &e.vela,
+        "Refunds",
+        &[&a],
+        &space::CreateOptions {
+            ticket: Some("pay-412".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(s.ticket.as_deref(), Some("PAY-412"));
+    let s = space::set_ticket(&e.vela, &s.id, "https://acme.atlassian.net/browse/PAY-9").unwrap();
+    assert_eq!(s.ticket.as_deref(), Some("PAY-9"));
+    assert!(space::set_ticket(&e.vela, &s.id, "two words").is_err());
+    let s = space::set_ticket(&e.vela, &s.id, "  ").unwrap();
+    assert_eq!(s.ticket, None);
 }

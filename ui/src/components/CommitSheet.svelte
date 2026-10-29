@@ -2,13 +2,15 @@
   import { tick } from "svelte";
   import { app } from "../lib/app.svelte";
   import { composeHeader } from "../lib/commitplan";
-  import { plural, uniq } from "../lib/format";
+  import { plural } from "../lib/format";
+  import { colorOfRepo } from "../lib/colors";
+  import { repoBranch } from "../lib/types";
   import Kbd from "./Kbd.svelte";
 
   const g = $derived(app.gate);
   const c = $derived(app.cc);
   const fails = $derived(!!g && g.done && app.gateRows.some((x) => !x.pass && x.detail !== "running" && x.detail !== "not run"));
-  const repos = $derived(c ? uniq(c.groups.map((x) => x.repo)) : []);
+  const repos = $derived(app.ccRepos);
 
   /** What a hunk id stands for: a path and its size, or a stand in when the hunk is not known. */
   function row(id: string): { path: string; add: number; del: number; note: string } {
@@ -62,9 +64,20 @@
       <div class="form">
         <div class="head">
           <span class="dot" style:--c={app.space.color}></span>
-          <span class="ttl">Commit {app.space.name}</span>
-          <span class="cost right">{plural(c.groups.length, "commit", "commits")} · {repos.join(", ")}</span>
+          <span class="ttl">Commit {c.repo}</span>
+          <span class="cost right mono">on {repoBranch(app.space, c.repo)}{app.space.ticket ? ` · ${app.space.ticket}` : ""}</span>
         </div>
+        {#if repos.length > 1}
+          <div class="repos" role="tablist" aria-label="Repo to commit">
+            {#each repos as r (r)}
+              {@const n = r === c.repo ? c.groups.length : (c.rest[r]?.length ?? 0)}
+              <button role="tab" class="rtab" aria-selected={r === c.repo} style:--rc={colorOfRepo(app.space, r)} onclick={() => app.ccRepo(r)}>
+                <span class="rdot"></span><b>{r}</b><span class="rn">{plural(n, "commit", "commits")}</span>
+              </button>
+            {/each}
+            <span class="cost rhint">One repo per commit. <Kbd k="R" /> next repo</span>
+          </div>
+        {/if}
         <ul class="checks">
           {#if !app.gateRows.length}
             <li><span class="dot" style:--c="var(--faint)"></span><span>No checks configured</span><em style:--c="var(--faint)">skipped</em></li>
@@ -139,7 +152,6 @@
                   bind:value={grp.subject}
                   oninput={() => app.revalidate(grp.id)}
                 />
-                <span class="repo mono">{grp.repo}</span>
               </div>
               <div class="prev mono" class:bad={probs.length > 0}>{composeHeader(grp, c.conventional)}</div>
               {#if grp.breaking && c.conventional}
@@ -209,7 +221,7 @@
         <div class="actions">
           <button class="btn" onclick={() => app.closeOverlay()}>Cancel</button>
           <button class="btn p" disabled={!app.gateOk || !app.composerOk} onclick={() => app.doCommit()}>
-            Commit {plural(c.groups.length, "commit", "commits")} <Kbd k="Ctrl Enter" />
+            Commit {plural(c.groups.length, "commit", "commits")} in {c.repo} <Kbd k="Ctrl Enter" />
           </button>
         </div>
       </div>
@@ -220,6 +232,7 @@
         <span><Kbd k="1" /> to <Kbd k="9" /> move it</span>
         <span><Kbd k="G" /> new commit</span>
         <span><Kbd k="M" /> merge</span>
+        {#if repos.length > 1}<span><Kbd k="R" /> repo</span>{/if}
         <span><Kbd k="Tab" /> fields</span>
         <span><Kbd k="Esc" /> field, then close</span>
       </div>
@@ -244,6 +257,41 @@
     font-weight: 600;
   }
   .right {
+    margin-left: auto;
+  }
+  .repos {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .rtab {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    color: var(--muted);
+    background: var(--panel);
+  }
+  .rtab[aria-selected="true"] {
+    color: var(--fg);
+    background: color-mix(in srgb, var(--rc) 18%, var(--panel));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rc) 45%, transparent);
+  }
+  .rdot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--rc);
+  }
+  .rn {
+    color: var(--faint);
+    font-size: 11.5px;
+  }
+  .rhint {
     margin-left: auto;
   }
   .checks {
@@ -357,11 +405,6 @@
   .bang[aria-pressed="true"] {
     background: var(--del-bg);
     color: var(--del);
-  }
-  .repo {
-    flex: none;
-    font-size: 11px;
-    color: var(--faint);
   }
   .prev {
     font-size: 12px;

@@ -874,7 +874,16 @@ pub fn ticket_footer(links: &[Link]) -> Option<String> {
 /// Propose commits for the staged hunks of the space.
 pub fn plan(space: &Space, links: &[Link]) -> Result<CommitPlan> {
     let staged = staged_files(space)?;
-    let footer = ticket_footer(links);
+    // The ticket of the space is the issue of the task: it alone goes in the footer.
+    let footer = match space
+        .ticket
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    {
+        Some(t) => Some(format!("Refs: {t}")),
+        None => ticket_footer(links),
+    };
     let mut groups: Vec<CommitGroup> = Vec::new();
     let mut conventional = None;
     let mut rules = None;

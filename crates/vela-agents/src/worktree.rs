@@ -1,5 +1,5 @@
 //! Agent worktrees: `VELA_HOME/worktrees/<space>/.agents/<agent>/<repo>`, on the branch
-//! `<space-branch>--<agent>`, created from the commit the user's worktree is on, then filled with
+//! `<repo-branch>--<agent>`, created from the commit the user's worktree is on, then filled with
 //! the user's files as they are (uncommitted edits and new files included): an agent works on
 //! what you see, so what it proposes merges with your edits.
 
@@ -20,8 +20,9 @@ pub struct Tree {
     pub base: String,
 }
 
-pub fn branch_name(space: &Space, agent: &str) -> String {
-    format!("{}--{agent}", space.branch)
+/// The branch of an agent in a repo: `<repo-branch>--<agent>`.
+pub fn branch_name(space: &Space, repo: &str, agent: &str) -> String {
+    format!("{}--{agent}", space.branch_of(repo))
 }
 
 /// `worktrees/<space>/.agents/<agent>`
@@ -33,9 +34,9 @@ pub fn agent_root(vela: &Vela, space: &Space, agent: &str) -> PathBuf {
 
 /// A worktree and branch per repo. Everything created so far is removed when one repo fails.
 pub fn create(vela: &Vela, space: &Space, agent: &str) -> Result<Vec<Tree>> {
-    let branch = branch_name(space, agent);
     let mut made: Vec<Tree> = Vec::new();
     for r in &space.repos {
+        let branch = branch_name(space, &r.name, agent);
         let user_wt = Path::new(&r.worktree);
         let step = || -> Result<Tree> {
             let base = git(user_wt, &["rev-parse", "HEAD"])?.trim().to_string();
@@ -55,7 +56,7 @@ pub fn create(vela: &Vela, space: &Space, agent: &str) -> Result<Vec<Tree>> {
         match step() {
             Ok(t) => made.push(t),
             Err(e) => {
-                remove_trees(space, &made, &branch);
+                remove_trees(space, &made, agent);
                 let _ = fs::remove_dir_all(agent_root(vela, space, agent));
                 return Err(e);
             }
@@ -73,7 +74,7 @@ pub fn sync_to(user_wt: &Path, agent_wt: &Path) -> Result<String> {
     Ok(tree)
 }
 
-fn remove_trees(space: &Space, trees: &[Tree], branch: &str) {
+fn remove_trees(space: &Space, trees: &[Tree], agent: &str) {
     for t in trees {
         let Some(r) = space.repos.iter().find(|r| r.name == t.repo) else {
             continue;
@@ -83,7 +84,10 @@ fn remove_trees(space: &Space, trees: &[Tree], branch: &str) {
             user_wt,
             &["worktree", "remove", "--force", &t.path.to_string_lossy()],
         );
-        let _ = git(user_wt, &["branch", "-D", branch]);
+        let _ = git(
+            user_wt,
+            &["branch", "-D", &branch_name(space, &r.name, agent)],
+        );
         let _ = git(user_wt, &["worktree", "prune"]);
     }
 }
@@ -98,7 +102,7 @@ pub fn remove(vela: &Vela, space: &Space, agent: &str, trees: &[(String, String)
             base: String::new(),
         })
         .collect();
-    remove_trees(space, &list, &branch_name(space, agent));
+    remove_trees(space, &list, agent);
     let root = agent_root(vela, space, agent);
     if root.exists() {
         fs::remove_dir_all(&root).map_err(Error::from)?;

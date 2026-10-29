@@ -188,6 +188,7 @@ export const SOURCE_LABEL: Record<LinkSource, string> = {
   branch: "from the branch",
   commit: "from a commit",
   repo: "from the repo",
+  ticket: "ticket of the task",
 };
 
 /** Links ordered by kind (the order of the sheet and of J and K); stable inside a kind. */

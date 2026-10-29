@@ -34,6 +34,9 @@ fn agent(id: &str, status: AgentStatus) -> Agent {
         usage: AgentUsage::default(),
         started: "2026-10-26T10:00:00Z".into(),
         finished: None,
+        activity: String::new(),
+        last_event: None,
+        labels: vec![],
     }
 }
 

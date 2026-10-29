@@ -21,6 +21,7 @@ pub mod comments;
 pub mod detect;
 pub mod driver;
 pub mod event;
+pub mod labels;
 pub mod manager;
 pub mod merge;
 pub mod notes;

@@ -25,7 +25,7 @@ describe("repo picker", () => {
 describe("new repo", () => {
   it("creates a repo, selects it and names the space after it", async () => {
     await app.init(new MockBackend());
-    app.newSp = { name: "", repos: [], missingName: false, branch: "", base: "" };
+    app.newSp = { name: "", repos: [], missingName: false, branch: "", base: "", repoBranches: {}, ticket: "" };
     await app.openNewRepo();
     expect(app.overlay).toBe("newspace");
     expect(app.newRepo.parent).toBe("~/Work");

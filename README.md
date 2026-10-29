@@ -17,13 +17,18 @@ changed, file by file, as a diff you can edit before you accept it.
 
 ## Features
 
-- **Spaces**: a task with its repos, a branch and a worktree per repo, plain `git worktree`
-  underneath. Uninstall Vela and nothing is lost.
+- **Spaces**: a task with its repos, a branch and a worktree per repo (each repo can have its
+  own branch), and optionally its ticket (`PAY-412`), plain `git worktree` underneath. Uninstall
+  Vela and nothing is lost.
 - **Agents** through their own CLIs, or ACP when the tool has an ACP server (`opencode acp`):
   developer, tester, debugger write in their own worktree; planner, reviewer, product and security
   only read. Questions land in the *Up next* island and as a desktop notification.
 - **Tiers, not models**: each request runs at `high`, `medium` or `low`; the *Agent tiers* sheet
-  sets the model and the reasoning effort of each tier, per tool.
+  sets the model and the reasoning effort of each tier, per tool, and the *Vela* model, the small
+  model Vela runs for its own tasks: it labels the conversations so the search of the Agents view finds them.
+- **Agents you can follow**: what each one does right now, how long it has been quiet, a
+  warning with "Stop and ask where it is" when it says nothing for 5 minutes, and its session id
+  one click away.
 - **Review** like a diff tool: the files to review on the left, the whole selected file on the
   right (unified or side by side, <kbd>V</kbd>), showing exactly what accepting writes. Agent changes
   are merged into your edits (three-way); conflicts show in place with "Keep yours" / "Take the
@@ -32,7 +37,7 @@ changed, file by file, as a diff you can edit before you accept it.
 - **Reviewer notes**: findings of the reviewer and security agents show on the file they target;
   <kbd>F</kbd> sends one back to its author for a fix, <kbd>Shift</kbd>+<kbd>Y</kbd> resolves it.
 - **Commit composer** (<kbd>C</kbd>): conventional commits inferred from the diff, split
-  suggestions, ticket footers, one commit per repo.
+  suggestions, the ticket in the footer, one repo at a time (<kbd>R</kbd> switches).
 - **Git view** (<kbd>4</kbd>): the commit graph of each repo, the branch against its base and its
   upstream, what is not committed yet, and the pull requests.
 - **Context card** (<kbd>L</kbd>): issue, PRs, docs, dashboards of the space; issue keys are

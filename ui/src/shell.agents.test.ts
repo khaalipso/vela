@@ -258,6 +258,73 @@ describe("agents view", () => {
     expect(app.selectedAgent?.id).toBe("developer-1");
   });
 
+  it("the session id shows in the header and a click copies it", async () => {
+    const write = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: write }, configurable: true });
+    const log = vi.spyOn(backend, "agentLog").mockResolvedValue([]);
+    press("2");
+    await settle();
+    withAgents([{ ...live, status: "done", session: "0f3c9a51-7d2e-4b8a-9c11-2b6f0e4d8a77" }]);
+    await settle();
+    const sid = $(".chat .sid")!;
+    expect(sid.textContent).toContain("0f3c9a51…");
+    expect(sid.getAttribute("title")).toContain("0f3c9a51-7d2e-4b8a-9c11-2b6f0e4d8a77");
+    sid.click();
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith("0f3c9a51-7d2e-4b8a-9c11-2b6f0e4d8a77"));
+    await vi.waitFor(() => expect(app.toastState?.text).toBe("Copied the session id"));
+    log.mockRestore();
+  });
+
+  it("a working agent shows what it does; quiet for long, it offers to stop and ask", async () => {
+    const log = vi.spyOn(backend, "agentLog").mockResolvedValue([{ ts: "t", event: { type: "prompt", text: "Run the tests" } }]);
+    const cancel = vi.spyOn(backend, "cancelAgent").mockResolvedValue();
+    press("2");
+    await settle();
+    const old = new Date(Date.now() - 31 * 60_000).toISOString();
+    withAgents([{ ...live, session: "s1", activity: "Bash: pnpm dev", lastEvent: old, started: old }]);
+    await vi.waitFor(() => expect($(".chat .typing .act")?.textContent).toBe("Bash: pnpm dev"));
+    expect($(".chat .typing")?.classList.contains("stuck")).toBe(true);
+    expect($(".chat .typing .quiet")?.textContent).toContain("31 min");
+    expect($(".chat .stuckbox")?.textContent).toContain("It may be stuck on Bash: pnpm dev");
+    expect($(".list .item .when")?.textContent).toBe("quiet 31 min");
+    [...$$(".chat .stuckbox button")].find((b) => b.textContent?.includes("Stop and ask"))!.click();
+    await settle();
+    expect(cancel).toHaveBeenCalledWith(app.space.id, "developer-1");
+    expect(app.queuedFor("developer-1")[0]).toContain("nothing happened for a while");
+    app.unqueue("developer-1", 0);
+    cancel.mockRestore();
+    log.mockRestore();
+  });
+
+  it("labels show in the list; the search and a label filter the conversations", async () => {
+    press("2");
+    await settle();
+    withAgents([
+      { ...live, labels: ["PAY-412", "refunds"], prompt: "Handle charge.refunded" },
+      { ...live, id: "tester-1", role: "tester", status: "done", labels: ["flaky test"], prompt: "Fix the checkout test", session: "abc-123" },
+    ]);
+    await settle();
+    expect($$(".list .item").length).toBe(2);
+    expect($$(".list .item")[0].querySelectorAll(".lt").length).toBe(2);
+    expect($$(".labels .lb").map((b) => b.textContent)).toEqual(["flaky test", "PAY-412", "refunds"]);
+    $$(".labels .lb").find((b) => b.textContent === "flaky test")!.click();
+    await settle();
+    expect($$(".list .item").map((e) => e.dataset.agent)).toEqual(["tester-1"]);
+    const find = $(".find input") as HTMLInputElement;
+    find.value = "abc-123";
+    find.dispatchEvent(new Event("input", { bubbles: true }));
+    await settle();
+    expect($$(".list .item").map((e) => e.dataset.agent)).toEqual(["tester-1"]);
+    find.value = "nothing like it";
+    find.dispatchEvent(new Event("input", { bubbles: true }));
+    await settle();
+    expect($(".list .none")?.textContent).toContain("No conversation matches");
+    find.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await settle();
+    expect(app.agentQuery).toBe("");
+    expect($$(".list .item").length).toBe(2);
+  });
+
   it("shows the total once there are agents with usage", async () => {
     press("2");
     await settle();

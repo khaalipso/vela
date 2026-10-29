@@ -5,7 +5,7 @@
 //!
 //! ```toml
 //! [spaces]
-//! branch = "feat/{slug}"   # {slug} {name} {user} {date}
+//! branch = "feat/{slug}"   # {slug} {name} {user} {date} {ticket}
 //! ```
 
 use std::path::Path;
@@ -48,6 +48,12 @@ fn user_slug() -> String {
 
 /// The branch name for a space called `name`, from `template`.
 pub fn render(template: &str, name: &str) -> String {
+    render_with(template, name, None)
+}
+
+/// [`render`] with the ticket of the task for `{ticket}`. Without a ticket, `{ticket}` goes
+/// away with the separator next to it (`{ticket}-{slug}` gives `{slug}`).
+pub fn render_with(template: &str, name: &str, ticket: Option<&str>) -> String {
     let template = if template.trim().is_empty() {
         DEFAULT_TEMPLATE
     } else {
@@ -55,6 +61,18 @@ pub fn render(template: &str, name: &str) -> String {
     };
     let slug = crate::space::slugify(name);
     let date = crate::space::rfc3339(SystemTime::now())[..10].to_string();
+    let template = match ticket.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(t) => template.replace("{ticket}", t),
+        None => {
+            let mut t = template.to_string();
+            for sep in ["-", "_", "/", "."] {
+                t = t
+                    .replace(&format!("{{ticket}}{sep}"), "")
+                    .replace(&format!("{sep}{{ticket}}"), "");
+            }
+            t.replace("{ticket}", "")
+        }
+    };
     let out = template
         .replace("{slug}", &slug)
         .replace("{name}", &slug)
@@ -194,20 +212,27 @@ pub fn checked_out_in(repo: &Path, name: &str) -> Option<String> {
     None
 }
 
-/// Rename the branch of a space in every repo, with the branches of its agents
-/// (`<branch>--<agent>`). The worktrees stay where they are; an upstream stays set.
-pub fn rename(vela: &Vela, id: &str, new: &str) -> Result<crate::model::Space> {
+/// Rename the branch of one repo of a space (`repo`), or of every repo (None), with the
+/// branches of its agents (`<branch>--<agent>`). The worktrees stay where they are; an
+/// upstream stays set. Renaming every repo also changes the default branch of the space.
+pub fn rename(vela: &Vela, id: &str, new: &str, repo: Option<&str>) -> Result<crate::model::Space> {
     let new = new.trim();
     if !is_valid(new) {
         return Err(Error::Invalid(format!("{new} is not a valid branch name")));
     }
     let mut space = store::load(vela, id)?;
-    let old = space.branch.clone();
-    if old == new {
-        return Ok(space);
+    if let Some(name) = repo
+        && space.repo(name).is_none()
+    {
+        return Err(Error::RepoNotFound(name.to_string()));
     }
+    let targets: Vec<usize> = (0..space.repos.len())
+        .filter(|&i| repo.is_none_or(|n| space.repos[i].name == n))
+        .filter(|&i| space.repos[i].branch != new)
+        .collect();
     // Check every repo first, so a clash leaves nothing half renamed.
-    for r in &space.repos {
+    for &i in &targets {
+        let r = &space.repos[i];
         let src = Path::new(&r.source);
         if git(
             src,
@@ -226,7 +251,9 @@ pub fn rename(vela: &Vela, id: &str, new: &str) -> Result<crate::model::Space> {
             )));
         }
     }
-    for r in &space.repos {
+    for &i in &targets {
+        let r = &space.repos[i];
+        let old = r.branch.clone();
         let src = Path::new(&r.source);
         git(src, &["branch", "-m", &old, new])?;
         let pattern = format!("refs/heads/{old}--*");
@@ -239,8 +266,11 @@ pub fn rename(vela: &Vela, id: &str, new: &str) -> Result<crate::model::Space> {
                 let _ = git(src, &["branch", "-m", b, &format!("{new}{suffix}")]);
             }
         }
+        space.repos[i].branch = new.to_string();
     }
-    space.branch = new.to_string();
+    if repo.is_none() {
+        space.branch = new.to_string();
+    }
     store::save(vela, &space)?;
     Ok(space)
 }
@@ -283,5 +313,22 @@ mod tests {
         let d = render("{date}-{slug}", "Fix");
         assert!(d.ends_with("-fix") && d.len() == 14, "{d}");
         assert!(is_valid(&render("weird name: {slug}?", "a")));
+    }
+
+    #[test]
+    fn ticket_in_templates() {
+        assert_eq!(
+            render_with("feat/{ticket}-{slug}", "Refunds", Some("PAY-412")),
+            "feat/PAY-412-refunds"
+        );
+        assert_eq!(
+            render_with("feat/{ticket}-{slug}", "Refunds", None),
+            "feat/refunds"
+        );
+        assert_eq!(render_with("{ticket}/{slug}", "Refunds", None), "refunds");
+        assert_eq!(
+            render_with("feat/{slug}_{ticket}", "Refunds", Some(" ")),
+            "feat/refunds"
+        );
     }
 }

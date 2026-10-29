@@ -55,6 +55,10 @@ pub enum AgentEvent {
     Prompt {
         text: String,
     },
+    /// Words to find the conversation again, from the Vela model. Never in the log.
+    Labels {
+        labels: Vec<String>,
+    },
 }
 
 impl AgentEvent {

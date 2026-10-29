@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app } from "../lib/app.svelte";
   import { stackColor } from "../lib/format";
+  import { spaceBranches } from "../lib/types";
   import type { StackItem } from "../lib/types";
 
   const label = (s: StackItem) => (s.version ? `${s.name} ${s.version}` : s.name);
@@ -8,7 +9,7 @@
 </script>
 
 <div class="pop" role="dialog" aria-label="Stack">
-  <div class="psec">Stack for {app.space.branch}</div>
+  <div class="psec">Stack for {spaceBranches(app.space).join(", ")}</div>
   {#each app.sd.stack as s (s.name + s.version + s.source)}
     <div class="r">
       <span class="dot" style:--c={stackColor(s.state)}></span>

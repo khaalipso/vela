@@ -65,6 +65,56 @@ export function isRunning(a: Agent): boolean {
   return a.status === "working";
 }
 
+// -- activity -------------------------------------------------------------------
+
+/** An agent at work with no event for this long is shown as maybe stuck. */
+export const QUIET_WARN_MS = 5 * 60_000;
+
+/** How long a working agent has been silent (ms), from its last event; 0 when it does not work. */
+export function quietFor(a: Agent, now: number, lastLogTs?: string | null): number {
+  if (!isRunning(a)) return 0;
+  const times = [a.lastEvent, lastLogTs, a.started].map((t) => (t ? Date.parse(t) : NaN)).filter((t) => !Number.isNaN(t));
+  if (!times.length) return 0;
+  return Math.max(0, now - Math.max(...times));
+}
+
+/** "45s", "12 min", "1 h 05". */
+export function shortDuration(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min`;
+  return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")}`;
+}
+
+/** What a working agent does now: its activity, else its last tool call in the log. */
+export function currentActivity(a: Agent, log?: { event: AgentEvent }[] | null): string {
+  if (a.activity?.trim()) return a.activity.trim();
+  for (let i = (log?.length ?? 0) - 1; i >= 0; i--) {
+    const e = log![i].event;
+    if (e.type === "toolCall") return e.summary ? `${e.name}: ${e.summary}` : e.name;
+    if (e.type === "message" || e.type === "prompt") break;
+  }
+  return "";
+}
+
+/** What you send to an agent that went quiet: it reads it when it resumes. */
+export const NUDGE =
+  "You were stopped because nothing happened for a while. Say in two lines where you are and what blocked you " +
+  "(a command that does not end, a prompt waiting for input, a server you started), then continue without it.";
+
+// -- search ---------------------------------------------------------------------
+
+/** Every word of `query` is found in the agent: labels, request, summary, role, harness, model, id, session. */
+export function matchesAgent(a: Agent, query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = [a.id, a.role, a.tool, a.model ?? "", a.tier ?? "", a.prompt ?? "", a.summary, a.session ?? "", ...(a.labels ?? [])]
+    .join("\n")
+    .toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
 // -- chat ---------------------------------------------------------------------
 
 /** One block of the conversation with an agent. */

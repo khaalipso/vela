@@ -8,6 +8,7 @@
   import { colorOfRepo } from "../lib/colors";
   import { plural } from "../lib/format";
   import { shapes } from "../lib/graph";
+  import { spaceBranches } from "../lib/types";
   import Kbd from "./Kbd.svelte";
   import PrsView from "./PrsView.svelte";
 
@@ -39,7 +40,7 @@
 <div class="git">
   <header class="top">
     <h3>Git</h3>
-    <span class="sub">{app.space.branch}</span>
+    <span class="sub">{spaceBranches(app.space).join(", ")}</span>
     <span class="grow"></span>
     <button class="btn ghost" onclick={() => void app.loadHistory()} title="Read the history again">Refresh</button>
     <button class="btn p" onclick={() => app.dispatch({ type: "open-commit" })} disabled={!app.staged.length} title={app.staged.length ? "Commit what is staged" : "Nothing staged"}>Commit <Kbd k="C" /></button>

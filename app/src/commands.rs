@@ -48,6 +48,18 @@ pub struct CommitResult {
     pub commits: Vec<GroupCommit>,
 }
 
+/// The branches of these repos, without duplicates, for a message ("feat/x, fix/y").
+fn branches_of(space: &Space, repos: &[String]) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for r in repos {
+        let b = space.branch_of(r);
+        if !out.contains(&b) {
+            out.push(b);
+        }
+    }
+    out.join(", ")
+}
+
 fn load(vela: &Vela, id: &str) -> AppResult<Space> {
     Ok(store::load(vela, id)?)
 }
@@ -73,6 +85,20 @@ pub fn create_space(
     branch: Option<&str>,
     base: Option<&str>,
 ) -> AppResult<Space> {
+    create_space_with(vela, name, repos, branch, base, &[], None)
+}
+
+/// [`create_space`] with a branch per repo (`repo_branches`, in the order of `repos`; None
+/// or empty: `branch`) and the ticket of the task.
+pub fn create_space_with(
+    vela: &Vela,
+    name: &str,
+    repos: &[String],
+    branch: Option<&str>,
+    base: Option<&str>,
+    repo_branches: &[Option<String>],
+    ticket: Option<&str>,
+) -> AppResult<Space> {
     Ok(space::create_with(
         vela,
         name,
@@ -80,14 +106,31 @@ pub fn create_space(
         &space::CreateOptions {
             branch: branch.map(str::to_string),
             base: base.map(str::to_string),
+            repo_branches: repo_branches.to_vec(),
+            ticket: ticket.map(str::to_string),
         },
     )?)
 }
 
-/// Add a repo (by path) to an existing space: one more worktree on the space branch.
+/// Add a repo (by path) to an existing space: one more worktree, on `branch` (default: the
+/// branch the space was created with).
 pub fn add_repo_to_space(vela: &Vela, id: &str, path: &str) -> AppResult<Space> {
+    add_repo_to_space_on(vela, id, path, None)
+}
+
+pub fn add_repo_to_space_on(
+    vela: &Vela,
+    id: &str,
+    path: &str,
+    branch: Option<&str>,
+) -> AppResult<Space> {
     let dir = expand_home(path.trim());
-    Ok(space::add_repo(vela, id, &dir)?)
+    Ok(space::add_repo_on(vela, id, &dir, branch)?)
+}
+
+/// Set the ticket of a space ("PAY-412" or its URL); empty clears it.
+pub fn set_ticket(vela: &Vela, id: &str, ticket: &str) -> AppResult<Space> {
+    Ok(space::set_ticket(vela, id, ticket)?)
 }
 
 /// Remove a repo from a space (its worktree must be clean).
@@ -539,9 +582,10 @@ pub fn commit(
     }
     let skip = checks::commit_skip(vela, &space);
     let done = core_commit::commit_with(&space, message, Some(&skip))?;
+    let repos: Vec<String> = done.into_iter().map(|(repo, _)| repo).collect();
     Ok(CommitResult {
-        repos: done.into_iter().map(|(repo, _)| repo).collect(),
-        branch: space.branch,
+        branch: branches_of(&space, &repos),
+        repos,
         commits: Vec::new(),
     })
 }
@@ -584,8 +628,8 @@ pub fn commit_groups(
         }
     }
     Ok(CommitResult {
+        branch: branches_of(&space, &repos),
         repos,
-        branch: space.branch,
         commits,
     })
 }
@@ -1464,6 +1508,63 @@ pub fn set_agent_tier(
     Ok(())
 }
 
+/// What the Agent tiers sheet shows of the Vela model, the small model that labels conversations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VelaModelSetting {
+    pub enabled: bool,
+    /// As configured; None: the first installed harness.
+    pub harness: Option<String>,
+    /// As configured; None: the `low` tier model of the harness.
+    pub model: Option<String>,
+    /// What runs with these settings, None when it is off or nothing is installed.
+    pub effective_harness: Option<String>,
+    pub effective_model: Option<String>,
+}
+
+pub fn vela_model(agents: &AgentManager) -> VelaModelSetting {
+    let cfg = config::load_global(agents.config_dir()).config.agents;
+    let picked = vela_agents::labels::pick(&cfg, &agents.installed(), true);
+    VelaModelSetting {
+        enabled: cfg.vela.enabled.unwrap_or(true),
+        harness: cfg.vela.harness.clone(),
+        model: cfg.vela.model.clone(),
+        effective_harness: picked.as_ref().map(|p| p.0.clone()),
+        effective_model: picked.and_then(|p| p.1),
+    }
+}
+
+/// Turn the Vela model on or off and choose its harness and model (empty: the default).
+pub fn set_vela_model(
+    agents: &AgentManager,
+    enabled: bool,
+    harness: Option<&str>,
+    model: Option<&str>,
+) -> AppResult<VelaModelSetting> {
+    let harness = harness.map(str::trim).filter(|h| !h.is_empty());
+    if let Some(h) = harness
+        && !vela_agents::tiers::HARNESSES.contains(&h)
+    {
+        return Err(AppError::invalid(format!("unknown harness: {h}")));
+    }
+    let dir = agents
+        .config_dir()
+        .ok_or_else(|| AppError::invalid("no config directory (set XDG_CONFIG_HOME or HOME)"))?;
+    let s = |v: Option<&str>| {
+        v.map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(|v| toml::Value::String(v.to_string()))
+    };
+    config::set_global_value(
+        dir,
+        &["agents", "vela", "enabled"],
+        (!enabled).then_some(toml::Value::Boolean(false)),
+    )?;
+    config::set_global_value(dir, &["agents", "vela", "harness"], s(harness))?;
+    config::set_global_value(dir, &["agents", "vela", "model"], s(model))?;
+    Ok(vela_model(agents))
+}
+
 // ---------------------------------------------------------------------------
 // Reviewer notes
 // ---------------------------------------------------------------------------
@@ -1723,20 +1824,29 @@ pub fn set_branch_template(dir: Option<&Path>, template: &str) -> AppResult<Bran
     Ok(branch_naming(Some(dir), "my task"))
 }
 
-/// Rename the branch of a space (and of its agents) in every repo.
-pub fn rename_branch(vela: &Vela, id: &str, branch: &str) -> AppResult<Space> {
+/// Rename the branch (and those of its agents) of one repo, or of every repo (None).
+pub fn rename_branch(vela: &Vela, id: &str, branch: &str, repo: Option<&str>) -> AppResult<Space> {
     let _inv = Invalidate(id);
-    Ok(vela_core::branches::rename(vela, id, branch)?)
+    Ok(vela_core::branches::rename(vela, id, branch, repo)?)
 }
 
-/// Push the branch of the space in every repo (`git push -u origin <branch>`). Returns the
-/// repos pushed; the first failure stops with its message.
-pub fn push_branch(vela: &Vela, id: &str) -> AppResult<Vec<String>> {
+/// Push the branch of one repo, or of every repo (None): `git push -u origin <branch>`.
+/// Returns the repos pushed; the first failure stops with its message.
+pub fn push_branch(vela: &Vela, id: &str, repo: Option<&str>) -> AppResult<Vec<String>> {
     let space = load(vela, id)?;
+    if let Some(name) = repo
+        && space.repo(name).is_none()
+    {
+        return Err(AppError::invalid(format!("no repo {name} in this space")));
+    }
     let mut done = Vec::new();
-    for r in &space.repos {
+    for r in space
+        .repos
+        .iter()
+        .filter(|r| repo.is_none_or(|n| r.name == n))
+    {
         let wt = Path::new(&r.worktree);
-        git(wt, &["push", "-u", "origin", &space.branch])
+        git(wt, &["push", "-u", "origin", &r.branch])
             .map_err(|e| AppError::new("git", format!("{}: push failed: {e}", r.name)))?;
         done.push(r.name.clone());
     }

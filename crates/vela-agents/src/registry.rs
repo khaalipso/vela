@@ -179,16 +179,27 @@ pub fn recover(vela: &Vela, space: &str, is_live: &dyn Fn(&str) -> bool) -> Resu
 /// Fold one event into the entry.
 pub fn apply_event(entry: &mut Entry, ev: &AgentEvent, ts: &str) {
     let a = &mut entry.agent;
+    if !matches!(ev, AgentEvent::Labels { .. }) {
+        a.last_event = Some(ts.to_string());
+    }
     match ev {
         AgentEvent::SessionStarted { session } => a.session = Some(session.clone()),
         AgentEvent::Message { text } => {
             a.last_message = text.clone();
             a.summary = one_line(text, 160);
+            a.activity = "Writing".to_string();
         }
         AgentEvent::Plan { steps } => a.plan = steps.clone(),
-        AgentEvent::ToolCall { .. }
-        | AgentEvent::FileChanged { .. }
-        | AgentEvent::Prompt { .. } => {}
+        AgentEvent::ToolCall { name, summary } => {
+            a.activity = if summary.trim().is_empty() {
+                name.clone()
+            } else {
+                one_line(&format!("{name}: {summary}"), 120)
+            };
+        }
+        AgentEvent::FileChanged { path } => a.activity = one_line(&format!("Edited {path}"), 120),
+        AgentEvent::Prompt { .. } => {}
+        AgentEvent::Labels { labels } => a.labels = labels.clone(),
         AgentEvent::Question {
             text,
             options,
@@ -198,6 +209,7 @@ pub fn apply_event(entry: &mut Entry, ev: &AgentEvent, ts: &str) {
             a.options = options.clone();
             // Waiting from now: a live run (ACP) stays paused until the answer comes.
             a.status = AgentStatus::Waiting;
+            a.activity.clear();
             entry.pending_tools = tools.clone();
             if a.summary.is_empty() {
                 a.summary = one_line(text, 160);
@@ -221,6 +233,7 @@ pub fn apply_event(entry: &mut Entry, ev: &AgentEvent, ts: &str) {
                 a.status = AgentStatus::Waiting;
             } else {
                 a.status = AgentStatus::Done;
+                a.activity.clear();
                 a.finished = Some(ts.to_string());
                 if !summary.trim().is_empty() {
                     a.summary = one_line(summary, 160);
@@ -232,6 +245,7 @@ pub fn apply_event(entry: &mut Entry, ev: &AgentEvent, ts: &str) {
         }
         AgentEvent::Failed { error } => {
             a.status = AgentStatus::Failed;
+            a.activity.clear();
             a.finished = Some(ts.to_string());
             a.question = None;
             a.options.clear();
@@ -251,6 +265,8 @@ pub fn begin_run(entry: &mut Entry) {
     entry.agent.options.clear();
     entry.pending_tools.clear();
     entry.agent.finished = None;
+    entry.agent.activity = "Starting".to_string();
+    entry.agent.last_event = Some(now());
 }
 
 /// Append one event to the log of an agent.

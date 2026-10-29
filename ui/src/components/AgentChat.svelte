@@ -5,12 +5,13 @@
   import DOMPurify from "dompurify";
   import { marked } from "marked";
   import { tick } from "svelte";
-  import { chatItems, isRunning, usageLine, type ChatItem } from "../lib/agents";
+  import { chatItems, currentActivity, isRunning, NUDGE, QUIET_WARN_MS, quietFor, shortDuration, usageLine, type ChatItem } from "../lib/agents";
   import { app } from "../lib/app.svelte";
   import { agentStatusColor, ROLE_COLORS, roleLabel, toolLabel } from "../lib/format";
   import { rowId } from "../lib/review";
   import type { Agent, AgentLogEntry } from "../lib/types";
   import Kbd from "./Kbd.svelte";
+  import { writeClipboard } from "../lib/ops.svelte";
 
   let { agent }: { agent: Agent } = $props();
 
@@ -32,6 +33,25 @@
   const canSend = $derived(running || waiting || !!agent.session);
   const queued = $derived(app.queuedFor(agent.id));
   const use = $derived(usageLine(agent.usage));
+  const activity = $derived(currentActivity(agent, log));
+  const quiet = $derived(quietFor(agent, now, log?.[log.length - 1]?.ts));
+  const stuck = $derived(quiet >= QUIET_WARN_MS);
+  const nudged = $derived(queued.includes(NUDGE));
+
+  async function copySession() {
+    if (!agent.session) return;
+    app.toast((await writeClipboard(agent.session)) ? "Copied the session id" : "Could not reach the clipboard");
+  }
+
+  /** Stop the run and send the agent a message asking where it is; it resumes in the same session. */
+  async function nudge() {
+    if (!agent.session) {
+      await app.cancelAgent(agent.id);
+      return;
+    }
+    if (!nudged) app.queueFor(agent.id, NUDGE);
+    await app.cancelAgent(agent.id);
+  }
   /** The files this agent proposes changes in, still waiting for you in the Review. */
   const changed = $derived.by(() => {
     const out: { repo: string; path: string; add: number; del: number }[] = [];
@@ -162,7 +182,13 @@
       <span class="tag">{toolLabel(agent.tool)}</span>
       {#if agent.model}<span class="tag">{agent.model}</span>{/if}
       {#if agent.tier}<span class="tag">{agent.tier}</span>{/if}
+      {#each agent.labels ?? [] as l (l)}<button class="tag label" title="Show the conversations labelled {l}" onclick={() => (app.agentQuery = l)}>{l}</button>{/each}
     </span>
+    {#if agent.session}
+      <button class="sid mono" title={`Session ${agent.session} of ${toolLabel(agent.tool)}: click to copy`} aria-label="Copy the session id {agent.session}" onclick={copySession}>
+        <span class="sk">session</span>{agent.session.length > 13 ? `${agent.session.slice(0, 8)}…` : agent.session}
+      </button>
+    {/if}
     <span class="stt" style:--c={agentStatusColor(agent.status)}>{agent.status}</span>
     <span class="meta">{took()}{use ? ` · ${use}` : ""}</span>
     <span class="acts">
@@ -250,7 +276,28 @@
       </div>
     {/if}
     {#if running}
-      <div class="typing"><span></span><span></span><span></span> working</div>
+      <div class="typing" class:stuck title={agent.lastEvent ? `Last event ${new Date(agent.lastEvent).toLocaleTimeString()}` : undefined}>
+        <span></span><span></span><span></span>
+        <b class="act">{activity || "Working"}</b>
+        {#if quiet >= 30_000}<i class="quiet">· quiet for {shortDuration(quiet)}</i>{/if}
+      </div>
+      {#if stuck}
+        <div class="stuckbox" role="status">
+          <p>
+            <b>No news for {shortDuration(quiet)}.</b>
+            {activity ? `It may be stuck on ${activity}.` : "It may be stuck, or thinking for a long time."}
+            A command that never ends (a dev server, a watch mode, a prompt waiting for input) keeps a run open.
+          </p>
+          <div class="opts">
+            {#if agent.session}
+              <button class="btn p" disabled={nudged} onclick={nudge} title="Cancel this run, then ask it in the same session where it is and to go on">
+                {nudged ? "Stopping…" : "Stop and ask where it is"}
+              </button>
+            {/if}
+            <button class="btn" onclick={() => app.cancelAgent(agent.id)}>Cancel</button>
+          </div>
+        </div>
+      {/if}
     {/if}
     {#each queued as m, i (i)}
       <div class="you queued">
@@ -587,6 +634,76 @@
     gap: 4px;
     font-size: 12px;
     color: var(--faint);
+    min-width: 0;
+  }
+  .typing .act {
+    font-weight: 500;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .typing .quiet {
+    flex: none;
+    font-style: normal;
+  }
+  .typing.stuck .quiet {
+    color: var(--warn);
+    font-weight: 600;
+  }
+  .typing.stuck span {
+    background: var(--warn);
+  }
+  .stuckbox {
+    border-radius: 10px;
+    padding: 10px 12px;
+    background: color-mix(in srgb, var(--warn) 10%, var(--raised));
+    border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+    font-size: 12.5px;
+  }
+  .stuckbox p {
+    margin: 0 0 8px;
+    color: var(--muted);
+    line-height: 1.45;
+  }
+  .stuckbox b {
+    color: var(--fg);
+  }
+  .sid {
+    all: unset;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 6px;
+    color: var(--muted);
+    border: 1px solid var(--line);
+  }
+  .sid:hover {
+    background: var(--hover);
+    color: var(--fg);
+  }
+  .sid:focus-visible {
+    outline: 2px solid var(--space);
+  }
+  .sk {
+    font-family: var(--ui);
+    color: var(--faint);
+  }
+  .label {
+    all: unset;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 9999px;
+    color: var(--rc);
+    background: color-mix(in srgb, var(--rc) 14%, transparent);
+  }
+  .label:hover {
+    background: color-mix(in srgb, var(--rc) 24%, transparent);
   }
   .typing span {
     width: 5px;

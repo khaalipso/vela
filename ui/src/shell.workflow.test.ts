@@ -5,6 +5,7 @@ import { mount, tick, unmount } from "svelte";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import App from "./App.svelte";
 import { app } from "./lib/app.svelte";
+import { ops } from "./lib/ops.svelte";
 import { MockBackend } from "./lib/backend";
 import { colorOfRepo } from "./lib/colors";
 
@@ -100,6 +101,25 @@ describe("terminal", () => {
     press("`", { ctrlKey: true, shiftKey: true });
     await vi.waitFor(() => expect(app.spaceTerms.length).toBe(2));
     expect($$("section[aria-label='Terminal'] .tab").length).toBe(2);
+  });
+
+  it("hiding keeps the shells: T shows the same terminals again, no new one", async () => {
+    const ids = app.spaceTerms.map((t) => t.id);
+    const open = vi.spyOn(backend, "termOpen");
+    const close = vi.spyOn(backend, "termClose");
+    app.toggleTerminal();
+    await settle();
+    expect(app.termOpen).toBe(false);
+    // Still mounted, only hidden, so the screens and their history stay.
+    expect($("section[aria-label='Terminal']")?.classList.contains("hidden")).toBe(true);
+    app.toggleTerminal();
+    await settle();
+    expect($("section[aria-label='Terminal']")?.classList.contains("hidden")).toBe(false);
+    expect(app.spaceTerms.map((t) => t.id)).toEqual(ids);
+    expect(open).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+    open.mockRestore();
+    close.mockRestore();
   });
 
   it("closing the last terminal hides the panel", async () => {
@@ -352,7 +372,7 @@ describe("branches", () => {
     expect($("[data-branch-hint]")?.textContent).toContain("A new branch louis/export, from develop");
     await app.dispatch({ type: "newspace-submit" });
     await vi.waitFor(() => expect(create).toHaveBeenCalled());
-    expect(create.mock.calls[0][2]).toEqual({ branch: "louis/export", base: "develop" });
+    expect(create.mock.calls[0][2]).toEqual({ branch: "louis/export", base: "develop", ticket: null });
     await vi.waitFor(() => expect(app.space.branch).toBe("louis/export"));
     expect($(".top .branch")?.textContent).toContain("louis/export");
     create.mockRestore();
@@ -379,6 +399,53 @@ describe("branches", () => {
     await settle();
     [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find((m) => m.textContent?.includes("Push branch"))!.click();
     await vi.waitFor(() => expect(backend.pushed).toContain("louis/export-csv"));
+  });
+
+  it("each repo can have its own branch: chips show it, a repo menu renames only that one", async () => {
+    await app.dispatch({ type: "open-newspace" });
+    await settle();
+    app.newSp.name = "Split work";
+    app.newSp.repos = ["api", "web"];
+    app.newSp.branch = "feat/split";
+    app.newSp.repoBranches = { web: "fix/web-split" };
+    await settle();
+    await app.dispatch({ type: "newspace-submit" });
+    await vi.waitFor(() => expect(app.space.name).toBe("Split work"));
+    expect(app.space.repos.map((r) => r.branch)).toEqual(["feat/split", "fix/web-split"]);
+    await settle();
+    expect($(".top .branch")?.textContent).toContain("2 branches");
+    expect($$(".top .chip .rb").map((e) => e.textContent)).toEqual(["feat/split", "fix/web-split"]);
+    ops.askRenameBranch("web");
+    await settle();
+    const input = document.querySelector<HTMLInputElement>(".sheet input")!;
+    expect(input.value).toBe("fix/web-split");
+    input.value = "fix/web-v2";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await settle();
+    input.form!.requestSubmit();
+    await vi.waitFor(() => expect(app.space.repos.map((r) => r.branch)).toEqual(["feat/split", "fix/web-v2"]));
+    await app.pushBranch("web");
+    expect(backend.pushed.at(-1)).toBe("fix/web-v2");
+  });
+
+  it("the ticket of the space: set from the top bar, in the commit footer", async () => {
+    expect($(".top .ticket.add")).toBeTruthy();
+    $(".top .ticket.add")!.click();
+    await settle();
+    const input = document.querySelector<HTMLInputElement>(".sheet input")!;
+    input.value = "pay-77";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await settle();
+    input.form!.requestSubmit();
+    await vi.waitFor(() => expect(app.space.ticket).toBe("PAY-77"));
+    await settle();
+    expect($(".top .ticket")?.textContent).toContain("PAY-77");
+    expect((await backend.links(app.space.id)).find((l) => l.source === "ticket")).toMatchObject({ key: "PAY-77", kind: "issue" });
+    // The ticket has its own chip, not a link chip.
+    expect($$(".top .lk .lt").map((e) => e.textContent)).not.toContain("PAY-77");
+    await app.setTicket("");
+    await settle();
+    expect(app.space.ticket).toBeNull();
   });
 
   it("the Branches settings change the pattern of new spaces", async () => {

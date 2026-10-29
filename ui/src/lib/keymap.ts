@@ -30,6 +30,7 @@ export type Action =
   | { type: "cc-merge" } // everything in one commit per repo
   | { type: "cc-edit" } // jump into the subject field
   | { type: "cc-conventional" } // conventional commits on / off
+  | { type: "cc-repo"; delta: 1 | -1 } // commit the next / previous repo with staged changes
   // links sheet (overlay "links")
   | { type: "links-move"; delta: 1 | -1 }
   | { type: "links-open" }
@@ -229,6 +230,10 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
       case "o":
       case "O":
         return { type: "cc-conventional" };
+      case "r":
+        return { type: "cc-repo", delta: 1 };
+      case "R":
+        return { type: "cc-repo", delta: shift ? -1 : 1 };
       case "Enter":
         return { type: "cc-edit" };
       default:

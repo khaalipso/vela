@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { chatItems, formatCost, formatTokens, logLine, totalUsage, usageLine, type ChatItem } from "./agents";
+import {
+  chatItems,
+  currentActivity,
+  formatCost,
+  formatTokens,
+  logLine,
+  matchesAgent,
+  quietFor,
+  shortDuration,
+  totalUsage,
+  usageLine,
+  type ChatItem,
+} from "./agents";
 import type { Agent } from "./types";
 
 describe("agent numbers", () => {
@@ -73,5 +85,41 @@ describe("chatItems", () => {
   it("keeps a final summary that says more than the last message", () => {
     const items = chatItems([at({ type: "message", text: "Looking." }), at({ type: "done", summary: "The doc is current except for keys." })]);
     expect(items.map((i) => i.kind)).toEqual(["agent", "agent", "end"]);
+  });
+});
+
+describe("activity and search", () => {
+  const base: Agent = { id: "developer-1", space: "s", role: "developer", tool: "claude", worktrees: [], status: "working", summary: "" };
+
+  it("counts the quiet time from the last event, only while it works", () => {
+    const now = Date.parse("2026-10-29T10:30:00Z");
+    expect(quietFor({ ...base, lastEvent: "2026-10-29T10:00:00Z" }, now)).toBe(30 * 60_000);
+    // The newest of the agent's last event and the log wins.
+    expect(quietFor({ ...base, lastEvent: "2026-10-29T10:00:00Z" }, now, "2026-10-29T10:29:00Z")).toBe(60_000);
+    expect(quietFor({ ...base, status: "done", lastEvent: "2026-10-29T10:00:00Z" }, now)).toBe(0);
+    expect(quietFor(base, now)).toBe(0);
+    expect(shortDuration(45_000)).toBe("45s");
+    expect(shortDuration(12 * 60_000)).toBe("12 min");
+    expect(shortDuration(65 * 60_000)).toBe("1 h 05");
+  });
+
+  it("says what it does: its activity, else the last tool call of the log", () => {
+    expect(currentActivity({ ...base, activity: "Bash: cargo test" })).toBe("Bash: cargo test");
+    expect(
+      currentActivity(base, [
+        { event: { type: "toolCall", name: "Read", summary: "a.ts" } },
+        { event: { type: "toolCall", name: "Bash", summary: "pnpm dev" } },
+      ]),
+    ).toBe("Bash: pnpm dev");
+    expect(currentActivity(base, [{ event: { type: "toolCall", name: "Read", summary: "a.ts" } }, { event: { type: "message", text: "ok" } }])).toBe("");
+  });
+
+  it("finds an agent by every word of the query", () => {
+    const a: Agent = { ...base, prompt: "Handle charge.refunded", labels: ["PAY-412", "refunds"], session: "0f3c-9a51" };
+    expect(matchesAgent(a, "")).toBe(true);
+    expect(matchesAgent(a, "pay-412")).toBe(true);
+    expect(matchesAgent(a, "refunds developer")).toBe(true);
+    expect(matchesAgent(a, "0f3c")).toBe(true);
+    expect(matchesAgent(a, "refunds tester")).toBe(false);
   });
 });

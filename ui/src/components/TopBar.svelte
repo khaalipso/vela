@@ -2,19 +2,37 @@
   import { colorOfRepo } from "../lib/colors";
   import { app } from "../lib/app.svelte";
   import { openAtEvent } from "../lib/contextmenu.svelte";
-  import { branchMenu, linkMenu, repoChipMenu } from "../lib/menus";
+  import { branchMenu, linkMenu, repoChipMenu, ticketMenu } from "../lib/menus";
+  import { ops } from "../lib/ops.svelte";
+  import { repoBranch, spaceBranches } from "../lib/types";
   import LinkMark from "./LinkMark.svelte";
   import ViewSwitch from "./ViewSwitch.svelte";
 
   const chips = $derived(app.chips);
+  const branches = $derived(spaceBranches(app.space));
+  /** The repos are on different branches: each chip shows its own. */
+  const split = $derived(branches.length > 1);
+  const branchTitle = $derived(
+    split
+      ? `Branches of this space: ${app.space.repos.map((r) => `${r.name} on ${repoBranch(app.space, r.name)}`).join(", ")}. Rename, copy, push`
+      : `Branch of ${app.space.repos.length > 1 ? "every repo of this space" : "this space"}: rename, copy, push`,
+  );
 </script>
 
 <div class="top">
   <h1><span class="dot"></span>{app.space.name}</h1>
-  <button class="branch mono" title="Branch of this space: rename, copy, push" aria-label="Branch {app.space.branch}" onclick={(e) => openAtEvent(e, branchMenu(), app.space.branch)} oncontextmenu={(e) => openAtEvent(e, branchMenu(), app.space.branch)}>
+  <button class="branch mono" title={branchTitle} aria-label={split ? `${branches.length} branches` : `Branch ${branches[0]}`} onclick={(e) => openAtEvent(e, branchMenu(), branches.join(", "))} oncontextmenu={(e) => openAtEvent(e, branchMenu(), branches.join(", "))}>
     <svg width="13" height="13" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="20" stroke-linecap="round" aria-hidden="true"><circle cx="72" cy="56" r="24" /><circle cx="72" cy="200" r="24" /><circle cx="184" cy="88" r="24" /><path d="M72 80v96M184 112c0 48-112 32-112 64" /></svg>
-    {app.space.branch}
+    {split ? `${branches.length} branches` : branches[0]}
   </button>
+  {#if app.space.ticket}
+    <button class="ticket mono" title="Ticket of this task: in the Refs footer of the commits. Click to change" aria-label="Ticket {app.space.ticket}" onclick={() => ops.askTicket()} oncontextmenu={(e) => openAtEvent(e, ticketMenu(), app.space.ticket ?? "")}>
+      <svg width="12" height="12" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="20" stroke-linejoin="round" aria-hidden="true"><path d="M32 88V64a8 8 0 0 1 8-8h176a8 8 0 0 1 8 8v24a40 40 0 0 0 0 80v24a8 8 0 0 1-8 8H40a8 8 0 0 1-8-8v-24a40 40 0 0 0 0-80z" /><path d="M104 56v144" stroke-dasharray="16 16" /></svg>
+      {app.space.ticket}
+    </button>
+  {:else}
+    <button class="ticket add" title="Set the ticket of this task (Jira key or URL): used in the commits" onclick={() => ops.askTicket()}>+ ticket</button>
+  {/if}
   {#if chips.shown.length}
     <div class="lks" aria-label="Links">
       {#each chips.shown as l (l.id)}
@@ -40,7 +58,7 @@
     {#each app.space.repos as r (r.name)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <span class="chip" style:--rc={colorOfRepo(app.space, r.name)} oncontextmenu={(e) => openAtEvent(e, repoChipMenu(r.name), r.name)}>
-        <button class="chipb" title={r.worktree} onclick={() => { if (!app.filesOpen) app.dispatch({ type: "toggle-files" }); }}><b>{r.name}</b></button>
+        <button class="chipb" title={`${r.worktree}, on ${repoBranch(app.space, r.name)}`} onclick={() => { if (!app.filesOpen) app.dispatch({ type: "toggle-files" }); }}><b>{r.name}</b>{#if split}<span class="rb mono">{repoBranch(app.space, r.name)}</span>{/if}</button>
         {#if app.space.repos.length > 1}
           <button class="rm" aria-label={`Remove ${r.name} from this space`} title="Remove from this space (its worktree must be clean)" onclick={() => app.dispatch({ type: "remove-repo", repo: r.name })}>×</button>
         {/if}
@@ -94,6 +112,37 @@
   }
   .rm:hover {
     background: var(--hover);
+    color: var(--fg);
+  }
+  .rb {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--muted);
+    max-width: 22ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ticket {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 9px;
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--fg);
+    background: color-mix(in srgb, var(--info) 14%, var(--panel));
+  }
+  .ticket:hover {
+    background: color-mix(in srgb, var(--info) 22%, var(--panel));
+  }
+  .ticket.add {
+    background: transparent;
+    color: var(--faint);
+  }
+  .ticket.add:hover {
+    background: var(--panel);
     color: var(--fg);
   }
   .addrepo {

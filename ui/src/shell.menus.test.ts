@@ -461,7 +461,16 @@ describe("spaces", () => {
   it("a repo chip in the top bar", async () => {
     rightClick($(".top .chip")!);
     await settle();
-    expect(items()).toEqual(["Show files", "Copy worktree path", "Reveal worktree", "Open terminal here", "Remove repo from space"]);
+    expect(items()).toEqual([
+      "Show files",
+      "Rename branch…",
+      "Copy branch name",
+      "Push branch",
+      "Copy worktree path",
+      "Reveal worktree",
+      "Open terminal here",
+      "Remove repo from space",
+    ]);
     item("Reveal worktree").click();
     await settle();
     expect(backend.revealed).toContain("api");

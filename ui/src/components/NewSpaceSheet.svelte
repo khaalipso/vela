@@ -9,7 +9,9 @@
   $effect(() => {
     if (app.sheetMode === "new") void app.loadBranchChoices(firstRepo);
   });
-  const defaultBranch = $derived(renderBranch(app.branchTemplate, app.newSp.name || (firstRepo?.split("/").pop() ?? "my task")));
+  const defaultBranch = $derived(renderBranch(app.branchTemplate, app.newSp.name || (firstRepo?.split("/").pop() ?? "my task"), app.newSp.ticket));
+  /** The repos picked get the space branch unless you give one its own. */
+  const own = $derived(app.newSp.repos.filter((r) => app.newSp.repoBranches[r]?.trim()));
   const typed = $derived(app.newSp.branch.trim());
   const match = $derived(
     typed ? app.sheetBranches.find((b) => b.name === typed || (b.remote && b.name.split("/").slice(1).join("/") === typed)) : undefined,
@@ -50,6 +52,20 @@
           bind:value={app.newSp.name}
           oninput={() => (app.newSp.missingName = false)}
         />
+      </div>
+      <div class="grp">
+        <label class="lbl" for="ns-ticket">Ticket <span class="opt">optional</span></label>
+        <input
+          class="field small mono"
+          id="ns-ticket"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="PAY-412, or the URL of the issue"
+          bind:value={app.newSp.ticket}
+        />
+        {#if app.newSp.ticket.trim()}
+          <span class="hint">In the Refs: footer of the commits and on the agents{app.branchTemplate.includes("{ticket}") ? ", and in the branch name" : ""}. You can change it later from the top bar.</span>
+        {/if}
       </div>
       {/if}
       <div class="grp">
@@ -100,7 +116,7 @@
           <div class="lblrow">
             <label class="lbl" for="ns-branch">Branch</label>
             <button type="button" class="link" aria-expanded={showBranch} onclick={() => (showBranch = !showBranch)}>
-              {showBranch ? "Hide" : typed ? typed : defaultBranch}
+              {showBranch ? "Hide" : (typed ? typed : defaultBranch) + (own.length ? ` · ${own.length} repo${own.length > 1 ? "s" : ""} on their own` : "")}
             </button>
           </div>
           {#if showBranch || typed}
@@ -132,6 +148,23 @@
             <datalist id="ns-bases">
               {#each app.sheetBranches as b (b.name)}<option value={b.name}>{b.when}</option>{/each}
             </datalist>
+            {#if app.newSp.repos.length > 1}
+              <div class="perrepo" aria-label="Branch of each repo">
+                {#each app.newSp.repos as r (r)}
+                  <label class="pr">
+                    <span class="prn">{r.split("/").pop()}</span>
+                    <input
+                      class="field small mono"
+                      autocomplete="off"
+                      spellcheck="false"
+                      placeholder={typed || defaultBranch}
+                      aria-label="Branch of {r.split('/').pop()}"
+                      bind:value={app.newSp.repoBranches[r]}
+                    />
+                  </label>
+                {/each}
+              </div>
+            {/if}
             <span class="hint" data-branch-hint>
               {#if match}
                 {match.remote ? `Takes ${match.name} as a local branch that tracks it` : `Uses the existing branch ${match.name} as it is`}{match.when ? ` (last commit ${match.when})` : ""}.
@@ -144,7 +177,20 @@
           {/if}
         </div>
       {/if}
-      <div class="cost">{app.sheetMode === "add" ? `Each repo gets a worktree on ${app.space.branch}.` : "Vela creates one branch and one worktree per repo, then starts the stack from mise.toml and compose.yml."}</div>
+      {#if app.sheetMode === "add"}
+        <div class="grp">
+          <label class="lbl" for="ns-addbranch">Branch</label>
+          <input
+            class="field small mono"
+            id="ns-addbranch"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder={app.space.branch}
+            bind:value={app.newSp.branch}
+          />
+        </div>
+      {/if}
+      <div class="cost">{app.sheetMode === "add" ? `Each repo gets a worktree on ${app.newSp.branch.trim() || app.space.branch}: an existing branch is used as it is.` : "Vela creates a branch and a worktree per repo (each repo can have its own branch), then starts the stack from mise.toml and compose.yml."}</div>
       <div class="actions">
         <button type="button" class="btn" onclick={() => app.closeOverlay()}>Cancel</button>
         <button type="submit" class="btn p">{app.sheetMode === "add" ? "Add to space" : "Create space"} <Kbd k="Ctrl Enter" /></button>
@@ -154,6 +200,29 @@
 </div>
 
 <style>
+  .opt {
+    font-weight: 400;
+    color: var(--faint);
+    margin-left: 4px;
+  }
+  .perrepo {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .pr {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    align-items: center;
+    gap: 8px;
+  }
+  .prn {
+    font-size: 12px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .title {
     font-size: 16px;
     font-weight: 600;

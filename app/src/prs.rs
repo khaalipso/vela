@@ -260,7 +260,7 @@ fn no_pr(err: &str) -> bool {
     e.contains("no pull requests found") || e.contains("no open pull requests")
 }
 
-/// The PR of the space branch in one worktree.
+/// The PR of the branch of one repo, in its worktree.
 fn repo_pr(repo: &str, worktree: &Path, branch: &str) -> RepoPr {
     let mut out = RepoPr {
         repo: repo.to_string(),
@@ -297,7 +297,7 @@ pub fn space_prs(space: &Space) -> Vec<RepoPr> {
             .repos
             .iter()
             .map(|r| {
-                let branch = space.branch.clone();
+                let branch = r.branch.clone();
                 scope.spawn(move || repo_pr(&r.name, Path::new(&r.worktree), &branch))
             })
             .collect();
@@ -319,9 +319,10 @@ fn worktree_of<'a>(space: &'a Space, repo: &str) -> AppResult<&'a Path> {
 /// Push the space branch and open a PR from its commits. Returns its URL.
 pub fn create_pr(space: &Space, repo: &str, draft: bool) -> AppResult<String> {
     let wt = worktree_of(space, repo)?;
-    vela_core::git::git(wt, &["push", "-u", "origin", &space.branch])
+    let branch = space.branch_of(repo);
+    vela_core::git::git(wt, &["push", "-u", "origin", branch])
         .map_err(|e| AppError::new("git", format!("push failed: {e}")))?;
-    let mut args = vec!["pr", "create", "--fill", "--head", space.branch.as_str()];
+    let mut args = vec!["pr", "create", "--fill", "--head", branch];
     if draft {
         args.push("--draft");
     }
@@ -341,8 +342,17 @@ pub fn comment_pr(space: &Space, repo: &str, body: &str) -> AppResult<()> {
         return Err(AppError::invalid("the comment is empty"));
     }
     let wt = worktree_of(space, repo)?;
-    gh(wt, &["pr", "comment", &space.branch, "--body", body.trim()])
-        .map_err(|e| AppError::new("gh", e))?;
+    gh(
+        wt,
+        &[
+            "pr",
+            "comment",
+            space.branch_of(repo),
+            "--body",
+            body.trim(),
+        ],
+    )
+    .map_err(|e| AppError::new("gh", e))?;
     Ok(())
 }
 

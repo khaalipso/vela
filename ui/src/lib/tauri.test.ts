@@ -36,7 +36,7 @@ describe("TauriBackend", () => {
     expect(invoke.mock.calls).toEqual([
       ["list_repos", undefined],
       ["list_spaces", undefined],
-      ["create_space", { name: "Refunds", repos: ["/w/api"], branch: null, base: null }],
+      ["create_space", { name: "Refunds", repos: ["/w/api"], branch: null, base: null, repoBranches: null, ticket: null }],
       ["status", { spaceId: "s" }],
       ["hunks", { spaceId: "s" }],
       ["list_files", { spaceId: "s" }],

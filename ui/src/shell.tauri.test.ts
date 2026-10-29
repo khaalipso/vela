@@ -188,7 +188,7 @@ describe("shell on the Tauri backend", () => {
     await settle();
     await app.dispatch({ type: "newspace-submit" });
     await settle();
-    expect(calls.find((c) => c[0] === "create_space")![1]).toEqual({ name: "Fix it", repos: ["/w/api"], branch: null, base: null });
+    expect(calls.find((c) => c[0] === "create_space")![1]).toEqual({ name: "Fix it", repos: ["/w/api"], branch: null, base: null, repoBranches: null, ticket: null });
     expect($("h1")?.textContent).toContain("Fix it");
     expect(app.view).toBe("code");
     expect(document.documentElement.style.getPropertyValue("--space")).toBe("#E8A14A");
@@ -313,13 +313,13 @@ describe("shell on the Tauri backend", () => {
     expect($$(".card").length).toBe(1);
     expect([...app.cc!.groups[0].hunks].sort()).toEqual(["h1", "h2", "h3"]);
     press("m");
-    expect(app.toastState?.text).toBe("Already one commit per repo");
+    expect(app.toastState?.text).toBe("Already one commit");
     await app.dispatch({ type: "commit-submit" });
     await settle();
     const last = calls.filter((c) => c[0] === "commit_groups").at(-1)![1] as Json;
     expect(last).toMatchObject({ spaceId: "fix-it", conventional: true, overrideReason: null });
     expect(last.groups as Json[]).toHaveLength(1);
-    expect($(".toast")?.textContent).toBe("Committed 1 commit on feat/fix-it");
+    expect($(".toast")?.textContent).toBe("Committed 1 commit in api on feat/fix-it");
   });
 
   it("commits every commit in order with an empty gate, without claiming a push", async () => {
@@ -333,7 +333,7 @@ describe("shell on the Tauri backend", () => {
     const last = calls.filter((c) => c[0] === "commit_groups").at(-1)![1] as Json;
     expect((last.groups as Json[]).map((g) => g.id)).toEqual(["g1", "g2"]);
     expect(last.groups).toMatchObject([{ subject: "update a and b", footers: ["Refs: PAY-1"] }, { subject: "cover a" }]);
-    expect($(".toast")?.textContent).toBe("Committed 2 commits on feat/fix-it");
+    expect($(".toast")?.textContent).toBe("Committed 2 commits in api on feat/fix-it");
   });
 
   it("links: a pasted URL is linked, L lists it, Enter opens it, Backspace removes it", async () => {

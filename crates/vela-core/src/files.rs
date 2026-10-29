@@ -93,7 +93,7 @@ pub fn space_files(space: &Space) -> Result<Vec<RepoFiles>> {
             .map(|b| b.trim().to_string())
             .ok()
             .filter(|b| !b.is_empty() && b != "HEAD")
-            .unwrap_or_else(|| space.branch.clone());
+            .unwrap_or_else(|| r.branch.clone());
         let (ahead, behind) = upstream_counts(dir);
         out.push(RepoFiles {
             repo: r.name.clone(),
@@ -154,11 +154,13 @@ mod tests {
                 source: dir.to_string_lossy().into(),
                 worktree: dir.to_string_lossy().into(),
                 base: "main".into(),
+                branch: String::new(),
             }],
             created_at: String::new(),
             window: None,
             archived: false,
             links: vec![],
+            ticket: None,
         };
         (dir, space)
     }

@@ -73,11 +73,13 @@ fn env(files: &[(&str, &str)]) -> Env {
             source: dir.to_string_lossy().into_owned(),
             worktree: dir.to_string_lossy().into_owned(),
             base: "main".into(),
+            branch: String::new(),
         }],
         created_at: "2026-10-26T00:00:00Z".into(),
         window: None,
         archived: false,
         links: vec![],
+        ticket: None,
     };
     Env {
         vela: Vela::new(root.join("home")),

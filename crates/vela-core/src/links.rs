@@ -561,8 +561,18 @@ fn same(a: &Link, b: &Link) -> bool {
 /// Keys and references found in the branch and the commits of every repo.
 fn detect(space: &Space, cfg: &IssueConfig) -> Vec<Link> {
     let mut found: Vec<Link> = Vec::new();
-    for k in detect_keys(&space.branch) {
-        found.push(cfg.key_link(&k, LinkSource::Branch));
+    if let Some(t) = space.ticket.as_deref().filter(|t| !t.trim().is_empty()) {
+        let mut l = cfg.key_link(t, LinkSource::Ticket);
+        // A ticket that is not a tracker key is still the issue of the task.
+        l.kind = LinkKind::Issue;
+        found.push(l);
+    }
+    let mut branches: Vec<&str> = vec![space.branch.as_str()];
+    branches.extend(space.repos.iter().map(|r| r.branch.as_str()));
+    for b in branches {
+        for k in detect_keys(b) {
+            found.push(cfg.key_link(&k, LinkSource::Branch));
+        }
     }
     for r in &space.repos {
         let dir = Path::new(&r.worktree);
@@ -664,6 +674,7 @@ mod tests {
             window: None,
             archived: false,
             links: vec![],
+            ticket: None,
         }
     }
 

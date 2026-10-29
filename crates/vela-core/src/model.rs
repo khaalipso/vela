@@ -14,7 +14,8 @@ pub struct Space {
     pub name: String,
     /// Hex color, e.g. "#E8A14A". Drives the accent of the whole window.
     pub color: String,
-    /// Branch shared by every repo of the space, e.g. "feat/refunds".
+    /// The branch the space was created with, e.g. "feat/refunds": what a repo added later
+    /// gets by default. Each repo has its own branch in [`SpaceRepo::branch`].
     pub branch: String,
     pub repos: Vec<SpaceRepo>,
     /// RFC 3339 timestamp.
@@ -28,6 +29,33 @@ pub struct Space {
     /// [`crate::links::list_links`], never stored here.
     #[serde(default)]
     pub links: Vec<Link>,
+    /// The issue the task is about, e.g. "PAY-412": the `Refs:` footer of its commits, a
+    /// label of its agents, `{ticket}` in the branch template.
+    #[serde(default)]
+    pub ticket: Option<String>,
+}
+
+impl Space {
+    /// Older spaces had one branch for every repo: give each repo that branch.
+    pub fn normalize(&mut self) {
+        for r in &mut self.repos {
+            if r.branch.trim().is_empty() {
+                r.branch = self.branch.clone();
+            }
+        }
+    }
+
+    pub fn repo(&self, name: &str) -> Option<&SpaceRepo> {
+        self.repos.iter().find(|r| r.name == name)
+    }
+
+    /// The branch of a repo of the space (the space branch for an unknown repo).
+    pub fn branch_of(&self, repo: &str) -> &str {
+        self.repo(repo)
+            .map(|r| r.branch.as_str())
+            .filter(|b| !b.is_empty())
+            .unwrap_or(&self.branch)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,6 +69,9 @@ pub struct SpaceRepo {
     pub worktree: String,
     /// Ref the branch was created from, e.g. "main".
     pub base: String,
+    /// The branch of this repo's worktree. Repos of a space each have their own.
+    #[serde(default)]
+    pub branch: String,
 }
 
 /// Status letter of one side (index or worktree) of a file change.
@@ -268,6 +299,15 @@ pub struct Agent {
     pub started: String,
     #[serde(default)]
     pub finished: Option<String>,
+    /// What the agent does right now while it works, e.g. "Bash: cargo test".
+    #[serde(default)]
+    pub activity: String,
+    /// RFC 3339 time of its last event: how long it has been quiet.
+    #[serde(default)]
+    pub last_event: Option<String>,
+    /// One or two words to find the conversation again ("refunds", "PAY-412").
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 /// One tool or service of the space stack.
@@ -362,6 +402,8 @@ pub enum LinkSource {
     Paste,
     /// Listed in `<repo>/.vela/links.toml`.
     Repo,
+    /// The ticket of the space.
+    Ticket,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

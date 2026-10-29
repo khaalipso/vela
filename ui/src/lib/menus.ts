@@ -13,6 +13,7 @@ import type { PaletteItem } from "./palette";
 import { ops, readClipboard, SPACE_COLORS, splitKey, writeClipboard, basename, dirname } from "./ops.svelte";
 import type { FileRow } from "./review";
 import type { Hunk, Link, Space } from "./types";
+import { repoBranch, spaceBranches } from "./types";
 import { removable } from "./links";
 
 type Part = Omit<MenuAction, "id"> & { id?: string };
@@ -133,24 +134,63 @@ function repoItems(repo: string): MenuEntry[] {
   ];
 }
 
-/** The repo chips of the top bar. */
-/** The branch of the space, from its chip in the top bar. */
+/** The branch items of one repo. */
+function repoBranchItems(repo: string, named: boolean): MenuEntry[] {
+  const b = repoBranch(app.space, repo);
+  const of = named ? ` of ${repo}` : "";
+  return [
+    it(`Rename branch${of}…`, { icon: "rename", run: () => ops.askRenameBranch(repo) }),
+    it(named ? `Copy ${b}` : "Copy branch name", { icon: "copy", run: () => void writeClipboard(b).then(() => app.toast(`Copied ${b}`)) }),
+    it(`Push ${named ? b : "branch"}`, { run: () => void app.pushBranch(repo) }),
+  ];
+}
+
+/** The branches of the space, from the branch chip in the top bar: the same branch in every
+ *  repo acts on all of them; different branches get items per repo. */
 export function branchMenu(): MenuEntry[] {
-  const b = app.space.branch;
+  const space = app.space;
+  const branches = spaceBranches(space);
+  if (branches.length === 1) {
+    const b = branches[0];
+    const many = space.repos.length > 1;
+    return tidy([
+      it(many ? "Rename in every repo…" : "Rename branch…", { icon: "rename", run: () => ops.askRenameBranch() }),
+      it("Copy branch name", { icon: "copy", run: () => void writeClipboard(b).then(() => app.toast(`Copied ${b}`)) }),
+      SEP,
+      it(many ? "Push every repo" : "Push branch", { run: () => void app.pushBranch() }),
+      ...(many ? [SEP, ...space.repos.map((r) => it(`Rename only in ${r.name}…`, { run: () => ops.askRenameBranch(r.name) }))] : []),
+      SEP,
+      it("Pull requests", { run: () => app.setView("prs") }),
+    ]);
+  }
   return tidy([
-    it("Rename branch…", { icon: "rename", run: () => ops.askRenameBranch() }),
-    it("Copy branch name", { icon: "copy", run: () => void writeClipboard(b).then(() => app.toast(`Copied ${b}`)) }),
-    SEP,
-    it("Push branch", { run: () => void app.pushBranch() }),
+    ...space.repos.flatMap((r) => [...repoBranchItems(r.name, true), SEP]),
     it("Pull requests", { run: () => app.setView("prs") }),
   ]);
 }
 
+/** The repo chips of the top bar. */
 export function repoChipMenu(repo: string): MenuEntry[] {
   return tidy([
     it("Show files", { icon: "tree", run: () => ops.showRepoFiles(repo) }),
     SEP,
+    ...repoBranchItems(repo, false),
+    SEP,
     ...repoItems(repo),
+  ]);
+}
+
+/** The ticket chip of the top bar. */
+export function ticketMenu(): MenuEntry[] {
+  const t = app.space.ticket;
+  const link = app.sd.links.find((l) => l.source === "ticket");
+  if (!t) return tidy([it("Set ticket…", { icon: "rename", run: () => ops.askTicket() })]);
+  return tidy([
+    it("Change ticket…", { icon: "rename", run: () => ops.askTicket() }),
+    it(`Copy ${t}`, { icon: "copy", run: () => void writeClipboard(t).then(() => app.toast(`Copied ${t}`)) }),
+    it("Open in the tracker", { disabled: link?.url ? false : "No tracker URL configured ([issues] jira in config.toml)", run: () => link && void app.openLink(link.id) }),
+    SEP,
+    it("Remove ticket", { icon: "close", danger: true, run: () => void app.setTicket("") }),
   ]);
 }
 
@@ -410,6 +450,8 @@ export function contextPaletteItems(): PaletteItem[] {
     if (node && node.kind !== "file") add(treeMenu(node), node.kind === "repo" ? node.repo : `${node.repo}/${node.path}`);
   }
   add(spaceMenu(app.active), app.space.name);
+  add(branchMenu(), spaceBranches(app.space).join(", "));
+  add(ticketMenu(), app.space.ticket ?? "Ticket");
   for (const r of app.space.repos) add(repoChipMenu(r.name), r.name);
   for (const l of app.sd.links) add(linkMenu(l), l.title);
   for (const s of app.archived) add(archivedMenu(s), s.name);

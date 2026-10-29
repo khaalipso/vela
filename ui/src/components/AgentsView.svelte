@@ -3,17 +3,48 @@
   // selected one on the right. J / K or a click picks an agent.
   import { app } from "../lib/app.svelte";
   import { agentStatusColor, plural, ROLE_COLORS, roleLabel, toolLabel } from "../lib/format";
-  import { isRunning, totalUsage, usageLine } from "../lib/agents";
+  import { isRunning, QUIET_WARN_MS, quietFor, shortDuration, totalUsage, usageLine } from "../lib/agents";
   import type { Agent } from "../lib/types";
   import AgentChat from "./AgentChat.svelte";
   import Kbd from "./Kbd.svelte";
 
   const agents = $derived(app.sd.agents);
   const total = $derived(usageLine(totalUsage(agents)));
-  const active = $derived(agents.filter((a) => a.status === "working" || a.status === "waiting"));
-  const finished = $derived(agents.filter((a) => a.status !== "working" && a.status !== "waiting"));
+  const shown = $derived(app.agentList);
+  const active = $derived(shown.filter((a) => a.status === "working" || a.status === "waiting"));
+  const finished = $derived(shown.filter((a) => a.status !== "working" && a.status !== "waiting"));
   const sel = $derived(app.selectedAgent);
   let shownDone = $state(12);
+  let search: HTMLInputElement | undefined = $state();
+  /** The labels of the space, most used first: one click filters the list. */
+  const labels = $derived.by(() => {
+    const n = new Map<string, number>();
+    for (const a of agents) for (const l of a.labels ?? []) n.set(l, (n.get(l) ?? 0) + 1);
+    return [...n.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 8).map(([l]) => l);
+  });
+  let now = $state(Date.now());
+  $effect(() => {
+    if (!active.some(isRunning)) return;
+    const t = setInterval(() => (now = Date.now()), 15_000);
+    return () => clearInterval(t);
+  });
+  function when(a: Agent): { text: string; warn: boolean } {
+    if (a.status === "waiting") return { text: "asks", warn: false };
+    if (!isRunning(a)) return { text: ago(a), warn: false };
+    const q = quietFor(a, now);
+    return q >= QUIET_WARN_MS ? { text: `quiet ${shortDuration(q)}`, warn: true } : { text: "working", warn: false };
+  }
+  function onSearchKey(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      if (app.agentQuery) app.agentQuery = "";
+      else search?.blur();
+      e.preventDefault();
+      e.stopPropagation();
+    } else if (e.key === "Enter" && shown[0]) {
+      app.selectAgent(shown[0].id);
+      search?.blur();
+    }
+  }
 
   function ago(a: Agent): string {
     const t = Date.parse(a.finished ?? a.started ?? "");
@@ -62,6 +93,29 @@
   {:else}
     <div class="split">
       <nav class="list" aria-label="Agents of the space">
+        <div class="find">
+          <input
+            class="field small"
+            type="search"
+            bind:this={search}
+            bind:value={app.agentQuery}
+            onkeydown={onSearchKey}
+            placeholder="Search: label, request, session"
+            aria-label="Search the conversations"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        {#if labels.length}
+          <div class="labels" aria-label="Labels">
+            {#each labels as l (l)}
+              <button class="lb" class:on={app.agentQuery.trim().toLowerCase() === l.toLowerCase()} onclick={() => (app.agentQuery = app.agentQuery.trim().toLowerCase() === l.toLowerCase() ? "" : l)}>{l}</button>
+            {/each}
+          </div>
+        {/if}
+        {#if !shown.length}
+          <p class="none">No conversation matches “{app.agentQuery}”. <button class="btn ghost" onclick={() => (app.agentQuery = "")}>Clear</button></p>
+        {/if}
         {#if active.length}<h4>At work <span>{active.length}</span></h4>{/if}
         {#each active as a (a.id)}{@render item(a)}{/each}
         {#if finished.length}<h4>Finished <span>{finished.length}</span></h4>{/if}
@@ -78,15 +132,20 @@
 </div>
 
 {#snippet item(a: Agent)}
+  {@const w = when(a)}
   <button class="item" class:on={sel?.id === a.id} aria-current={sel?.id === a.id} data-agent={a.id} style:--rc={ROLE_COLORS[a.role]} onclick={() => app.selectAgent(a.id)}>
     <span class="dot" class:pulse={a.status === "working"} style:--c={agentStatusColor(a.status)}></span>
     <span class="body">
       <span class="top"
-        ><b>{roleLabel(a.role)}</b><span class="tool">{toolLabel(a.tool)}</span>{#if a.tier}<span class="tier" data-tier={a.tier}>{a.tier}</span>{/if}<span class="when"
-          >{a.status === "waiting" ? "asks" : isRunning(a) ? "working" : ago(a)}</span
+        ><b>{roleLabel(a.role)}</b><span class="tool">{toolLabel(a.tool)}</span>{#if a.tier}<span class="tier" data-tier={a.tier}>{a.tier}</span>{/if}<span class="when" class:warn={w.warn} title={w.warn ? "No event for a while: it may be stuck" : undefined}
+          >{w.text}</span
         ></span
       >
       <span class="sum">{a.prompt || a.summary}</span>
+      {#if isRunning(a) && a.activity}<span class="act">{a.activity}</span>{/if}
+      {#if a.labels?.length}
+        <span class="tags">{#each a.labels as l (l)}<span class="lt">{l}</span>{/each}</span>
+      {/if}
     </span>
   </button>
 {/snippet}
@@ -243,6 +302,72 @@
   .more {
     align-self: center;
     margin-top: 6px;
+  }
+  .find {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg);
+    padding-bottom: 4px;
+  }
+  .find input {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .labels {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 2px 2px 4px;
+  }
+  .lb {
+    all: unset;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 1px 8px;
+    border-radius: 9999px;
+    background: var(--hover);
+    color: var(--muted);
+  }
+  .lb:hover {
+    color: var(--fg);
+  }
+  .lb.on {
+    background: color-mix(in srgb, var(--space) 22%, transparent);
+    color: var(--fg);
+  }
+  .lb:focus-visible {
+    outline: 2px solid var(--space);
+  }
+  .none {
+    font-size: 12px;
+    color: var(--faint);
+    margin: 8px 6px;
+  }
+  .when.warn {
+    color: var(--warn);
+    font-weight: 600;
+  }
+  .act {
+    font-size: 11.5px;
+    color: var(--faint);
+    font-family: var(--code);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    margin-top: 2px;
+  }
+  .lt {
+    font-size: 10.5px;
+    padding: 0 6px;
+    border-radius: 9999px;
+    color: var(--rc);
+    background: color-mix(in srgb, var(--rc) 13%, transparent);
   }
   .empty {
     background: var(--raised);
