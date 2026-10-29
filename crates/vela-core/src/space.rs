@@ -54,24 +54,43 @@ pub fn rfc3339(t: SystemTime) -> String {
     )
 }
 
-struct Created {
+/// A repo switched to the branch of the new space, to put back if a later repo fails.
+struct Switched {
     source: PathBuf,
-    worktree: PathBuf,
+    /// Where the repo was: a branch name or a commit.
+    previous: String,
     branch: String,
     /// The branch was made for this space (a rollback deletes it); an existing one is kept.
     made: bool,
 }
 
-fn rollback(created: &[Created], root: &Path) {
-    for c in created.iter().rev() {
-        let wt = c.worktree.to_string_lossy();
-        let _ = git(&c.source, &["worktree", "remove", "--force", wt.as_ref()]);
-        if c.made {
-            let _ = git(&c.source, &["branch", "-D", &c.branch]);
+fn rollback(switched: &[Switched]) {
+    for s in switched.iter().rev() {
+        let _ = git(&s.source, &["switch", "--quiet", &s.previous])
+            .or_else(|_| git(&s.source, &["switch", "--quiet", "--detach", &s.previous]));
+        if s.made {
+            let _ = git(&s.source, &["branch", "-D", &s.branch]);
         }
-        let _ = git(&c.source, &["worktree", "prune"]);
     }
-    let _ = fs::remove_dir_all(root);
+}
+
+/// The repos at `path`: the repo it is in, else the repos directly inside it (a folder of
+/// repos adds them all).
+pub fn repos_in(path: &Path) -> Result<Vec<PathBuf>> {
+    if let Ok(top) = git(path, &["rev-parse", "--show-toplevel"]) {
+        return Ok(vec![PathBuf::from(top.trim())]);
+    }
+    let mut found: Vec<PathBuf> = fs::read_dir(path)
+        .map_err(|_| Error::NotARepo(path.to_path_buf()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.join(".git").exists())
+        .filter_map(|p| p.canonicalize().ok())
+        .collect();
+    found.sort();
+    if found.is_empty() {
+        return Err(Error::NotARepo(path.to_path_buf()));
+    }
+    Ok(found)
 }
 
 /// What a new space is made from. Everything left out takes the default.
@@ -79,12 +98,12 @@ fn rollback(created: &[Created], root: &Path) {
 pub struct CreateOptions {
     /// The ref new branches start from; defaults to each repo's current branch.
     pub base: Option<String>,
-    /// The branch of the space. An existing local branch is used as it is; a remote one
-    /// (`origin/<branch>`) gets a local branch tracking it; otherwise it is created from
-    /// `base`. Defaults to the `[spaces] branch` template (`feat/{slug}`).
+    /// A branch to switch the repos to. An existing local branch is used as it is; a remote
+    /// one (`origin/<branch>`) gets a local branch tracking it; otherwise it is created from
+    /// `base`. Left out, each repo stays on the branch it is on.
     pub branch: Option<String>,
     /// A branch for some repos instead of `branch`, in the order of the repo paths (None or
-    /// empty: the space branch). Each repo of a space has its own branch.
+    /// empty: `branch`). Each repo of a space has its own branch.
     pub repo_branches: Vec<Option<String>>,
     /// The ticket of the task ("PAY-412"), for `{ticket}` in the template and the commits.
     pub ticket: Option<String>,
@@ -96,8 +115,8 @@ fn dir_name(p: &Path) -> String {
         .unwrap_or_else(|| "repo".to_string())
 }
 
-/// Create a space: branch `feat/<slug>` (or the `[spaces] branch` template) and one worktree
-/// per repo. `base` is the ref to branch from; defaults to each repo's current branch.
+/// Create a space on the repos at `repo_paths`: it works in them, on the branch they are on.
+/// `base` only matters for a new branch (see [`create_with`]).
 pub fn create<P: AsRef<Path>>(
     vela: &Vela,
     name: &str,
@@ -122,36 +141,55 @@ fn checked_branch(b: &str) -> Result<String> {
     Ok(b.to_string())
 }
 
-/// Add the worktree of `source` on `branch`: the existing local branch, a local branch
-/// tracking the remote one, or a new branch from `base`. True when the branch was made.
-fn add_worktree(source: &Path, worktree: &Path, branch: &str, base: &str) -> Result<bool> {
-    let wt = worktree.to_string_lossy();
+/// Switch the clone `source` to `branch`: the existing local branch, a local branch tracking
+/// the remote one, or a new branch from `base`. Uncommitted changes go along (git refuses when
+/// they would be overwritten). True when the branch was made.
+fn switch_to(source: &Path, branch: &str, base: &str) -> Result<bool> {
+    if crate::git::head_branch(source).as_deref() == Some(branch) {
+        return Ok(false);
+    }
     let src = crate::branches::source_of(source, branch, base);
     let made = !matches!(src, crate::branches::Source::Local);
     match &src {
-        crate::branches::Source::Local => git(source, &["worktree", "add", wt.as_ref(), branch]),
+        crate::branches::Source::Local => git(source, &["switch", "--quiet", branch]),
         crate::branches::Source::Remote { upstream } => git(
             source,
-            &[
-                "worktree",
-                "add",
-                "--track",
-                "-b",
-                branch,
-                wt.as_ref(),
-                upstream,
-            ],
+            &["switch", "--quiet", "--track", "-c", branch, upstream],
         ),
-        crate::branches::Source::New { base } => git(
-            source,
-            &["worktree", "add", "-b", branch, wt.as_ref(), base],
-        ),
+        crate::branches::Source::New { base } => {
+            git(source, &["switch", "--quiet", "-c", branch, base])
+        }
     }?;
     Ok(made)
 }
 
-/// Create a space with the branches and base of `opts` (see [`CreateOptions`]).
-/// If any repo fails, worktrees and branches created so far are removed.
+/// A branch checked out in another worktree cannot be switched to: say where.
+fn refuse_if_checked_out_elsewhere(source: &Path, repo_name: &str, branch: &str) -> Result<()> {
+    if let Some(path) = crate::branches::checked_out_in(source, branch)
+        && Path::new(&path) != source
+    {
+        return Err(Error::Invalid(format!(
+            "{branch} is checked out in {path} ({repo_name}): switch that checkout to another branch first"
+        )));
+    }
+    Ok(())
+}
+
+/// A unique short name for the repo at `top` among `taken`.
+fn unique_name(top: &Path, taken: &[&str]) -> String {
+    let stem = dir_name(top);
+    let mut name = stem.clone();
+    let mut n = 2;
+    while taken.contains(&name.as_str()) {
+        name = format!("{stem}-{n}");
+        n += 1;
+    }
+    name
+}
+
+/// Create a space on the repos at `repo_paths` (a folder of repos gives each of them). The
+/// space works in your clones: no copy. Repos stay on their branch unless `opts` names one,
+/// then they are switched to it. If any repo fails, the ones switched so far go back.
 pub fn create_with<P: AsRef<Path>>(
     vela: &Vela,
     name: &str,
@@ -179,77 +217,67 @@ pub fn create_with<P: AsRef<Path>>(
         .map(str::trim)
         .filter(|b| !b.is_empty())
     {
-        Some(b) => checked_branch(b)?,
-        None => crate::branches::render_with(
-            &crate::branches::template_from_env(),
-            name,
-            ticket.as_deref(),
-        ),
+        Some(b) => Some(checked_branch(b)?),
+        None => None,
     };
     // Validate everything before touching the disk.
-    // (repo name, source, base ref, branch)
-    let mut sources: Vec<(String, PathBuf, String, String)> = Vec::new();
+    // (repo name, clone, base ref, branch to switch to)
+    let mut sources: Vec<(String, PathBuf, String, Option<String>)> = Vec::new();
     for (i, p) in repo_paths.iter().enumerate() {
-        let p = p.as_ref();
-        let top = git(p, &["rev-parse", "--show-toplevel"])
-            .map_err(|_| Error::NotARepo(p.to_path_buf()))?;
-        let top = PathBuf::from(top.trim());
-        let base_ref = match base {
-            Some(b) => b.to_string(),
-            None => current_ref(&top)?,
-        };
-        let stem = dir_name(&top);
-        let mut repo_name = stem.clone();
-        let mut n = 2;
-        while sources.iter().any(|(existing, ..)| *existing == repo_name) {
-            repo_name = format!("{stem}-{n}");
-            n += 1;
-        }
-        let repo_branch = match opts
+        let wanted = match opts
             .repo_branches
             .get(i)
             .and_then(|b| b.as_deref())
             .map(str::trim)
             .filter(|b| !b.is_empty())
         {
-            Some(b) => checked_branch(b)?,
+            Some(b) => Some(checked_branch(b)?),
             None => branch.clone(),
         };
-        sources.push((repo_name, top, base_ref, repo_branch));
-    }
-
-    // An existing branch checked out elsewhere cannot get a second worktree: say where.
-    for (repo_name, source, _, b) in &sources {
-        if let Some(path) = crate::branches::checked_out_in(source, b) {
-            return Err(Error::Invalid(format!(
-                "{b} is checked out in {path} ({repo_name}): switch that checkout to another branch first"
-            )));
+        for top in repos_in(p.as_ref())? {
+            if sources.iter().any(|(_, t, ..)| *t == top) {
+                continue;
+            }
+            let base_ref = match base {
+                Some(b) => b.to_string(),
+                None => current_ref(&top)?,
+            };
+            let taken: Vec<&str> = sources.iter().map(|(n, ..)| n.as_str()).collect();
+            let repo_name = unique_name(&top, &taken);
+            sources.push((repo_name, top, base_ref, wanted.clone()));
         }
     }
-    let root = paths::space_root(&vela.home, &id);
-    fs::create_dir_all(&root)?;
-    let mut created: Vec<Created> = Vec::new();
+    for (repo_name, source, _, b) in &sources {
+        if let Some(b) = b {
+            refuse_if_checked_out_elsewhere(source, repo_name, b)?;
+        }
+    }
+    let mut switched: Vec<Switched> = Vec::new();
     let mut repos = Vec::new();
-    for (repo_name, source, base_ref, repo_branch) in &sources {
-        let worktree = paths::space_worktree(&vela.home, &id, repo_name);
-        match add_worktree(source, &worktree, repo_branch, base_ref) {
-            Ok(made) => created.push(Created {
-                source: source.clone(),
-                worktree: worktree.clone(),
-                branch: repo_branch.clone(),
-                made,
-            }),
-            Err(e) => {
-                rollback(&created, &root);
-                return Err(e);
+    for (repo_name, source, base_ref, wanted) in &sources {
+        if let Some(b) = wanted {
+            let previous = current_ref(source)?;
+            match switch_to(source, b, base_ref) {
+                Ok(made) => switched.push(Switched {
+                    source: source.clone(),
+                    previous,
+                    branch: b.clone(),
+                    made,
+                }),
+                Err(e) => {
+                    rollback(&switched);
+                    return Err(e);
+                }
             }
         }
+        let on = crate::git::head_branch(source).unwrap_or_else(|| base_ref.clone());
+        let path = source.to_string_lossy().into_owned();
         repos.push(SpaceRepo {
             name: repo_name.clone(),
-            source: source.to_string_lossy().into_owned(),
-            worktree: worktree.to_string_lossy().into_owned(),
+            source: path.clone(),
+            worktree: path,
             base: base_ref.clone(),
-            branch: repo_branch.clone(),
+            branch: on,
         });
     }
 
@@ -258,7 +286,7 @@ pub fn create_with<P: AsRef<Path>>(
         id,
         name: name.to_string(),
         color: PALETTE[count % PALETTE.len()].to_string(),
-        branch,
+        branch: branch.unwrap_or_else(|| repos[0].branch.clone()),
         repos,
         created_at: rfc3339(SystemTime::now()),
         window: None,
@@ -266,8 +294,11 @@ pub fn create_with<P: AsRef<Path>>(
         links: Vec::new(),
         ticket,
     };
-    if let Err(e) = store::save(vela, &space) {
-        rollback(&created, &root);
+    let saved = fs::create_dir_all(paths::space_root(&vela.home, &space.id))
+        .map_err(Error::from)
+        .and_then(|()| store::save(vela, &space));
+    if let Err(e) = saved {
+        rollback(&switched);
         return Err(e);
     }
     Ok(space)
@@ -367,14 +398,16 @@ pub fn set_color(vela: &Vela, id: &str, color: &str) -> Result<Space> {
     Ok(space)
 }
 
-/// Remove worktrees (forced), delete the branch where fully merged, delete the toml.
+/// Remove a space: the agents' worktrees and branches, and what Vela kept for it. Your clones
+/// and their branches stay as they are. (An older space in a Vela worktree loses that worktree;
+/// its branch goes when fully merged.)
 pub fn remove(vela: &Vela, id: &str) -> Result<()> {
     let space = store::load(vela, id)?;
     let agents_dir = paths::space_root(&vela.home, id).join(".agents");
     for repo in &space.repos {
         let source = Path::new(&repo.source);
         // The agents' worktrees (under the space directory) and their branches
-        // `<space-branch>--<agent>`: their work only ever reached you as proposals.
+        // `<branch>--<agent>`: their work only ever reached you as proposals.
         if let Ok(list) = git(source, &["worktree", "list", "--porcelain"]) {
             for wt in list.lines().filter_map(|l| l.strip_prefix("worktree ")) {
                 if Path::new(wt).starts_with(&agents_dir) {
@@ -382,77 +415,81 @@ pub fn remove(vela: &Vela, id: &str) -> Result<()> {
                 }
             }
         }
-        let pattern = format!("refs/heads/{}--*", repo.branch);
+        // `<branch>--<agent>` is how they were named before.
+        let ours = format!("refs/heads/{}", paths::agent_branch(id, "*"));
+        let old = format!("refs/heads/{}--*", repo.branch);
         if let Ok(refs) = git(
             source,
-            &["for-each-ref", "--format=%(refname:short)", &pattern],
+            &["for-each-ref", "--format=%(refname:short)", &ours, &old],
         ) {
             for b in refs.lines().map(str::trim).filter(|b| !b.is_empty()) {
                 let _ = git(source, &["branch", "-D", b]);
             }
         }
-        if Path::new(&repo.worktree).exists() {
-            git(source, &["worktree", "remove", "--force", &repo.worktree])?;
+        if !repo.is_clone() {
+            if Path::new(&repo.worktree).exists() {
+                git(source, &["worktree", "remove", "--force", &repo.worktree])?;
+            }
+            // `-d` refuses unmerged branches, which is what we want.
+            let _ = git(source, &["branch", "-d", &repo.branch]);
         }
         let _ = git(source, &["worktree", "prune"]);
-        // `-d` refuses unmerged branches, which is what we want.
-        let _ = git(source, &["branch", "-d", &repo.branch]);
     }
     let _ = fs::remove_dir_all(paths::space_root(&vela.home, id));
+    crate::page::delete(vela, id);
     store::delete(vela, id)
 }
 
-/// Add a repo to an existing space: a worktree on the space branch (see [`add_repo_on`]).
+/// Add a repo to an existing space (see [`add_repo_on`]).
 pub fn add_repo(vela: &Vela, id: &str, repo_path: &Path) -> Result<Space> {
     add_repo_on(vela, id, repo_path, None)
 }
 
-/// Add a repo to an existing space, on `branch` (default: the space branch). An existing
-/// local or remote branch is used; otherwise it is created from the repo's current branch.
+/// Add the repos at `repo_path` (a repo, or a folder of repos) to a space. They stay on their
+/// branch, or are switched to `branch` (an existing local or remote branch, else a new one from
+/// where the repo is). Repos already in the space are skipped; none new is an error.
 pub fn add_repo_on(vela: &Vela, id: &str, repo_path: &Path, branch: Option<&str>) -> Result<Space> {
     let mut space = store::load(vela, id)?;
-    let top = git(repo_path, &["rev-parse", "--show-toplevel"])
-        .map_err(|_| Error::NotARepo(repo_path.to_path_buf()))?;
-    let top = PathBuf::from(top.trim());
-    let top_s = top.to_string_lossy().into_owned();
-    if space.repos.iter().any(|r| r.source == top_s) {
+    let branch = match branch.map(str::trim).filter(|b| !b.is_empty()) {
+        Some(b) => Some(checked_branch(b)?),
+        None => None,
+    };
+    let tops: Vec<PathBuf> = repos_in(repo_path)?
+        .into_iter()
+        .filter(|t| {
+            let t = t.to_string_lossy();
+            !space.repos.iter().any(|r| r.source == t)
+        })
+        .collect();
+    if tops.is_empty() {
         return Err(Error::Invalid(format!(
             "{} is already in this space",
-            dir_name(&top)
+            dir_name(repo_path)
         )));
     }
-    let branch = match branch.map(str::trim).filter(|b| !b.is_empty()) {
-        Some(b) => checked_branch(b)?,
-        None => space.branch.clone(),
-    };
-    let stem = dir_name(&top);
-    let mut repo_name = stem.clone();
-    let mut n = 2;
-    while space.repos.iter().any(|r| r.name == repo_name) {
-        repo_name = format!("{stem}-{n}");
-        n += 1;
+    for top in &tops {
+        let taken: Vec<&str> = space.repos.iter().map(|r| r.name.as_str()).collect();
+        let repo_name = unique_name(top, &taken);
+        let base_ref = current_ref(top)?;
+        if let Some(b) = &branch {
+            refuse_if_checked_out_elsewhere(top, &repo_name, b)?;
+            switch_to(top, b, &base_ref)?;
+        }
+        let path = top.to_string_lossy().into_owned();
+        space.repos.push(SpaceRepo {
+            name: repo_name,
+            branch: crate::git::head_branch(top).unwrap_or_else(|| base_ref.clone()),
+            source: path.clone(),
+            worktree: path,
+            base: base_ref,
+        });
     }
-    if let Some(path) = crate::branches::checked_out_in(&top, &branch) {
-        return Err(Error::Invalid(format!(
-            "{branch} is checked out in {path}: switch that checkout to another branch first"
-        )));
-    }
-    let base_ref = current_ref(&top)?;
-    let worktree = paths::space_worktree(&vela.home, &space.id, &repo_name);
-    add_worktree(&top, &worktree, &branch, &base_ref)?;
-    space.repos.push(SpaceRepo {
-        name: repo_name,
-        source: top_s,
-        worktree: worktree.to_string_lossy().into_owned(),
-        base: base_ref,
-        branch,
-    });
     store::save(vela, &space)?;
     Ok(space)
 }
 
-/// Remove a repo from a space. Its worktree is removed; git refuses when it has
-/// uncommitted changes, so nothing is lost. The branch is kept.
+/// Remove a repo from a space. Your clone is not touched. (An older space in a Vela worktree:
+/// that worktree is removed, and git refuses when it has uncommitted changes.)
 pub fn remove_repo(vela: &Vela, id: &str, repo: &str) -> Result<Space> {
     let mut space = store::load(vela, id)?;
     let i = space
@@ -466,8 +503,64 @@ pub fn remove_repo(vela: &Vela, id: &str, repo: &str) -> Result<Space> {
         ));
     }
     let r = &space.repos[i];
-    git(Path::new(&r.source), &["worktree", "remove", &r.worktree])?;
+    if !r.is_clone() {
+        git(Path::new(&r.source), &["worktree", "remove", &r.worktree])?;
+    }
     space.repos.remove(i);
+    store::save(vela, &space)?;
+    Ok(space)
+}
+
+/// Bring a repo of an older space, still in a Vela worktree, into your clone: its uncommitted
+/// work (new files included) is carried over, the worktree goes, and the clone is switched to
+/// the branch. The clone must have no uncommitted changes.
+pub fn move_into_clone(vela: &Vela, id: &str, repo: &str) -> Result<Space> {
+    let mut space = store::load(vela, id)?;
+    let i = space
+        .repos
+        .iter()
+        .position(|r| r.name == repo)
+        .ok_or_else(|| Error::RepoNotFound(repo.to_string()))?;
+    let r = space.repos[i].clone();
+    if r.is_clone() {
+        return Ok(space);
+    }
+    let source = Path::new(&r.source);
+    let wt = Path::new(&r.worktree);
+    if !git(source, &["status", "--porcelain"])?.trim().is_empty() {
+        return Err(Error::Invalid(format!(
+            "{} has uncommitted changes: commit or stash them first",
+            r.source
+        )));
+    }
+    if wt.exists() {
+        let branch = crate::git::head_branch(wt).unwrap_or_else(|| r.branch.clone());
+        // The stash is shared by every worktree of a repo: it carries the work across.
+        let dirty = !git(wt, &["status", "--porcelain"])?.trim().is_empty();
+        if dirty {
+            let msg = format!("vela: {} moved into {}", space.id, r.source);
+            git(wt, &["stash", "push", "--include-untracked", "-m", &msg])?;
+        }
+        let restore = |e: Error| {
+            if dirty {
+                let _ = git(wt, &["stash", "pop", "--index"]);
+            }
+            e
+        };
+        git(source, &["worktree", "remove", &r.worktree]).map_err(restore)?;
+        if let Err(e) = git(source, &["switch", "--quiet", &branch]) {
+            let _ = git(source, &["worktree", "add", &r.worktree, &branch]);
+            return Err(restore(e));
+        }
+        if dirty && let Err(e) = git(source, &["stash", "pop", "--index"]) {
+            return Err(Error::Invalid(format!(
+                "{} is on {branch}, but the uncommitted work did not apply cleanly: it is kept in `git stash list` ({e})",
+                r.source
+            )));
+        }
+    }
+    space.repos[i].worktree = r.source.clone();
+    space.normalize();
     store::save(vela, &space)?;
     Ok(space)
 }

@@ -166,6 +166,39 @@ pub async fn remove_repo_from_space(
     Ok(space)
 }
 
+#[tauri::command]
+pub async fn space_page(vela: State<'_, Vela>, space_id: String) -> AppResult<String> {
+    blocking(&vela, move |v| commands::space_page(v, &space_id)).await
+}
+
+#[tauri::command]
+pub async fn save_space_page(
+    vela: State<'_, Vela>,
+    space_id: String,
+    text: String,
+) -> AppResult<()> {
+    blocking(&vela, move |v| {
+        commands::save_space_page(v, &space_id, &text)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn move_repo_into_clone(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    watchers: State<'_, Arc<Watchers>>,
+    space_id: String,
+    repo: String,
+) -> AppResult<Space> {
+    let space = blocking(&vela, move |v| {
+        commands::move_repo_into_clone(v, &space_id, &repo)
+    })
+    .await?;
+    watchers.restart(&space, &emitter(&app));
+    Ok(space)
+}
+
 /// Store the window of a space. `None` also closes its own window if one is open.
 #[tauri::command]
 pub async fn set_window(

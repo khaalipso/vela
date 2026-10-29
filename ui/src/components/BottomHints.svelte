@@ -5,12 +5,13 @@
   import Kbd from "./Kbd.svelte";
 
   const HINTS: Record<View, [string, string][]> = {
+    space: [["E", "write"], ["Esc", "done"], ["Paste a URL", "add it"]],
     review: [["J K", "file"], ["Space", "accept file"], ["N", "reject"], ["Tab", "next change"], ["Enter", "edit"], ["M", "comment"]],
     code: [["Click", "type anywhere"], ["J K", "proposals"], ["Y N", "accept, reject"], ["B", "files"], ["Ctrl P", "go to file"]],
     agents: [["@", "ask"], ["Y N", "answer"]],
     prs: [["R", "refresh"], ["@", "ask an agent"]],
   };
-  const hints = $derived([...HINTS[app.view], ["C", "commit"], ["L", "links"], ["Right click", "actions"], ["Ctrl K", "ask an agent"], ["Ctrl T", "everything"]]);
+  const hints = $derived([...HINTS[app.view], ["C", "commit"], ["0", "page"], ["Right click", "actions"], ["Ctrl K", "ask an agent"], ["Ctrl T", "everything"]]);
   const stack = $derived(app.sd.stack);
   const starting = $derived(stack.filter((s) => s.state === "starting").length);
   const label = (s: { name: string; version: string | null }) => (s.version ? `${s.name} ${s.version}` : s.name);

@@ -53,7 +53,8 @@ export interface SeedSpace {
 
 export const REPOS = ["api", "web", "infra", "research-engine", "set.mm", "sillage", "maths"];
 
-const repo = (name: string, worktree: string) => ({ name, source: `~/Work/${name}`, worktree, base: "main" });
+// The space works in the clone itself; the second argument only said where the old worktree was.
+const repo = (name: string, _was: string) => ({ name, source: `~/Work/${name}`, worktree: `~/Work/${name}`, base: "main" });
 
 const stripe: SeedSpace = {
   space: {

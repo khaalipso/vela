@@ -10,7 +10,8 @@ Today: the Jira ticket is in one tab, the design doc in another, the staging URL
 Vela: each space has a context card with its links: issue (Jira, Linear, GitHub), PRs, docs, Figma, Sentry issue, Grafana dashboard, Slack thread, staging and prod URLs.
 - Links are detected automatically: `PROJ-123` in the branch or commits, URLs pasted in the composer or in agent output, PRs opened from the space.
 - Each link is fetched once through MCP (Jira, Linear, Sentry, GitHub servers) and summarised. Agents get the ticket, its acceptance criteria and the error trace without you pasting anything.
-- `Ctrl K` then "staging", "ticket", "dashboard" opens it. `L` adds a link.
+- `Ctrl K` then "staging", "ticket", "dashboard" opens it.
+- Built: the page of the space (`0`), free Markdown for links and notes; pasted URLs go on it, detected links show on top.
 - Links of a repo (prod URL, runbook, dashboard) live in the repo config and show in every space that uses the repo.
 
 ### 2. Where was I

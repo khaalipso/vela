@@ -1,11 +1,10 @@
-export type View = "code" | "review" | "agents" | "prs";
+export type View = "space" | "code" | "review" | "agents" | "prs";
 export type Overlay =
   | "palette"
   | "quickopen"
   | "newspace"
   | "commit"
   | "composer"
-  | "links"
   | "help"
   | "sheet"
   | "settings"
@@ -31,12 +30,8 @@ export type Action =
   | { type: "cc-edit" } // jump into the subject field
   | { type: "cc-conventional" } // conventional commits on / off
   | { type: "cc-repo"; delta: 1 | -1 } // commit the next / previous repo with staged changes
-  // links sheet (overlay "links")
-  | { type: "links-move"; delta: 1 | -1 }
-  | { type: "links-open" }
-  | { type: "links-submit" } // Enter in the URL field: add it, or open the selected link when empty
-  | { type: "links-remove" }
   | { type: "open-link"; id: string }
+  | { type: "page-edit" } // the space page: write in it
   | { type: "composer-role"; delta: 1 | -1 }
   | { type: "composer-harness"; delta: 1 | -1 } // Shift Tab
   | { type: "composer-tier"; delta: 1 | -1 } // Ctrl Up raises, Ctrl Down lowers
@@ -60,13 +55,13 @@ export type Action =
   | { type: "toggle-stack" }
   | { type: "open-stack" }
   | { type: "open-commit" }
-  | { type: "open-links" }
   | { type: "toggle-window" }
   | { type: "open-composer" }
   | { type: "open-newspace" }
   | { type: "open-newrepo" }
   | { type: "open-addrepo" }
   | { type: "remove-repo"; repo: string }
+  | { type: "move-repo-into-clone"; repo: string }
   | { type: "open-palette" }
   | { type: "open-help" }
   | { type: "open-file"; space: number; file: string }
@@ -178,13 +173,13 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
   }
   // The menu key works everywhere, even in a text field or the editor.
   if (k === "ContextMenu" || (shift && !ctrl && !alt && k === "F10")) return { type: "context-menu" };
-  if (ctrl && !alt && (k === "p" || k === "P") && !c.overlay?.match(/^(newspace|commit|composer|links|help)$/)) {
+  if (ctrl && !alt && (k === "p" || k === "P") && !c.overlay?.match(/^(newspace|commit|composer|help)$/)) {
     return { type: "quick-open" };
   }
 
   if (k === "Escape") {
     // Sheets with fields: the first Esc leaves the field, the next one closes the sheet.
-    if (c.typing && (c.overlay === "commit" || c.overlay === "links")) return { type: "blur" };
+    if (c.typing && c.overlay === "commit") return { type: "blur" };
     if (c.overlay || c.stackOpen) return { type: "close" };
     if (c.typing) return { type: "blur" };
     return null;
@@ -240,16 +235,6 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
         return null;
     }
   }
-  if (c.overlay === "links") {
-    if (k === "ArrowDown") return { type: "links-move", delta: 1 };
-    if (k === "ArrowUp") return { type: "links-move", delta: -1 };
-    if (k === "Enter") return c.typing ? { type: "links-submit" } : { type: "links-open" };
-    if (c.typing || ctrl || alt) return null;
-    if (k === "j" || k === "J") return { type: "links-move", delta: 1 };
-    if (k === "k" || k === "K") return { type: "links-move", delta: -1 };
-    if (k === "Backspace" || k === "Delete") return { type: "links-remove" };
-    return null;
-  }
   if (c.overlay === "composer") {
     if (k === "Tab") return shift ? { type: "composer-harness", delta: 1 } : { type: "composer-role", delta: 1 };
     if (ctrl && k === "ArrowUp") return { type: "composer-tier", delta: 1 };
@@ -284,12 +269,15 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
     if (r) return r;
   }
   if (c.view === "prs" && (k === "r" || k === "R")) return { type: "prs-refresh" };
+  if (c.view === "space" && (k === "e" || k === "E" || k === "Enter")) return { type: "page-edit" };
 
   switch (k) {
     case "/":
       return c.filesOpen ? { type: "files-filter" } : null;
     case "Enter":
       return shift ? { type: "next-waiting" } : { type: "up-next" };
+    case "0":
+      return { type: "view", view: "space" };
     case "1":
       return { type: "view", view: "code" };
     case "2":
@@ -336,7 +324,7 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
       return { type: "open-commit" };
     case "l":
     case "L":
-      return { type: "open-links" };
+      return { type: "view", view: "space" };
     case "w":
     case "W":
       return { type: "toggle-window" };

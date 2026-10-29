@@ -109,7 +109,7 @@ describe("links in the command bar", () => {
   it("finds a link by key, by word or by its kind of place", () => {
     expect(filterPalette(withLinks, "PAY-412").map((i) => i.title)).toEqual(["Open PAY-412"]);
     expect(filterPalette(withLinks, "staging").map((i) => i.title)).toEqual(["Open Staging acme.dev"]);
-    expect(filterPalette(withLinks, "links")[0].action).toEqual({ type: "open-links" });
+    expect(filterPalette(withLinks, "page")[0].action).toEqual({ type: "view", view: "space" });
   });
 
   it("has no links section without links", () => {

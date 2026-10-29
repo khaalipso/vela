@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// Links and the commit composer through the whole shell on the mock backend, driven by synthetic
+// The space page and the commit composer through the whole shell on the mock backend, driven by synthetic
 // key events and paste events. No screen involved.
 import { mount, tick, unmount } from "svelte";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -43,84 +43,37 @@ afterAll(() => {
   app.destroy();
 });
 
-describe("links", () => {
-  it("the top bar shows the issue key first, then the other links", () => {
-    expect($$(".lk .lt").map((e) => e.textContent)).toEqual([
-      "PAY-412",
-      "Stripe webhooks",
-      "Payments latency",
-      "Staging acme.dev",
-    ]);
-    expect($(".lk.more")).toBeNull();
-  });
-
-  it("L opens the sheet grouped by kind; Esc leaves the field, J K move, Enter opens", async () => {
-    press("l");
+describe("the space page", () => {
+  let view: typeof app.view;
+  it("0 shows the page: the links found by Vela, then the links typed before, in the Markdown", async () => {
+    view = app.view;
+    press("0");
     await settle();
-    expect(app.overlay).toBe("links");
-    expect($$(".sheet .psec").map((e) => e.textContent)).toEqual(["Issues", "Docs", "Dashboards", "Environments"]);
-    expect(document.activeElement?.id).toBe("links-in");
-    press("Escape", {}, document.activeElement!);
-    (document.activeElement as HTMLElement).blur();
-    await settle();
-    expect(app.overlay).toBe("links");
-    expect($(".pit[aria-selected='true']")?.textContent).toContain("PAY-412");
-    press("j");
-    await settle();
-    expect($(".pit[aria-selected='true']")?.textContent).toContain("Stripe webhooks");
-    press("Enter");
+    expect(app.view).toBe("space");
+    await vi.waitFor(() => expect($(".page .md")?.textContent).toContain("Staging acme.dev"));
+    // The ticket and the repo's .vela/links.toml are found; links typed by hand moved into the page.
+    expect($$(".found .lk .lt").map((e) => e.textContent)).toEqual(["PAY-412", "Payments latency"]);
+    expect($(".page .md h1")?.textContent).toBe(app.space.name);
+    $$(".page .md a").find((a) => a.textContent === "Stripe webhooks")!.click();
     await settle();
     expect(backend.opened).toEqual(["https://docs.stripe.com/webhooks"]);
   });
 
-  it("Backspace removes only what you added", async () => {
-    press("k");
+  it("E writes in it; Esc leaves and it is saved", async () => {
+    press("0");
     await settle();
-    press("Backspace");
+    press("e");
+    await vi.waitFor(() => expect($(".page .cm-content")).toBeTruthy());
+    const { EditorView } = await import("@codemirror/view");
+    const v = EditorView.findFromDOM($(".page .cm-editor")!)!;
+    v.dispatch({ changes: { from: v.state.doc.length, insert: "- [ ] ask ops for the webhook secret\n" } });
+    press("Escape", {}, $(".page .cm-content")!);
     await settle();
-    expect(app.toastState?.text).toBe("Found in the history, it cannot be removed here");
-    expect(app.links.length).toBe(4);
-    press("j");
-    press("j");
+    expect(app.pageEditing).toBe(false);
+    await vi.waitFor(async () => expect(await backend.spacePage("stripe")).toContain("ask ops for the webhook secret"));
+    expect($(".page .md")?.textContent).toContain("ask ops for the webhook secret");
+    app.setView(view);
     await settle();
-    expect($(".pit[aria-selected='true']")?.textContent).toContain("Payments latency");
-    press("Backspace");
-    await settle();
-    expect(app.toastState?.text).toBe("Repo links live in .vela/links.toml");
-    // Staging was typed by hand: it goes.
-    press("j");
-    await settle();
-    expect($(".pit[aria-selected='true']")?.textContent).toContain("Staging");
-    press("Backspace");
-    await settle();
-    expect(app.toastState?.text).toBe("Removed Staging acme.dev");
-    expect(app.links.map((l) => l.title)).not.toContain("Staging acme.dev");
-  });
-
-  it("typing a URL previews it live and Enter adds it", async () => {
-    const field = $("#links-in") as HTMLInputElement;
-    field.focus();
-    await typeInto(field, "https://acme.atlassian.net/browse/PAY-9");
-    expect($(".preview")?.textContent).toContain("PAY-9");
-    expect($(".preview")?.textContent).toContain("issue");
-    await typeInto(field, "linear dot app");
-    expect($(".preview")?.textContent).toContain("Not a full http or https URL");
-    press("Enter", {}, field);
-    await settle();
-    expect(app.toastState?.text).toBe("Paste a full http or https URL");
-    await typeInto(field, "https://acme.atlassian.net/browse/PAY-9");
-    press("Enter", {}, field);
-    await settle();
-    expect(app.toastState?.text).toBe("Linked PAY-9");
-    expect(field.value).toBe("");
-    // Issues come first in the sheet and in the top bar, and the new row is selected.
-    expect($(".pit[aria-selected='true']")?.textContent).toContain("PAY-9");
-    press("Escape", {}, field);
-    field.blur();
-    press("Escape");
-    await settle();
-    expect(app.overlay).toBeNull();
-    expect($$(".lk .lt").map((e) => e.textContent).slice(0, 2)).toEqual(["PAY-412", "PAY-9"]);
   });
 
   it("the command bar opens a link by its key", async () => {
@@ -134,15 +87,11 @@ describe("links", () => {
     expect(app.overlay).toBeNull();
   });
 
-  it("pasting a URL outside any field links it; +N counts the links the bar cannot show", async () => {
+  it("a URL pasted outside any field goes on the page", async () => {
     expect(paste("not a url").defaultPrevented).toBe(false);
     expect(paste("https://www.figma.com/design/AbC/Checkout-flow").defaultPrevented).toBe(true);
-    await settle();
-    expect(app.toastState?.text).toBe("Linked Checkout flow");
-    expect((await backend.links("stripe")).at(-1)).toMatchObject({ source: "paste", kind: "design", provider: "figma" });
-    expect($$(".lk .lt").length).toBe(5);
-    await app.dispatch({ type: "open-link", id: app.links.at(-1)!.id });
-    expect(backend.opened.at(-1)).toBe("https://www.figma.com/design/AbC/Checkout-flow");
+    await vi.waitFor(() => expect(app.toastState?.text).toBe(`Added to the page of ${app.space.name} (0)`));
+    expect(await backend.spacePage("stripe")).toContain("- [Checkout flow](https://www.figma.com/design/AbC/Checkout-flow)");
   });
 });
 
@@ -166,7 +115,7 @@ describe("commit composer", () => {
     expect($$(".rtab").map((e) => e.querySelector("b")?.textContent)).toEqual(["api", "web"]);
     expect($$(".card").length).toBe(1);
     expect($$(".card .prev").map((e) => e.textContent)).toEqual(["fix(billing): update webhook and checkout"]);
-    expect(($('[data-field="footers"]') as HTMLTextAreaElement).value).toBe("Refs: PAY-412, PAY-9");
+    expect(($('[data-field="footers"]') as HTMLTextAreaElement).value).toBe("Refs: PAY-412");
     expect($$(".card.focus .hk .p").map((e) => e.textContent)).toEqual(["src/billing/webhook.ts", "src/billing/webhook.ts", "src/billing/checkout.ts"]);
     expect($$(".card.focus .hk .n").map((e) => e.textContent)).toEqual(["staged earlier"]);
   });
@@ -227,7 +176,7 @@ describe("commit composer", () => {
     await vi.waitFor(() => expect(backend.commits.length).toBe(1));
     expect(backend.commits.map((c) => [c.repos, c.group])).toEqual([[["api"], "g1"]]);
     expect(backend.commits[0].message).toBe(
-      "feat(billing)!: update webhook and checkout\n\nBREAKING CHANGE: handleWebhook now needs a signature\nRefs: PAY-412, PAY-9\nVela-Override: Hotfix, tests are flaky on CI",
+      "feat(billing)!: update webhook and checkout\n\nBREAKING CHANGE: handleWebhook now needs a signature\nRefs: PAY-412\nVela-Override: Hotfix, tests are flaky on CI",
     );
     expect(app.toastState?.text).toBe("Pushed 1 commit in api on feat/stripe-v2. web has staged changes too: C to commit");
     expect(app.overlay).toBeNull();

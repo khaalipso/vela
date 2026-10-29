@@ -47,3 +47,26 @@ pub fn git_with(
         })
     }
 }
+
+/// The branch checked out in `dir` (a clone or a worktree), read from `HEAD` without running
+/// git: cheap enough to call on every load. None when detached or unreadable.
+pub fn head_branch(dir: &Path) -> Option<String> {
+    let dot_git = dir.join(".git");
+    let git_dir = if dot_git.is_dir() {
+        dot_git
+    } else {
+        // A linked worktree: `.git` is a file "gitdir: <path>".
+        let text = std::fs::read_to_string(&dot_git).ok()?;
+        let p = text.strip_prefix("gitdir:")?.trim();
+        let p = Path::new(p);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            dir.join(p)
+        }
+    };
+    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    head.trim()
+        .strip_prefix("ref: refs/heads/")
+        .map(str::to_string)
+}

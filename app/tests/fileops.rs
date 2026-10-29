@@ -392,13 +392,13 @@ fn rename_color_archive_unarchive_and_remove_space() {
     assert_eq!(commands::list_spaces(&e.vela).unwrap().len(), 1);
     assert!(fileops::list_archived(&e.vela).unwrap().is_empty());
 
-    // Remove: the worktree goes, a branch with unmerged commits is kept.
+    // Remove: the clone, its work and its branch stay.
     write(&wt(&s), "new.txt", "work\n");
     sh(&wt(&s), &["add", "new.txt"]);
     sh(&wt(&s), &["commit", "-q", "-m", "work"]);
     let source = PathBuf::from(&s.repos[0].source);
     fileops::remove_space(&e.vela, &s.id).unwrap();
-    assert!(!wt(&s).exists());
+    assert!(wt(&s).join("new.txt").exists());
     assert!(commands::list_spaces(&e.vela).unwrap().is_empty());
     assert!(fileops::list_archived(&e.vela).unwrap().is_empty());
     let branches = sh(&source, &["branch", "--list", &s.branch]);
@@ -413,16 +413,12 @@ fn rename_color_archive_unarchive_and_remove_space() {
 }
 
 #[test]
-fn removing_a_merged_space_deletes_its_branch() {
+fn removing_a_space_keeps_the_branch_of_the_clone() {
     let e = env();
     let s = space(&e);
     let source = PathBuf::from(&s.repos[0].source);
     fileops::remove_space(&e.vela, &s.id).unwrap();
-    assert!(
-        sh(&source, &["branch", "--list", &s.branch])
-            .trim()
-            .is_empty()
-    );
+    assert!(sh(&source, &["branch", "--list", &s.branch]).contains(&s.branch));
 }
 
 #[test]

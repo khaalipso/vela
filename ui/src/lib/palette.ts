@@ -37,7 +37,7 @@ export function buildPaletteItems(src: PaletteSource): PaletteItem[] {
     ["Pull requests: reviews, comments, checks", "4", { type: "view", view: "prs" }],
     ["Ask an agent", "@", { type: "open-composer" }],
     ["Commit and push", "C", { type: "open-commit" }],
-    ["Links of this space", "L", { type: "open-links" }],
+    ["Page of this space: notes and links", "0", { type: "view", view: "space" }],
     ["New space", "", { type: "open-newspace" }],
     ["New repo", "", { type: "open-newrepo" }],
     ["Add a repo to this space", "", { type: "open-addrepo" }],

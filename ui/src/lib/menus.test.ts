@@ -208,8 +208,8 @@ describe("folder and repo menus", () => {
       "Stage all",
       "Unstage all",
       "-",
-      "Copy worktree path",
-      "Reveal worktree",
+      "Copy path",
+      "Reveal in file manager",
       "Open terminal here",
       "-",
       "Remove repo from space",
@@ -261,8 +261,8 @@ describe("folder and repo menus", () => {
       "Copy branch name",
       "Push branch",
       "-",
-      "Copy worktree path",
-      "Reveal worktree",
+      "Copy path",
+      "Reveal in file manager",
       "Open terminal here",
       "-",
       "Remove repo from space",
@@ -577,27 +577,21 @@ describe("space menus", () => {
 describe("links", () => {
   const link = (over: Partial<Link>): Link => ({ id: "l", kind: "doc", provider: "url", url: "https://x.test/a", title: "A doc", source: "manual", ...over });
 
-  it("a manual link can be opened, copied and removed", () => {
-    const m = linkMenu(link({}));
-    expect(labels(m)).toEqual(["Open", "Copy URL", "Remove"]);
-    expect(find(m, "Remove").disabled).toBe(false);
-  });
-
-  it("a detected link cannot be removed, a key without URL cannot be opened", () => {
+  it("a found link can be opened and copied; a key without URL cannot", () => {
+    expect(labels(linkMenu(link({})))).toEqual(["Open", "Copy URL"]);
     const m = linkMenu(link({ source: "branch", url: "", kind: "issue", key: "PAY-1" }));
-    expect(find(m, "Remove").disabled).toMatch(/history/);
     expect(find(m, "Open").disabled).toMatch(/tracker URL/);
     expect(find(m, "Copy URL").disabled).toMatch(/tracker URL/);
-    expect(find(linkMenu(link({ source: "repo" })), "Remove").disabled).toMatch(/links\.toml/);
   });
 
-  it("Remove drops a manual link from the space", async () => {
+  it("an older space still in a Vela worktree offers to work in the clone", async () => {
     app.goSpace(0);
-    const l = await backend.addLink(app.space.id, "https://x.test/menu", "Menu doc");
-    await app.refresh();
-    find(linkMenu(l), "Remove").run!();
-    await settle();
-    expect(app.sd.links.some((x) => x.id === l.id)).toBe(false);
+    const r = app.space.repos[0];
+    const was = r.worktree;
+    r.worktree = "/home/you/.local/share/vela/worktrees/x/api";
+    expect(labels(repoChipMenu(r.name))).toContain("Work in my clone");
+    r.worktree = was;
+    expect(labels(repoChipMenu(r.name))).not.toContain("Work in my clone");
   });
 });
 
@@ -653,7 +647,7 @@ describe("the command bar", () => {
       "Archive",
       "Remove space…",
       "Copy branch name",
-      "Reveal worktree",
+      "Reveal in file manager",
       "Open terminal here",
       "Remove repo from space",
     ]) {
@@ -663,7 +657,7 @@ describe("the command bar", () => {
     expect(titles).not.toContain("Open in its own window");
     expect(titles).not.toContain("Discard changes…");
     // a repo's items say which repo
-    expect(items.find((i) => i.title === "Reveal worktree")?.sub).toBeTruthy();
+    expect(items.find((i) => i.title === "Reveal in file manager")?.sub).toBeTruthy();
   });
 
   it("is part of app.paletteItems, right after the actions, and runs", async () => {

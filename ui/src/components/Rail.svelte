@@ -12,8 +12,16 @@
 
 <nav class="rail" class:floating aria-label="Spaces" onmouseleave={() => floating && (app.railPeek = false)}>
   <div class="brand">
-    <svg width="20" height="20" viewBox="0 0 256 256" fill="none" stroke="var(--space)" stroke-width="18" stroke-linejoin="round" aria-hidden="true"
-      ><path d="M128 28v172M128 40c40 30 64 76 64 140H128M120 64c-30 24-48 62-48 116h48" /><path d="M40 212h176" /></svg
+    <svg width="20" height="20" viewBox="0 0 256 256" aria-hidden="true"
+      ><defs><linearGradient id="vela-mark" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4b860" /><stop offset="1" stop-color="#e8705a" /></linearGradient></defs
+      ><rect width="256" height="256" rx="58" fill="url(#vela-mark)" /><path d="M92 52v124h76c0-52-28-96-76-124z" fill="none" stroke="#fff" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" /><path
+        d="M60 206c44 10 92 10 136 0"
+        fill="none"
+        stroke="#fff"
+        stroke-opacity=".55"
+        stroke-width="16"
+        stroke-linecap="round"
+      /></svg
     >
     Vela<small>Window 1</small>
     <button

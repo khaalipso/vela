@@ -2,13 +2,11 @@
   import { colorOfRepo } from "../lib/colors";
   import { app } from "../lib/app.svelte";
   import { openAtEvent } from "../lib/contextmenu.svelte";
-  import { branchMenu, linkMenu, repoChipMenu, ticketMenu } from "../lib/menus";
+  import { branchMenu, repoChipMenu, ticketMenu } from "../lib/menus";
   import { ops } from "../lib/ops.svelte";
   import { repoBranch, spaceBranches } from "../lib/types";
-  import LinkMark from "./LinkMark.svelte";
   import ViewSwitch from "./ViewSwitch.svelte";
 
-  const chips = $derived(app.chips);
   const branches = $derived(spaceBranches(app.space));
   /** The repos are on different branches: each chip shows its own. */
   const split = $derived(branches.length > 1);
@@ -33,23 +31,6 @@
   {:else}
     <button class="ticket add" title="Set the ticket of this task (Jira key or URL): used in the commits" onclick={() => ops.askTicket()}>+ ticket</button>
   {/if}
-  {#if chips.shown.length}
-    <div class="lks" aria-label="Links">
-      {#each chips.shown as l (l.id)}
-        <button
-          class="lk"
-          title={l.url || `${l.key ?? l.title}: no tracker URL configured`}
-          onclick={() => app.openLink(l.id)}
-          oncontextmenu={(e) => openAtEvent(e, linkMenu(l), l.title)}
-        >
-          <LinkMark link={l} /><span class="lt">{l.key && l.kind === "issue" ? l.key : l.title}</span>
-        </button>
-      {/each}
-      {#if chips.more > 0}
-        <button class="lk more" title="All links" onclick={() => app.openLinks()}>+{chips.more}</button>
-      {/if}
-    </div>
-  {/if}
   {#if app.view === "code"}<button class="filesbtn" aria-pressed={app.filesOpen} title="Show or hide the files (B)" onclick={() => app.dispatch({ type: "toggle-files" })}>
     <svg width="14" height="14" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="20" stroke-linejoin="round" aria-hidden="true"><path d="M32 72a16 16 0 0 1 16-16h48l24 24h88a16 16 0 0 1 16 16v96a16 16 0 0 1-16 16H48a16 16 0 0 1-16-16z"></path></svg>
     Files <kbd>B</kbd>
@@ -57,10 +38,10 @@
   <div class="chips">
     {#each app.space.repos as r (r.name)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <span class="chip" style:--rc={colorOfRepo(app.space, r.name)} oncontextmenu={(e) => openAtEvent(e, repoChipMenu(r.name), r.name)}>
-        <button class="chipb" title={`${r.worktree}, on ${repoBranch(app.space, r.name)}`} onclick={() => { if (!app.filesOpen) app.dispatch({ type: "toggle-files" }); }}><b>{r.name}</b>{#if split}<span class="rb mono">{repoBranch(app.space, r.name)}</span>{/if}</button>
+      <span class="chip" class:old={r.worktree !== r.source} style:--rc={colorOfRepo(app.space, r.name)} oncontextmenu={(e) => openAtEvent(e, repoChipMenu(r.name), r.name)}>
+        <button class="chipb" title={`${r.worktree}, on ${repoBranch(app.space, r.name)}${r.worktree !== r.source ? `\nStill in a Vela worktree: right click, "Work in my clone"` : ""}`} onclick={() => { if (!app.filesOpen) app.dispatch({ type: "toggle-files" }); }}><b>{r.name}</b>{#if split}<span class="rb mono">{repoBranch(app.space, r.name)}</span>{/if}</button>
         {#if app.space.repos.length > 1}
-          <button class="rm" aria-label={`Remove ${r.name} from this space`} title="Remove from this space (its worktree must be clean)" onclick={() => app.dispatch({ type: "remove-repo", repo: r.name })}>×</button>
+          <button class="rm" aria-label={`Remove ${r.name} from this space`} title="Remove from this space (the repo itself is not touched)" onclick={() => app.dispatch({ type: "remove-repo", repo: r.name })}>×</button>
         {/if}
       </span>
     {/each}
@@ -215,39 +196,12 @@
     font-size: 12px;
     color: var(--muted);
   }
-  .lks {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-  .lk {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    height: 28px;
-    max-width: 200px;
-    padding: 0 10px 0 6px;
-    border-radius: 8px;
-    background: var(--panel);
-    font-size: 12px;
-    color: var(--fg);
-  }
-  .lk:hover {
-    background: var(--hover);
-  }
-  .lk.more {
-    padding: 0 8px;
-    color: var(--muted);
-  }
-  .lt {
-    min-width: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
   .chip b {
     color: var(--fg);
     font-weight: 600;
+  }
+  .chip.old {
+    outline: 1px dashed var(--faint);
+    outline-offset: 1px;
   }
 </style>

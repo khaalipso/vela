@@ -76,41 +76,51 @@ fn one_repo_space(e: &Env, files: &[(&str, &str)]) -> Space {
 }
 
 #[test]
-fn create_makes_branch_and_worktrees_in_two_repos() {
+fn create_works_in_the_clones_on_their_branch() {
     let e = env();
     let a = repo(&e.root, "api", &[("a.txt", "a\n")]);
     let b = repo(&e.root, "web", &[("b.txt", "b\n")]);
+    sh(&b, &["switch", "-q", "-c", "develop"]);
     let s = space::create(&e.vela, "Refunds & Co!", &[&a, &b], None).unwrap();
     assert_eq!(s.id, "refunds-co");
-    assert_eq!(s.branch, "feat/refunds-co");
+    assert_eq!(s.branch, "main");
     assert_eq!(s.color, "#E8A14A");
     assert_eq!(s.repos.len(), 2);
     assert_eq!(s.repos[0].base, "main");
+    assert_eq!(s.repos[1].branch, "develop");
     assert!(s.created_at.ends_with('Z') && s.created_at.len() == 20);
     for (i, src) in [&a, &b].iter().enumerate() {
-        let w = wt(&s, i);
-        assert_eq!(
-            w,
-            e.vela
-                .home
-                .join("worktrees/refunds-co")
-                .join(&s.repos[i].name)
-        );
-        assert_eq!(
-            sh(&w, &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
-            "feat/refunds-co"
-        );
-        assert!(sh(src, &["branch", "--list", "feat/refunds-co"]).contains("feat/refunds-co"));
+        assert_eq!(wt(&s, i), **src);
+        assert!(s.repos[i].is_clone());
+        assert!(!sh(src, &["worktree", "list"]).contains("worktrees"));
     }
     assert_eq!(store::load(&e.vela, "refunds-co").unwrap(), s);
     assert_eq!(store::list(&e.vela).unwrap().len(), 1);
-    // A second space takes the next color; same name is refused.
+    // Switching branch elsewhere (another editor) is what the space shows.
+    sh(&a, &["switch", "-q", "-c", "elsewhere"]);
+    assert_eq!(
+        store::load(&e.vela, "refunds-co").unwrap().repos[0].branch,
+        "elsewhere"
+    );
+    // A second space on the same repo is fine; the same name is refused.
     let s2 = space::create(&e.vela, "Other", &[&a], Some("main")).unwrap();
     assert_eq!(s2.color, "#7DB8F5");
     assert!(matches!(
         space::create(&e.vela, "refunds co", &[&a], None),
         Err(Error::SpaceExists(_))
     ));
+}
+
+#[test]
+fn a_folder_of_repos_adds_each_of_them() {
+    let e = env();
+    let dir = e.root.join("work");
+    repo(&dir, "api", &[("a", "a\n")]);
+    repo(&dir, "web", &[("w", "w\n")]);
+    fs::create_dir_all(dir.join("notes")).unwrap();
+    let s = space::create(&e.vela, "All", &[&dir], None).unwrap();
+    let names: Vec<&str> = s.repos.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, ["api", "web"]);
 }
 
 #[test]
@@ -128,16 +138,23 @@ fn creation_rolls_back_when_a_later_repo_fails() {
     let e = env();
     let a = repo(&e.root, "api", &[("a", "a\n")]);
     let b = repo(&e.root, "web", &[("b", "b\n")]);
-    // The second repo already has the branch (it is reused, and must survive the rollback),
-    // and its worktree path is taken, so git refuses it.
-    sh(&b, &["branch", "feat/boom"]);
-    write(&e.vela.home.join("worktrees/boom/web"), "taken", "x\n");
-    let err = space::create(&e.vela, "boom", &[&a, &b], None).unwrap_err();
+    // Switching web would overwrite an uncommitted change, so git refuses it.
+    sh(&b, &["switch", "-q", "-c", "feat/boom"]);
+    write(&b, "b", "on boom\n");
+    sh(&b, &["commit", "-qam", "boom"]);
+    sh(&b, &["switch", "-q", "main"]);
+    write(&b, "b", "mine\n");
+    let err =
+        space::create_with(&e.vela, "boom", &[&a, &b], &opts(Some("feat/boom"), None)).unwrap_err();
     assert!(matches!(err, Error::Git { .. }), "{err}");
+    // api is back on main, its new branch gone; web's existing branch is kept.
+    assert_eq!(
+        sh(&a, &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "main"
+    );
     assert!(sh(&a, &["branch", "--list", "feat/boom"]).trim().is_empty());
     assert!(!sh(&b, &["branch", "--list", "feat/boom"]).trim().is_empty());
-    assert!(!sh(&a, &["worktree", "list"]).contains("boom"));
-    assert!(!e.vela.home.join("worktrees/boom").exists());
+    assert_eq!(fs::read_to_string(b.join("b")).unwrap(), "mine\n");
     assert!(store::list(&e.vela).unwrap().is_empty());
 }
 
@@ -148,34 +165,25 @@ fn not_a_repo_is_rejected_before_anything_is_created() {
     fs::create_dir_all(&plain).unwrap();
     let err = space::create(&e.vela, "x", &[&plain], None).unwrap_err();
     assert!(matches!(err, Error::NotARepo(_)));
-    assert!(!e.vela.home.join("worktrees").exists());
+    assert!(store::list(&e.vela).unwrap().is_empty());
 }
 
 #[test]
-fn archive_and_remove() {
+fn archive_and_remove_leave_the_clone_alone() {
     let e = env();
     let a = repo(&e.root, "api", &[("a", "a\n")]);
-    let s = space::create(&e.vela, "gone", &[&a], None).unwrap();
+    let s = space::create_with(&e.vela, "gone", &[&a], &opts(Some("feat/gone"), None)).unwrap();
+    write(&a, "a", "mine\n");
     assert!(space::archive(&e.vela, "gone").unwrap().archived);
     assert!(store::load(&e.vela, "gone").unwrap().archived);
     space::remove(&e.vela, "gone").unwrap();
-    assert!(!wt(&s, 0).exists());
-    assert!(sh(&a, &["branch", "--list", "feat/gone"]).trim().is_empty());
+    assert!(wt(&s, 0).join("a").exists());
+    assert_eq!(fs::read_to_string(a.join("a")).unwrap(), "mine\n");
+    assert!(sh(&a, &["branch", "--list", "feat/gone"]).contains("feat/gone"));
     assert!(matches!(
         store::load(&e.vela, "gone"),
         Err(Error::SpaceNotFound(_))
     ));
-}
-
-#[test]
-fn remove_keeps_an_unmerged_branch() {
-    let e = env();
-    let a = repo(&e.root, "api", &[("a", "a\n")]);
-    let s = space::create(&e.vela, "wip", &[&a], None).unwrap();
-    write(&wt(&s, 0), "a", "changed\n");
-    sh(&wt(&s, 0), &["commit", "-qam", "work"]);
-    space::remove(&e.vela, "wip").unwrap();
-    assert!(sh(&a, &["branch", "--list", "feat/wip"]).contains("feat/wip"));
 }
 
 #[test]
@@ -185,7 +193,7 @@ fn remove_deletes_agent_worktrees_and_branches() {
     let s = space::create(&e.vela, "wip", &[&a], None).unwrap();
     let agent_wt = vela_core::paths::agent_worktree(&e.vela.home, &s.id, "developer-1", "api");
     std::fs::create_dir_all(agent_wt.parent().unwrap()).unwrap();
-    let branch = format!("{}--developer-1", s.branch);
+    let branch = format!("{}--developer-1", s.repos[0].branch);
     sh(
         &a,
         &[
@@ -204,6 +212,49 @@ fn remove_deletes_agent_worktrees_and_branches() {
     assert!(!agent_wt.exists());
     assert!(!sh(&a, &["branch", "--list", &branch]).contains("developer-1"));
     assert!(!sh(&a, &["worktree", "list"]).contains("developer-1"));
+    assert!(a.join("a").exists());
+}
+
+#[test]
+fn an_older_space_moves_into_the_clone_with_its_work() {
+    let e = env();
+    let a = repo(&e.root, "api", &[("a", "a\n")]);
+    let s = space::create(&e.vela, "old", &[&a], None).unwrap();
+    // As Vela used to make it: a worktree of its own, on its own branch, with work in it.
+    let old_wt = e.vela.home.join("worktrees/old/api");
+    sh(
+        &a,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feat/old",
+            &old_wt.to_string_lossy(),
+        ],
+    );
+    write(&old_wt, "a", "staged\n");
+    sh(&old_wt, &["add", "a"]);
+    write(&old_wt, "new.txt", "untracked\n");
+    let mut legacy = s.clone();
+    legacy.repos[0].worktree = old_wt.to_string_lossy().into_owned();
+    store::save(&e.vela, &legacy).unwrap();
+    assert!(!store::load(&e.vela, "old").unwrap().repos[0].is_clone());
+    // A dirty clone is refused, nothing moves.
+    write(&a, "x", "dirty\n");
+    assert!(space::move_into_clone(&e.vela, "old", "api").is_err());
+    assert!(old_wt.join("new.txt").exists());
+    fs::remove_file(a.join("x")).unwrap();
+    let moved = space::move_into_clone(&e.vela, "old", "api").unwrap();
+    assert!(moved.repos[0].is_clone());
+    assert_eq!(moved.repos[0].branch, "feat/old");
+    assert!(!old_wt.exists());
+    assert_eq!(fs::read_to_string(a.join("a")).unwrap(), "staged\n");
+    assert_eq!(
+        fs::read_to_string(a.join("new.txt")).unwrap(),
+        "untracked\n"
+    );
+    assert!(sh(&a, &["diff", "--cached", "--name-only"]).contains('a'));
 }
 
 #[test]
@@ -245,7 +296,7 @@ fn status_reports_conflicts() {
     sh(&w, &["checkout", "-q", "-b", "other"]);
     write(&w, "c.txt", "other\n");
     sh(&w, &["commit", "-qam", "other"]);
-    sh(&w, &["checkout", "-q", "feat/task"]);
+    sh(&w, &["checkout", "-q", "main"]);
     write(&w, "c.txt", "mine\n");
     sh(&w, &["commit", "-qam", "mine"]);
     let _ = Command::new("git")
@@ -696,27 +747,28 @@ fn add_and_remove_a_repo_in_a_space() {
     assert_eq!(s2.repos.len(), 2);
     let added = &s2.repos[1];
     assert_eq!(added.name, "other");
-    assert!(Path::new(&added.worktree).join("b.txt").is_file());
-    assert_eq!(
-        sh(
-            Path::new(&added.worktree),
-            &["rev-parse", "--abbrev-ref", "HEAD"]
-        )
-        .trim(),
-        s.branch
-    );
+    assert_eq!(Path::new(&added.worktree), other);
+    assert_eq!(added.branch, "main");
     assert_eq!(store::load(&e.vela, &s.id).unwrap().repos.len(), 2);
     // Same repo twice is refused.
     assert!(space::add_repo(&e.vela, &s.id, &other).is_err());
-    // A dirty worktree is not removed.
-    write(Path::new(&added.worktree), "b.txt", "changed\n");
-    assert!(space::remove_repo(&e.vela, &s.id, "other").is_err());
-    sh(Path::new(&added.worktree), &["checkout", "--", "b.txt"]);
+    // Removing never touches the clone, dirty or not.
+    write(&other, "b.txt", "changed\n");
     let s3 = space::remove_repo(&e.vela, &s.id, "other").unwrap();
     assert_eq!(s3.repos.len(), 1);
-    assert!(!Path::new(&added.worktree).exists());
+    assert_eq!(
+        fs::read_to_string(other.join("b.txt")).unwrap(),
+        "changed\n"
+    );
     // The last repo cannot be removed.
     assert!(space::remove_repo(&e.vela, &s.id, &s3.repos[0].name).is_err());
+    // Added on a branch: the clone is switched to it.
+    let s4 = space::add_repo_on(&e.vela, &s.id, &other, Some("feat/x")).unwrap();
+    assert_eq!(s4.repos[1].branch, "feat/x");
+    assert_eq!(
+        sh(&other, &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "feat/x"
+    );
 }
 
 #[test]
@@ -848,19 +900,31 @@ fn create_with_a_remote_branch_tracks_it() {
 fn a_branch_checked_out_elsewhere_is_refused_with_where() {
     let e = env();
     let a = repo(&e.root, "api", &[("a", "a\n")]);
-    let current = sh(&a, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .trim()
-        .to_string();
-    let err = space::create_with(&e.vela, "X", &[&a], &opts(Some(&current), None)).unwrap_err();
+    let other = e.root.join("other-checkout");
+    sh(
+        &a,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feat/busy",
+            &other.to_string_lossy(),
+        ],
+    );
+    let err = space::create_with(&e.vela, "X", &[&a], &opts(Some("feat/busy"), None)).unwrap_err();
     assert!(err.to_string().contains("checked out in"), "{err}");
     assert!(!vela_core::store::exists(&e.vela, "x"));
+    // The branch the clone is already on is fine.
+    space::create_with(&e.vela, "Y", &[&a], &opts(Some("main"), None)).unwrap();
 }
 
 #[test]
 fn renaming_the_branch_renames_the_agent_branches_too() {
     let e = env();
     let a = repo(&e.root, "api", &[("a", "a\n")]);
-    let s = space::create(&e.vela, "Billing", &[&a], None).unwrap();
+    let s =
+        space::create_with(&e.vela, "Billing", &[&a], &opts(Some("feat/billing"), None)).unwrap();
     sh(&a, &["branch", &format!("{}--developer-1", s.branch)]);
     let s2 = vela_core::branches::rename(&e.vela, &s.id, "louis/billing", None).unwrap();
     assert_eq!(s2.branch, "louis/billing");

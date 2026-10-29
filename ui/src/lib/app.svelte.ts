@@ -28,7 +28,7 @@ import type { Pane } from "./mergeview";
 import { composeMessage, cycleType, mergeAll, moveHunk, splitHunk } from "./commitplan";
 import { fileKey, plural, roleLabel, ROLES, toolLabel, uniq } from "./format";
 import type { Action, Overlay, View } from "./keymap";
-import { groupLinks, isHttpUrl, makeLink, removable, topBarChips, type Chips } from "./links";
+import { groupLinks, isHttpUrl, makeLink } from "./links";
 import { buildPaletteItems, filterPalette, type PaletteItem } from "./palette";
 import { closeTab, loadRecent, openTab, pushRecent, saveRecent, type Tab } from "./tabs";
 import { applyCheckEvent, checkKey, flatChecks, gateFromChecks, gateSettled, type Logs } from "./checks";
@@ -47,6 +47,7 @@ import {
   stageLocally,
   unstageLocally,
   type FileRow,
+  type Focus,
   type RvState,
   type Section,
   type Sections,
@@ -347,6 +348,20 @@ export class AppState {
     }
   }
 
+  /** An older space worked in a Vela worktree: move the repo and its uncommitted work into the clone. */
+  async moveRepoIntoClone(repo: string) {
+    const id = this.space.id;
+    try {
+      const s = await this.backend.moveRepoIntoClone(id, repo);
+      await this.syncSpaces();
+      await this.load(id);
+      const r = s.repos.find((x) => x.name === repo);
+      this.toast(`${repo} now works in ${r?.source ?? "your clone"}`);
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
   async removeRepo(repo: string) {
     const id = this.space.id;
     try {
@@ -361,8 +376,10 @@ export class AppState {
   /** Id of the space this window is pinned to (`#space-<id>`), null in the main window. */
   pinned = $state<string | null>(null);
   gate = $state<GateState | null>(null);
-  /** The links sheet: text in the URL field and the selected row. */
-  linksUi = $state({ q: "", i: 0 });
+  /** The page of each space (Markdown), loaded when first shown. `editing`: the editor is open. */
+  pages = $state<Record<string, { text: string; loaded: boolean }>>({});
+  pageEditing = $state(false);
+  private pageTimers: Record<string, ReturnType<typeof setTimeout>> = {};
   toastState = $state<{ id: number; text: string; action?: { label: string; run: () => void } } | null>(null);
   /** Hunks accepted with E, to label them "edited by you". */
   edited = $state<Record<string, true>>({});
@@ -629,6 +646,10 @@ export class AppState {
   rvSelect(rowId: string) {
     this.setRv({ sel: rowId, hunk: 0, focus: "files" });
   }
+  /** The file you scrolled to, or clicked in, in the stack of diffs: it becomes the selected one. */
+  rvSeen(rowId: string, focus: Focus = this.rvs.focus) {
+    if (this.rvs.sel !== rowId || this.rvs.focus !== focus) this.setRv({ sel: rowId, hunk: 0, focus });
+  }
   rvToggleSection(sec: Section) {
     const id = this.space.id;
     const idx = this.rows.findIndex((r) => r.id === this.rvs.sel);
@@ -805,10 +826,12 @@ export class AppState {
   rvDrafts: Record<string, string> = $state({});
   /** The diff editor on screen, for the keys that act in it. */
   pane: Pane | null = null;
-  private reviewSeq = 0;
+  /** Latest load of each file: an older answer never overwrites a newer one. */
+  private reviewSeq: Record<string, number> = {};
   /** Load (or reload) what accepting a file gives. */
   async loadReview(sid: string, r: FileRow) {
-    const seq = ++this.reviewSeq;
+    const k = draftKey(sid, r.id);
+    const seq = (this.reviewSeq[k] = (this.reviewSeq[k] ?? 0) + 1);
     try {
       const raw = await this.backend.reviewFile(sid, r.repo, r.path);
       const fr: FileReview = {
@@ -822,7 +845,7 @@ export class AppState {
         agents: raw?.agents ?? [],
         binary: !!raw?.binary,
       };
-      if (seq === this.reviewSeq || !this.reviews[draftKey(sid, r.id)]) this.reviews = { ...this.reviews, [draftKey(sid, r.id)]: fr };
+      if (seq === this.reviewSeq[k]) this.reviews = { ...this.reviews, [k]: fr };
     } catch (e) {
       // A file that just went away: the list moves on, nothing to say.
       if (this.sections.review.concat(this.sections.done).some((g) => g.files.some((x) => x.id === r.id))) this.fail(e);
@@ -1127,19 +1150,9 @@ export class AppState {
   get links(): Link[] {
     return this.sd.links;
   }
-  /** Links in the order of the sheet (grouped by kind). */
-  get orderedLinks(): Link[] {
-    return groupLinks(this.sd.links);
-  }
-  get chips(): Chips {
-    // The ticket has its own chip.
-    const t = this.space.ticket;
-    return topBarChips(groupLinks(this.sd.links.filter((l) => l.source !== "ticket" && !(t && l.key === t))));
-  }
-  /** What the URL field would add, for the live preview. */
-  get linkPreview(): Link | null {
-    const q = this.linksUi.q.trim();
-    return q && isHttpUrl(q) && !/\s/.test(q) ? makeLink(q, undefined, "manual") : null;
+  /** Links Vela finds by itself (ticket, branch, commits, repo files): shown on the space page. */
+  get detectedLinks(): Link[] {
+    return groupLinks(this.sd.links.filter((l) => l.source !== "manual" && l.source !== "paste"));
   }
 
   get cc(): ComposerState | null {
@@ -1283,9 +1296,11 @@ export class AppState {
   // -- actions --------------------------------------------------------------
 
   setView(v: View) {
+    if (this.cui.view === "space" && v !== "space") this.editPage(false);
     this.cui.view = v;
     this.overlay = null;
     if (v === "prs") void this.loadPrs();
+    if (v === "space") void this.loadPage();
   }
 
   goSpace(i: number) {
@@ -2190,26 +2205,58 @@ export class AppState {
 
   // -- links ----------------------------------------------------------------
 
-  openLinks() {
-    this.linksUi = { q: "", i: 0 };
-    this.overlay = "links";
+  // -- the space page ----------------------------------------------------------
+
+  /** The page of the current space, loaded once. */
+  async loadPage(id = this.space.id) {
+    if (this.pages[id]?.loaded) return;
+    try {
+      const text = await this.backend.spacePage(id);
+      // Typed while it loaded: keep what was typed.
+      if (!this.pages[id]?.loaded) this.pages[id] = { text, loaded: true };
+    } catch (e) {
+      this.fail(e);
+    }
   }
 
-  private async reloadLinks(id: string) {
-    const links = await this.backend.links(id);
-    const d = this.data[id];
-    if (d) this.data = { ...this.data, [id]: { ...d, links } };
-    return links;
+  /** Every change you type: saved half a second after the last one. */
+  setPage(text: string, id = this.space.id) {
+    this.pages[id] = { text, loaded: true };
+    clearTimeout(this.pageTimers[id]);
+    this.pageTimers[id] = setTimeout(() => void this.savePage(id), 500);
   }
 
-  linksMove(delta: 1 | -1) {
-    const n = this.orderedLinks.length;
-    if (n) this.linksUi.i = Math.max(0, Math.min(n - 1, this.linksUi.i + delta));
+  async savePage(id = this.space.id) {
+    clearTimeout(this.pageTimers[id]);
+    delete this.pageTimers[id];
+    const p = this.pages[id];
+    if (!p?.loaded) return;
+    try {
+      await this.backend.saveSpacePage(id, p.text);
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  /** Add a line at the end of the page (a pasted URL becomes a list item). */
+  async appendToPage(line: string, id = this.space.id) {
+    await this.loadPage(id);
+    const t = (this.pages[id]?.text ?? "").replace(/\s*$/, "");
+    // Right under a list, it joins the list; after anything else, a blank line first.
+    const last = t.slice(t.lastIndexOf("\n") + 1);
+    const sep = !t ? "" : /^\s*([-*+]|\d+\.)\s/.test(last) ? "\n" : "\n\n";
+    this.setPage(`${t}${sep}${line}\n`, id);
+    await this.savePage(id);
+  }
+
+  editPage(on = true) {
+    this.pageEditing = on;
+    if (!on) void this.savePage();
   }
 
   /** Open a link in the browser; a key without a tracker URL says how to get one. */
-  async openLink(id?: string) {
-    const l = id ? this.links.find((x) => x.id === id) : this.orderedLinks[this.linksUi.i];
+  async openLink(id: string) {
+    const l = this.links.find((x) => x.id === id);
     if (!l) return;
     if (!l.url) {
       this.toast(`${l.key ?? l.title} has no URL yet. Set [issues] in ~/.config/vela/config.toml`);
@@ -2222,53 +2269,13 @@ export class AppState {
     }
   }
 
-  /** Enter in the URL field: add the URL, or open the selected link when the field is empty. */
-  async linksSubmit() {
-    const q = this.linksUi.q.trim();
-    if (!q) return this.openLink();
-    if (!this.linkPreview) return this.toast("Paste a full http or https URL");
-    const sid = this.space.id;
-    try {
-      const l = await this.backend.addLink(sid, q, undefined, "manual");
-      await this.reloadLinks(sid);
-      this.linksUi.q = "";
-      this.linksUi.i = Math.max(0, this.orderedLinks.findIndex((x) => x.id === l.id));
-      this.toast(`Linked ${l.title}`);
-    } catch (e) {
-      this.fail(e);
-    }
-  }
-
-  async removeLink() {
-    const l = this.orderedLinks[this.linksUi.i];
-    if (!l) return;
-    if (!removable(l)) {
-      this.toast(l.source === "repo" ? "Repo links live in .vela/links.toml" : "Found in the history, it cannot be removed here");
-      return;
-    }
-    const sid = this.space.id;
-    try {
-      await this.backend.removeLink(sid, l.id);
-      await this.reloadLinks(sid);
-      this.linksUi.i = Math.max(0, Math.min(this.linksUi.i, this.orderedLinks.length - 1));
-      this.toast(`Removed ${l.title}`);
-    } catch (e) {
-      this.fail(e);
-    }
-  }
-
-  /** A URL pasted outside any field is linked to the current space. */
+  /** A URL pasted outside any field goes on the page of the current space. */
   async addLinkFromPaste(text: string): Promise<boolean> {
     const t = text.trim();
     if (!this.ready || !this.spaces.length || !isHttpUrl(t) || /\s/.test(t)) return false;
-    const sid = this.space.id;
-    try {
-      const l = await this.backend.addLink(sid, t, undefined, "paste");
-      await this.reloadLinks(sid);
-      this.toast(`Linked ${l.title}`);
-    } catch (e) {
-      this.fail(e);
-    }
+    const l = makeLink(t, undefined, "paste");
+    await this.appendToPage(l.title && l.title !== t ? `- [${l.title}](${t})` : `- <${t}>`);
+    this.toast(`Added to the page of ${this.space.name} (0)`, { label: "Show", run: () => this.setView("space") });
     return true;
   }
 
@@ -2378,7 +2385,7 @@ export class AppState {
       this.active = Math.max(0, this.spaces.findIndex((x) => x.id === s.id));
       this.overlay = null;
       this.newSp = { name: "", repos: this.defaultRepos(), missingName: false, branch: "", base: "", repoBranches: {}, ticket: "" };
-      this.toast(`Created ${plural(s.repos.length, "worktree", "worktrees")} on ${spaceBranches(s).join(", ")}`);
+      this.toast(`${s.name}: ${plural(s.repos.length, "repo", "repos")} on ${spaceBranches(s).join(", ")}`);
     } catch (e) {
       this.fail(e);
     }
@@ -2403,10 +2410,13 @@ export class AppState {
     if (q.startsWith("/") || q.startsWith("~")) {
       try {
         this.repos = await this.backend.declareRepo(q);
-        const added = this.repos[0];
-        if (added && !this.newSp.repos.includes(added)) this.newSp.repos.push(added);
+        // A folder of repos declares each of them: pick them all.
+        const tail = q.replace(/^~/, "").replace(/\/+$/, "");
+        let added = this.repos.filter((r) => r.endsWith(tail) || r.includes(`${tail}/`));
+        if (!added.length && this.repos[0]) added = [this.repos[0]];
+        for (const r of added) if (!this.newSp.repos.includes(r)) this.newSp.repos.push(r);
         this.repoFilter = "";
-        this.toast(`Added ${added?.split("/").pop() ?? q}`);
+        this.toast(`Added ${added.map((r) => r.split("/").pop()).join(", ") || q}`);
       } catch (e) {
         this.toast(e instanceof Error ? e.message : String(e));
       }
@@ -2593,18 +2603,10 @@ export class AppState {
         return;
       case "open-commit":
         return this.openCommit();
-      case "open-links":
-        return this.openLinks();
       case "open-link":
         return this.openLink(a.id);
-      case "links-move":
-        return this.linksMove(a.delta);
-      case "links-open":
-        return this.openLink();
-      case "links-submit":
-        return this.linksSubmit();
-      case "links-remove":
-        return this.removeLink();
+      case "page-edit":
+        return this.editPage(true);
       case "cc-type":
         return this.ccType();
       case "cc-breaking":
@@ -2635,6 +2637,8 @@ export class AppState {
         return;
       case "open-addrepo":
         return this.openAddRepo();
+      case "move-repo-into-clone":
+        return this.moveRepoIntoClone(a.repo);
       case "remove-repo":
         return this.removeRepo(a.repo);
       case "open-newrepo":

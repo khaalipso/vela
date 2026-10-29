@@ -215,9 +215,10 @@ describe("ask an agent", () => {
 });
 
 describe("spaces", () => {
-  it("creates a space with a slug, a color, one worktree per repo and a planner", async () => {
+  it("creates a space with a slug, a color, its repos where they are and a planner", async () => {
     const s = await b.createSpace("Refunds in checkout!", ["api", "web"]);
-    expect(s).toMatchObject({ id: "refunds-in-checkout", name: "Refunds in checkout!", branch: "feat/refunds-in-checkout", window: null });
+    expect(s).toMatchObject({ id: "refunds-in-checkout", name: "Refunds in checkout!", branch: "main", window: null });
+    expect(s.repos.every((r) => r.worktree === r.source)).toBe(true);
     expect(s.repos.map((r) => r.name)).toEqual(["api", "web"]);
     expect((await b.listSpaces()).map((x) => x.id)).toEqual(["stripe", "pg", "mm", "refunds-in-checkout"]);
     expect((await b.agents(s.id))[0]).toMatchObject({ role: "planner", status: "working" });

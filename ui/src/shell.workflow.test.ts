@@ -137,14 +137,33 @@ describe("review", () => {
     const proposed = app.rows.find((r) => r.agents.length > 0)!;
     app.rvSelect(proposed.id);
     await settle();
+    // Every file of the stack switches; the selected one has its card.
+    expect($(".rfile.sel")?.dataset.row).toBe(proposed.id);
     expect($(".cm-mergeView")).toBeNull();
     press("v");
     await settle();
-    expect($$(".cm-mergeView .cm-editor").length).toBe(2);
+    expect($$(".rfile.sel .cm-mergeView .cm-editor").length).toBe(2);
     expect(app.view).toBe("review");
     press("v");
     await settle();
     expect($(".cm-mergeView")).toBeNull();
+  });
+
+  it("the files are stacked in the order of the tree; J selects the next one", async () => {
+    press("3");
+    await settle();
+    const ids = $$(".stack .rfile").map((e) => e.dataset.row);
+    expect(ids).toEqual(app.rows.map((r) => r.id));
+    expect(ids.length).toBeGreaterThan(1);
+    app.rvSelect(ids[0]!);
+    await settle();
+    press("j");
+    await settle();
+    expect($(".rfile.sel")?.dataset.row).toBe(ids[1]);
+    // A click in a file selects it.
+    $$(".stack .rfile")[0].dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    await settle();
+    expect(app.rvs.sel).toBe(ids[0]);
   });
 
   it("a note shows on its hunk; Shift Y resolves it and Reopen opens it again", async () => {
@@ -354,10 +373,15 @@ describe("branches", () => {
     app.newSp.name = "Export button";
     app.newSp.repos = ["api"];
     await settle();
-    // The default comes from the pattern.
-    expect($$(".link").some((b) => b.textContent?.includes("feat/export-button"))).toBe(true);
-    $$(".link").find((b) => b.textContent?.includes("feat/export-button"))!.click();
+    // By default the repos stay on their branch; the pattern is one click away.
+    const toggle = $$(".link").find((b) => b.textContent?.includes("Stay on the current branch"))!;
+    expect(toggle).toBeTruthy();
+    toggle.click();
     await settle();
+    expect($("[data-branch-hint]")?.textContent).toContain("each repo stays on its branch");
+    $$(".link").find((b) => b.textContent?.includes("start feat/export-button"))!.click();
+    await settle();
+    expect(($("#ns-branch") as HTMLInputElement).value).toBe("feat/export-button");
     const br = $("#ns-branch") as HTMLInputElement;
     br.value = "origin/feat/teammate-pr";
     br.dispatchEvent(new Event("input", { bubbles: true }));
@@ -369,7 +393,7 @@ describe("branches", () => {
     base.value = "develop";
     base.dispatchEvent(new Event("input", { bubbles: true }));
     await settle();
-    expect($("[data-branch-hint]")?.textContent).toContain("A new branch louis/export, from develop");
+    expect($("[data-branch-hint]")?.textContent).toContain("new branch louis/export, from develop");
     await app.dispatch({ type: "newspace-submit" });
     await vi.waitFor(() => expect(create).toHaveBeenCalled());
     expect(create.mock.calls[0][2]).toEqual({ branch: "louis/export", base: "develop", ticket: null });

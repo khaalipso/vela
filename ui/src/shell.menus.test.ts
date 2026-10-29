@@ -347,7 +347,7 @@ describe("tree actions end to end", () => {
     const repo = repoRow.querySelector(".nm")!.textContent!.trim();
     rightClick(repoRow);
     await settle();
-    expect(items()).toContain("Copy worktree path");
+    expect(items()).toContain("Copy path");
     item("Open terminal here").click();
     await settle();
     expect(backend.terminals).toContain(repo);
@@ -466,12 +466,12 @@ describe("spaces", () => {
       "Rename branch…",
       "Copy branch name",
       "Push branch",
-      "Copy worktree path",
-      "Reveal worktree",
+      "Copy path",
+      "Reveal in file manager",
       "Open terminal here",
       "Remove repo from space",
     ]);
-    item("Reveal worktree").click();
+    item("Reveal in file manager").click();
     await settle();
     expect(backend.revealed).toContain("api");
   });
@@ -504,16 +504,19 @@ describe("review", () => {
 });
 
 describe("links", () => {
-  it("a link in the sheet: Open, Copy URL, Remove", async () => {
-    press("l");
+  it("a link found by Vela, on the space page: Open, Copy URL", async () => {
+    press("0");
     await settle();
-    const pit = $$(".pit")[0];
-    expect(pit).toBeTruthy();
-    rightClick(pit);
+    const lk = await vi.waitFor(() => {
+      const el = $$(".found .lk")[0];
+      expect(el).toBeTruthy();
+      return el;
+    });
+    rightClick(lk);
     await settle();
-    expect(items()).toEqual(["Open", "Copy URL", "Remove"]);
+    expect(items()).toEqual(["Open", "Copy URL"]);
     await closeMenu();
-    press("Escape");
+    press("1");
     await settle();
   });
 });
@@ -526,11 +529,11 @@ describe("the command bar", () => {
     press("t", { ctrlKey: true });
     await settle();
     const input = $("#pal-in") as HTMLInputElement;
-    input.value = "reveal worktree";
+    input.value = "reveal in file manager";
     input.dispatchEvent(new Event("input", { bubbles: true }));
     await settle();
     expect($$(".psec").map((s) => s.textContent)).toEqual(["Here"]);
-    const hit = $$(".pit").find((b) => b.textContent?.includes("Reveal worktree"))!;
+    const hit = $$(".pit").find((b) => b.textContent?.includes("Reveal in file manager"))!;
     expect(hit).toBeTruthy();
     hit.click();
     await settle();

@@ -396,12 +396,14 @@ export interface Backend {
   renameBranch(spaceId: string, branch: string, repo?: string | null): Promise<Space>;
   /** `git push -u origin <branch>` in one repo, or every repo; returns the repos pushed. */
   pushBranch(spaceId: string, repo?: string | null): Promise<string[]>;
-  /** Add a repo (path) to a space: one more worktree, on `branch` (default: the space branch). */
+  /** Add a repo, or a folder of repos (path), to a space: it stays on its branch, or switches to `branch`. */
   addRepoToSpace(spaceId: string, path: string, branch?: string | null): Promise<Space>;
   /** Set the ticket of the space ("PAY-412" or its URL); "" clears it. */
   setTicket(spaceId: string, ticket: string): Promise<Space>;
-  /** Remove a repo from a space; refused when its worktree has uncommitted changes. */
+  /** Remove a repo from a space; the clone is not touched. */
   removeRepoFromSpace(spaceId: string, repo: string): Promise<Space>;
+  /** Older spaces worked in a Vela worktree: bring the repo and its uncommitted work into the clone. */
+  moveRepoIntoClone(spaceId: string, repo: string): Promise<Space>;
   /** Move a space to another window, or back to the main one with null. */
   setWindow(spaceId: string, window: number | null): Promise<void>;
 
@@ -520,6 +522,9 @@ export interface Backend {
 
   /** Stored, detected and repo links of the space. */
   links(spaceId: string): Promise<Link[]>;
+  /** The Markdown page of the space, kept by Vela (never in a repo). A first one lists the ticket and links. */
+  spacePage(spaceId: string): Promise<string>;
+  saveSpacePage(spaceId: string, text: string): Promise<void>;
   addLink(spaceId: string, url: string, title?: string, source?: LinkSource): Promise<Link>;
   /** Only links the user added can be removed. */
   removeLink(spaceId: string, linkId: string): Promise<void>;
@@ -940,9 +945,9 @@ export class MockBackend implements Backend {
     const s = this.sp(spaceId);
     const name = path.split("/").pop() || path;
     if (s.space.repos.some((r) => r.source === path || r.name === name)) throw new Error(`${name} is already in this space`);
-    const b = branch?.trim() || s.space.branch;
+    const b = branch?.trim() || "main";
     if (/[\s~^:?*[\\]|\.\./.test(b)) throw new Error(`${b} is not a valid branch name`);
-    s.space.repos = [...s.space.repos, { name, source: path, worktree: `wt/${s.space.id}`, base: "main", branch: b }];
+    s.space.repos = [...s.space.repos, { name, source: path, worktree: path, base: "main", branch: b }];
     this.emit(spaceId);
     return { ...s.space };
   }
@@ -952,6 +957,13 @@ export class MockBackend implements Backend {
     if (s.space.repos.length === 1) throw new Error("a space needs at least one repo; remove the space instead");
     if (!s.space.repos.some((r) => r.name === repo)) throw new Error(`repo not found: ${repo}`);
     s.space.repos = s.space.repos.filter((r) => r.name !== repo);
+    this.emit(spaceId);
+    return { ...s.space };
+  }
+
+  async moveRepoIntoClone(spaceId: string, repo: string): Promise<Space> {
+    const s = this.sp(spaceId);
+    s.space.repos = s.space.repos.map((r) => (r.name === repo ? { ...r, worktree: r.source } : r));
     this.emit(spaceId);
     return { ...s.space };
   }
@@ -1017,7 +1029,7 @@ export class MockBackend implements Backend {
       id: slug,
       name,
       color: PALETTE[this.spaces.size % PALETTE.length],
-      branch: opts.branch?.trim() || renderBranch(this.branchTemplate, name, opts.ticket),
+      branch: opts.branch?.trim() || "main",
       repos: [],
       createdAt: new Date().toISOString(),
       window: null,
@@ -1026,7 +1038,7 @@ export class MockBackend implements Backend {
     space.repos = repos.map((r, i) => ({
       name: r,
       source: `~/Work/${r}`,
-      worktree: `wt/${slug}`,
+      worktree: `~/Work/${r}`,
       base: opts.base?.trim() || "main",
       branch: opts.repoBranches?.[i]?.trim() || space.branch,
     }));
@@ -1614,7 +1626,7 @@ export class MockBackend implements Backend {
     const s = this.sp(spaceId);
     const r = s.space.repos.find((x) => x.name === repo) ?? s.space.repos[0];
     const id = ++this.termSeq;
-    const cwd = `~/.local/share/vela/${r?.worktree ?? s.space.id}`;
+    const cwd = r?.worktree ?? "~";
     this.terms.set(id, { line: "", cwd });
     this.later(10, () => this.termOut(id, `mock shell in ${cwd}\r\n$ `));
     return id;
@@ -1825,6 +1837,22 @@ export class MockBackend implements Backend {
   }
 
   // -- links ----------------------------------------------------------------
+
+  private pages = new Map<string, string>();
+  async spacePage(spaceId: string): Promise<string> {
+    const s = this.sp(spaceId);
+    const saved = this.pages.get(spaceId);
+    if (saved != null) return saved;
+    const lines = [
+      ...(s.space.ticket ? [`- Ticket: ${s.space.ticket}`] : []),
+      ...s.links.filter((l) => l.url).map((l) => (l.title && l.title !== l.url ? `- [${l.title}](${l.url})` : `- <${l.url}>`)),
+    ];
+    return `# ${s.space.name}\n\n${lines.length ? `## Links\n\n${lines.join("\n")}\n\n` : ""}`;
+  }
+  async saveSpacePage(spaceId: string, text: string): Promise<void> {
+    this.sp(spaceId);
+    this.pages.set(spaceId, text);
+  }
 
   async links(spaceId: string): Promise<Link[]> {
     const s = this.sp(spaceId);
@@ -2141,7 +2169,8 @@ export class MockBackend implements Backend {
     const s = this.sp(spaceId);
     this.guard(s, repo, path, true);
     const r = s.space.repos.find((x) => x.name === repo)!;
-    return path ? `/home/you/.local/share/vela/${r.worktree}/${path}` : `/home/you/.local/share/vela/${r.worktree}`;
+    const root = r.worktree.replace(/^~/, "/home/you");
+    return path ? `${root}/${path}` : root;
   }
 
   async openTerminal(spaceId: string, repo: string, path: string): Promise<string> {
@@ -2471,6 +2500,9 @@ export class TauriBackend implements Backend {
   removeRepoFromSpace(spaceId: string, repo: string) {
     return call<Space>("remove_repo_from_space", { spaceId, repo });
   }
+  moveRepoIntoClone(spaceId: string, repo: string) {
+    return call<Space>("move_repo_into_clone", { spaceId, repo });
+  }
   createRepo(parent: string, name: string) {
     return call<string>("create_repo", { parent, name });
   }
@@ -2727,6 +2759,12 @@ export class TauriBackend implements Backend {
   }
   links(spaceId: string) {
     return call<Link[]>("links", { spaceId });
+  }
+  spacePage(spaceId: string) {
+    return call<string>("space_page", { spaceId });
+  }
+  saveSpacePage(spaceId: string, text: string) {
+    return call<void>("save_space_page", { spaceId, text });
   }
   addLink(spaceId: string, url: string, title?: string, source?: LinkSource) {
     return call<Link>("add_link", { spaceId, url, title: title ?? null, source: source ?? null });

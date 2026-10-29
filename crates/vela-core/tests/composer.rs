@@ -497,7 +497,16 @@ fn links_from_branch_commits_origin_and_repo_file() {
         &r,
         &["remote", "add", "origin", "git@github.com:acme/api.git"],
     );
-    let mut s = space::create(&e.vela, "Refunds", &[&r], None).unwrap();
+    let mut s = space::create_with(
+        &e.vela,
+        "Refunds",
+        &[&r],
+        &space::CreateOptions {
+            branch: Some("feat/refunds".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     s.branch = "feat/PAY-412-refunds".into();
     let d = wt(&s);
     write(&d, "a.txt", "a\n");

@@ -17,6 +17,7 @@ pub mod git;
 pub mod history;
 pub mod links;
 pub mod model;
+pub mod page;
 pub mod paths;
 pub mod process;
 pub mod space;

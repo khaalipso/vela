@@ -86,7 +86,7 @@ fn creates_and_lists_spaces() {
     let e = env();
     let s = space(&e);
     assert_eq!(s.id, "fix-it");
-    assert_eq!(s.branch, "feat/fix-it");
+    assert_eq!(s.branch, "main");
     assert_eq!(s.repos[0].name, "api");
     let list = commands::list_spaces(&e.vela).unwrap();
     assert_eq!(list.len(), 1);
@@ -279,7 +279,7 @@ fn commits_staged_hunks_per_repo() {
     );
     let r = commands::commit(&e.vela, "fix-it", "Shout two", None).unwrap();
     assert_eq!(r.repos, ["api"]);
-    assert_eq!(r.branch, "feat/fix-it");
+    assert_eq!(r.branch, "main");
     assert_eq!(
         sh(&wt(&s), &["log", "-1", "--format=%s"]).trim(),
         "Shout two"
@@ -449,7 +449,7 @@ fn commit_plan_validate_and_commit_groups() {
         .unwrap();
     assert_eq!(r.repos, vec!["api"]);
     assert_eq!(r.commits.len(), 2);
-    assert_eq!(r.branch, "feat/fix-it");
+    assert_eq!(r.branch, "main");
     let body = sh(&w, &["log", "-1", "--format=%B"]);
     assert!(body.contains("Vela-Override: hotfix"), "{body}");
     let err = commands::commit_groups(&e.vela, "fix-it", true, vec![], None).unwrap_err();

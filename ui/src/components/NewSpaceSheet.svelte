@@ -94,7 +94,7 @@
           id="ns-repo"
           autocomplete="off"
           spellcheck="false"
-          placeholder="Filter repos, or paste a folder path like ~/code/shop"
+          placeholder="Filter repos, or paste a repo or a folder of repos, like ~/code"
           bind:value={app.repoFilter}
           onkeydown={(e) => {
             if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
@@ -116,7 +116,7 @@
           <div class="lblrow">
             <label class="lbl" for="ns-branch">Branch</label>
             <button type="button" class="link" aria-expanded={showBranch} onclick={() => (showBranch = !showBranch)}>
-              {showBranch ? "Hide" : (typed ? typed : defaultBranch) + (own.length ? ` · ${own.length} repo${own.length > 1 ? "s" : ""} on their own` : "")}
+              {showBranch ? "Hide" : (typed ? typed : "Stay on the current branch") + (own.length ? ` · ${own.length} repo${own.length > 1 ? "s" : ""} on their own` : "")}
             </button>
           </div>
           {#if showBranch || typed}
@@ -127,7 +127,7 @@
                 list="ns-branches"
                 autocomplete="off"
                 spellcheck="false"
-                placeholder={defaultBranch}
+                placeholder="current branch"
                 bind:value={app.newSp.branch}
               />
               <input
@@ -157,7 +157,7 @@
                       class="field small mono"
                       autocomplete="off"
                       spellcheck="false"
-                      placeholder={typed || defaultBranch}
+                      placeholder={typed || "current branch"}
                       aria-label="Branch of {r.split('/').pop()}"
                       bind:value={app.newSp.repoBranches[r]}
                     />
@@ -169,9 +169,10 @@
               {#if match}
                 {match.remote ? `Takes ${match.name} as a local branch that tracks it` : `Uses the existing branch ${match.name} as it is`}{match.when ? ` (last commit ${match.when})` : ""}.
               {:else if typed}
-                A new branch {typed}, from {app.newSp.base.trim() || "the current branch of each repo"}.
+                Your repos switch to a new branch {typed}, from {app.newSp.base.trim() || "the current branch of each repo"}. Uncommitted changes go along.
               {:else}
-                Empty: {defaultBranch} (pattern <span class="mono">{app.branchTemplate}</span>, change it in Settings). Pick an existing or remote branch to work on it.
+                Empty: each repo stays on its branch. Name one to switch your repos to it, or
+                <button type="button" class="link inl" onclick={() => (app.newSp.branch = defaultBranch)}>start {defaultBranch}</button>.
               {/if}
             </span>
           {/if}
@@ -185,12 +186,12 @@
             id="ns-addbranch"
             autocomplete="off"
             spellcheck="false"
-            placeholder={app.space.branch}
+            placeholder="current branch"
             bind:value={app.newSp.branch}
           />
         </div>
       {/if}
-      <div class="cost">{app.sheetMode === "add" ? `Each repo gets a worktree on ${app.newSp.branch.trim() || app.space.branch}: an existing branch is used as it is.` : "Vela creates a branch and a worktree per repo (each repo can have its own branch), then starts the stack from mise.toml and compose.yml."}</div>
+      <div class="cost">{app.sheetMode === "add" ? (app.newSp.branch.trim() ? `The repos switch to ${app.newSp.branch.trim()}; an existing branch is used as it is.` : "The repos stay on their branch. Removing one later leaves it untouched.") : "The space works in your repos, where they are: what you change here is what your other editors see. Agents work on their own copy until you accept their changes."}</div>
       <div class="actions">
         <button type="button" class="btn" onclick={() => app.closeOverlay()}>Cancel</button>
         <button type="submit" class="btn p">{app.sheetMode === "add" ? "Add to space" : "Create space"} <Kbd k="Ctrl Enter" /></button>
@@ -326,5 +327,10 @@
     display: flex;
     gap: 8px;
     justify-content: flex-end;
+  }
+  .link.inl {
+    display: inline;
+    padding: 0;
+    font-family: var(--mono, monospace);
   }
 </style>

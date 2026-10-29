@@ -7,19 +7,23 @@
 <p align="center">An editor built around tasks, for people who code with agents.</p>
 
 Arc replaced tabs with spaces. Vela replaces the open folder with the **space**: one task, the
-repos it touches, one git worktree per repo, and the agents working on it. You switch tasks, not
-folders.
+repos it touches (your own clones, where they are), and the agents working on it. You switch
+tasks, not folders.
 
 Vela does not ship its own coding agent. It drives the ones you already use (Claude Code, Codex,
 opencode) and adds what sits around them: worktrees, review, checks, commits, links, terminals.
-Agents never write in your worktree: they work on a copy of your files and you review what they
-changed, file by file, as a diff you can edit before you accept it.
+Agents never write in your repos: they work on a copy of your files and you review what they
+changed, as a diff you can edit before you accept it.
 
 ## Features
 
-- **Spaces**: a task with its repos, a branch and a worktree per repo (each repo can have its
-  own branch), and optionally its ticket (`PAY-412`), plain `git worktree` underneath. Uninstall
-  Vela and nothing is lost.
+- **Spaces**: a task with its repos and optionally its ticket (`PAY-412`). A space works in your
+  clones as they are, on the branch they are on, so any other editor sees the same files; name a
+  branch and the repos switch to it. Add a repo, or a folder of repos, with "+ repo"; × removes
+  one from the space without touching it. Uninstall Vela and nothing is lost.
+- **Page** (<kbd>0</kbd>): free Markdown per space, for links, notes, commands. A URL pasted
+  anywhere goes on it; the links Vela finds (ticket, issue keys in branches and commits, repo
+  links) show on top. Kept by Vela (`VELA_HOME/spaces/<id>.md`), never in a repo.
 - **Agents** through their own CLIs, or ACP when the tool has an ACP server (`opencode acp`):
   developer, tester, debugger write in their own worktree; planner, reviewer, product and security
   only read. Questions land in the *Up next* island and as a desktop notification.
@@ -29,8 +33,9 @@ changed, file by file, as a diff you can edit before you accept it.
 - **Agents you can follow**: what each one does right now, how long it has been quiet, a
   warning with "Stop and ask where it is" when it says nothing for 5 minutes, and its session id
   one click away.
-- **Review** like a diff tool: the files to review on the left, the whole selected file on the
-  right (unified or side by side, <kbd>V</kbd>), showing exactly what accepting writes. Agent changes
+- **Review** like a pull request: the tree of files on the left, every diff on the right, one
+  under the other (unified or side by side, <kbd>V</kbd>), each showing exactly what accepting
+  writes; <kbd>J</kbd> <kbd>K</kbd> or scrolling go from file to file. Agent changes
   are merged into your edits (three-way); conflicts show in place with "Keep yours" / "Take the
   agent's". Edit the result, revert one change, then <kbd>Space</kbd> accepts and stages the file.
   Checks (hooks, lint, types, tests) run on the staged set and are cached by tree.
@@ -40,8 +45,6 @@ changed, file by file, as a diff you can edit before you accept it.
   suggestions, the ticket in the footer, one repo at a time (<kbd>R</kbd> switches).
 - **Git view** (<kbd>4</kbd>): the commit graph of each repo, the branch against its base and its
   upstream, what is not committed yet, and the pull requests.
-- **Context card** (<kbd>L</kbd>): issue, PRs, docs, dashboards of the space; issue keys are
-  detected from the branch and commits, URLs pasted anywhere are linked.
 - **Editor** on CodeMirror 6 with find and replace (<kbd>Ctrl</kbd>+<kbd>F</kbd>), a Markdown
   preview, quick open (<kbd>Ctrl</kbd>+<kbd>P</kbd>) and a file tree with fuzzy filter.
 - **Terminal panel** (<kbd>T</kbd> or <kbd>Ctrl</kbd>+<kbd>`</kbd>): shells in the worktrees of

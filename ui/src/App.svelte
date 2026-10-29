@@ -11,7 +11,6 @@
   import SheetModal from "./components/SheetModal.svelte";
   import Island from "./components/Island.svelte";
   import Kbd from "./components/Kbd.svelte";
-  import LinksSheet from "./components/LinksSheet.svelte";
   import NewSpaceSheet from "./components/NewSpaceSheet.svelte";
   import Rail from "./components/Rail.svelte";
   import ReviewView from "./components/ReviewView.svelte";
@@ -23,11 +22,12 @@
   import { app } from "./lib/app.svelte";
   import { isTyping, resolveKey } from "./lib/keymap";
   import { isHttpUrl } from "./lib/links";
+  import SpacePage from "./components/SpacePage.svelte";
   import { installMenus, onGlobalContextMenu } from "./lib/menus";
 
   installMenus();
 
-  // A URL pasted while no field has the focus is linked to the current space.
+  // A URL pasted while no field has the focus goes on the page of the current space.
   function onPaste(e: ClipboardEvent) {
     if (!app.ready || !app.spaces.length || app.overlay || isTyping(e.target as HTMLElement | null)) return;
     const text = e.clipboardData?.getData("text/plain") ?? "";
@@ -113,7 +113,7 @@
             </section>
           {:else}
             <section class="surface enter" aria-label={app.view}>
-              {#if app.view === "review"}<ReviewView />{:else if app.view === "code"}<CodeView />{:else if app.view === "prs"}{#await import("./components/GitView.svelte") then { default: GitView }}<GitView />{/await}{:else}<AgentsView />{/if}
+              {#if app.view === "review"}<ReviewView />{:else if app.view === "code"}<CodeView />{:else if app.view === "space"}<SpacePage />{:else if app.view === "prs"}{#await import("./components/GitView.svelte") then { default: GitView }}<GitView />{/await}{:else}<AgentsView />{/if}
             </section>
           {/if}
         {/key}
@@ -134,7 +134,6 @@
   {#if app.overlay === "quickopen"}<QuickOpen />{/if}
   {#if app.overlay === "newspace"}<NewSpaceSheet />{/if}
   {#if app.overlay === "commit"}<CommitSheet />{/if}
-  {#if app.overlay === "links"}<LinksSheet />{/if}
   {#if app.overlay === "help"}<ShortcutsSheet />{/if}
   {#if app.overlay === "settings"}<AgentSettings />{/if}
   {#if app.overlay === "sheet"}<SheetModal />{/if}

@@ -152,7 +152,7 @@ pub fn list(repo: &Path) -> Result<Vec<BranchInfo>> {
         };
         if let Some(n) = r.strip_prefix("refs/heads/") {
             // Agent branches are Vela's own.
-            if !n.contains("--") {
+            if !n.contains("--") && !n.starts_with("vela/") {
                 local.push(info(n.to_string(), false));
             }
         } else if let Some(n) = r.strip_prefix("refs/remotes/")

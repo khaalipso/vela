@@ -85,7 +85,7 @@ fn worktree_starts_from_your_files_on_its_own_branch_and_is_removed() {
     );
     assert_eq!(
         sh(wt, &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
-        "feat/refunds--developer-1"
+        "vela/refunds/developer-1"
     );
     // The base is the tree of your files, not the commit.
     assert_ne!(
@@ -102,7 +102,7 @@ fn worktree_starts_from_your_files_on_its_own_branch_and_is_removed() {
     .unwrap();
     assert!(!wt.exists());
     assert!(!worktree::agent_root(&e.vela, &e.space, "developer-1").exists());
-    let branches = sh(user_wt, &["branch", "--list", "feat/refunds--*"]);
+    let branches = sh(user_wt, &["branch", "--list", "vela/refunds/*"]);
     assert!(branches.trim().is_empty(), "{branches}");
 }
 
@@ -111,12 +111,12 @@ fn a_failing_repo_rolls_back_the_others() {
     let e = env_with(&["api", "web"]);
     // Make the branch exist in the second repo so its worktree cannot be created.
     let web = Path::new(&e.space.repos[1].worktree);
-    sh(web, &["branch", "feat/refunds--developer-1"]);
+    sh(web, &["branch", "vela/refunds/developer-1"]);
     let err = worktree::create(&e.vela, &e.space, "developer-1");
     assert!(err.is_err());
     let api = Path::new(&e.space.repos[0].worktree);
     assert!(
-        sh(api, &["branch", "--list", "feat/refunds--*"])
+        sh(api, &["branch", "--list", "vela/refunds/*"])
             .trim()
             .is_empty()
     );

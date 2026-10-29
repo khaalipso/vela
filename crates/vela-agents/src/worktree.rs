@@ -1,5 +1,5 @@
 //! Agent worktrees: `VELA_HOME/worktrees/<space>/.agents/<agent>/<repo>`, on the branch
-//! `<repo-branch>--<agent>`, created from the commit the user's worktree is on, then filled with
+//! `vela/<space>/<agent>`, created from the commit the user's worktree is on, then filled with
 //! the user's files as they are (uncommitted edits and new files included): an agent works on
 //! what you see, so what it proposes merges with your edits.
 
@@ -20,8 +20,14 @@ pub struct Tree {
     pub base: String,
 }
 
-/// The branch of an agent in a repo: `<repo-branch>--<agent>`.
-pub fn branch_name(space: &Space, repo: &str, agent: &str) -> String {
+/// The branch of an agent: `vela/<space>/<agent>`. Its own per space, since several spaces can
+/// work in the same clone on the same branch.
+pub fn branch_name(space: &Space, agent: &str) -> String {
+    vela_core::paths::agent_branch(&space.id, agent)
+}
+
+/// The name agents' branches had before (`<repo-branch>--<agent>`), still removed with them.
+fn old_branch_name(space: &Space, repo: &str, agent: &str) -> String {
     format!("{}--{agent}", space.branch_of(repo))
 }
 
@@ -36,7 +42,7 @@ pub fn agent_root(vela: &Vela, space: &Space, agent: &str) -> PathBuf {
 pub fn create(vela: &Vela, space: &Space, agent: &str) -> Result<Vec<Tree>> {
     let mut made: Vec<Tree> = Vec::new();
     for r in &space.repos {
-        let branch = branch_name(space, &r.name, agent);
+        let branch = branch_name(space, agent);
         let user_wt = Path::new(&r.worktree);
         let step = || -> Result<Tree> {
             let base = git(user_wt, &["rev-parse", "HEAD"])?.trim().to_string();
@@ -84,9 +90,10 @@ fn remove_trees(space: &Space, trees: &[Tree], agent: &str) {
             user_wt,
             &["worktree", "remove", "--force", &t.path.to_string_lossy()],
         );
+        let _ = git(user_wt, &["branch", "-D", &branch_name(space, agent)]);
         let _ = git(
             user_wt,
-            &["branch", "-D", &branch_name(space, &r.name, agent)],
+            &["branch", "-D", &old_branch_name(space, &r.name, agent)],
         );
         let _ = git(user_wt, &["worktree", "prune"]);
     }

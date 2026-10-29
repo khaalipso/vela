@@ -41,6 +41,11 @@ pub fn space_file(home: &Path, space: &str) -> PathBuf {
     spaces_dir(home).join(format!("{space}.toml"))
 }
 
+/// `spaces/<space>.md`: the page of the space.
+pub fn space_page(home: &Path, space: &str) -> PathBuf {
+    spaces_dir(home).join(format!("{space}.md"))
+}
+
 /// `worktrees/<space>`
 pub fn space_root(home: &Path, space: &str) -> PathBuf {
     home.join("worktrees").join(space)
@@ -57,6 +62,11 @@ pub fn agent_worktree(home: &Path, space: &str, agent: &str, repo: &str) -> Path
         .join(".agents")
         .join(agent)
         .join(repo)
+}
+
+/// The branch of an agent of a space: `vela/<space>/<agent>`.
+pub fn agent_branch(space: &str, agent: &str) -> String {
+    format!("vela/{space}/{agent}")
 }
 
 /// Pure resolution of the global config directory: `$XDG_CONFIG_HOME/vela`, else `~/.config/vela`.

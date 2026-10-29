@@ -14,8 +14,12 @@
     editable: boolean;
     onChange: (doc: string) => void;
     onLine?: (line: number) => void;
+    /** As tall as its content (a card of the stack of diffs), instead of filling its parent. */
+    fit?: boolean;
+    /** The keys of the Review (Tab, F, comments...) act on this pane. */
+    active?: boolean;
   }
-  let { id, path, before, after, split, editable, onChange, onLine }: Props = $props();
+  let { id, path, before, after, split, editable, onChange, onLine, fit = false, active = true }: Props = $props();
 
   let host: HTMLDivElement | undefined = $state();
   let pane: Pane | null = null;
@@ -39,8 +43,11 @@
         onChange: (d) => onChange(d),
         onLine: (n) => onLine?.(n),
       });
-      app.pane = pane;
+      if (active) app.pane = pane;
     });
+  });
+  $effect(() => {
+    if (active && pane) app.pane = pane;
   });
   $effect(() => {
     const text = after;
@@ -55,7 +62,7 @@
   });
 </script>
 
-<div class="pane" class:split bind:this={host}></div>
+<div class="pane" class:split class:fit bind:this={host}></div>
 
 <style>
   .pane {
@@ -78,5 +85,15 @@
   }
   .pane.split :global(.cm-merge-a) {
     border-right: 1px solid var(--line);
+  }
+  .pane.fit,
+  .pane.fit :global(.cm-editor),
+  .pane.fit :global(.cm-mergeView) {
+    height: auto;
+    overflow: visible;
+  }
+  .pane.fit :global(.cm-scroller) {
+    overflow-x: auto;
+    overflow-y: visible;
   }
 </style>

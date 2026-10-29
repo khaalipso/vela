@@ -46,8 +46,9 @@ describe("global shortcuts", () => {
       ["B", { type: "toggle-files" }],
       ["s", { type: "toggle-stack" }],
       ["c", { type: "open-commit" }],
-      ["l", { type: "open-links" }],
-      ["L", { type: "open-links" }],
+      ["l", { type: "view", view: "space" }],
+      ["L", { type: "view", view: "space" }],
+      ["0", { type: "view", view: "space" }],
       ["w", { type: "toggle-window" }],
       ["@", { type: "open-composer" }],
       ["?", { type: "open-help" }],
@@ -132,7 +133,7 @@ describe("overlays", () => {
     for (const overlay of ["palette", "newspace", "composer", "help"] as const) {
       expect(resolveKey(key("Escape"), ctx({ overlay, typing: true }))).toEqual({ type: "close" });
     }
-    for (const overlay of ["commit", "links"] as const) {
+    for (const overlay of ["commit"] as const) {
       expect(resolveKey(key("Escape"), ctx({ overlay }))).toEqual({ type: "close" });
     }
     expect(resolveKey(key("Escape"), ctx({ stackOpen: true }))).toEqual({ type: "close" });
@@ -186,21 +187,11 @@ describe("overlays", () => {
     expect(resolveKey(key("t", { ctrlKey: true }), c)).toEqual({ type: "palette-toggle" });
   });
 
-  it("links sheet: arrows work in the field, letters and Backspace only outside it", () => {
-    const typing = ctx({ overlay: "links", typing: true });
-    const idle = ctx({ overlay: "links" });
-    expect(resolveKey(key("ArrowDown"), typing)).toEqual({ type: "links-move", delta: 1 });
-    expect(resolveKey(key("ArrowUp"), typing)).toEqual({ type: "links-move", delta: -1 });
-    expect(resolveKey(key("Enter"), typing)).toEqual({ type: "links-submit" });
-    expect(resolveKey(key("j"), typing)).toBeNull();
-    expect(resolveKey(key("Backspace"), typing)).toBeNull();
-    expect(resolveKey(key("j"), idle)).toEqual({ type: "links-move", delta: 1 });
-    expect(resolveKey(key("K"), idle)).toEqual({ type: "links-move", delta: -1 });
-    expect(resolveKey(key("Enter"), idle)).toEqual({ type: "links-open" });
-    expect(resolveKey(key("Backspace"), idle)).toEqual({ type: "links-remove" });
-    expect(resolveKey(key("Delete"), idle)).toEqual({ type: "links-remove" });
-    expect(resolveKey(key("y"), idle)).toBeNull();
-    expect(resolveKey(key("t", { ctrlKey: true }), typing)).toEqual({ type: "palette-toggle" });
+  it("the space page: E or Enter writes in it", () => {
+    const c = ctx({ view: "space" });
+    expect(resolveKey(key("e"), c)).toEqual({ type: "page-edit" });
+    expect(resolveKey(key("Enter"), c)).toEqual({ type: "page-edit" });
+    expect(resolveKey(key("e"), ctx({ view: "space", typing: true }))).toBeNull();
   });
 
   it("composer: Tab cycles the role, Shift Tab the harness, Ctrl Up/Down the tier, Enter sends", () => {

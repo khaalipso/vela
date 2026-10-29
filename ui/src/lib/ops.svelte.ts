@@ -600,17 +600,6 @@ class Ops {
     app.active = at >= 0 ? at : Math.max(0, Math.min(before, app.spaces.length - 1));
   }
 
-  async removeLink(link: Link) {
-    try {
-      await app.backend.removeLink(this.sid, link.id);
-      const links = await app.backend.links(this.sid);
-      app.data = { ...app.data, [this.sid]: { ...app.sd, links } };
-      app.linksUi.i = Math.max(0, Math.min(app.linksUi.i, links.length - 1));
-      app.toast(`Removed ${link.title}`);
-    } catch (e) {
-      app.fail(e);
-    }
-  }
 }
 
 export const ops = new Ops();

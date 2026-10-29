@@ -12,6 +12,7 @@ const fake = {
   staged: false,
   fail: null as string | null,
   links: [] as Json[],
+  page: null as string | null,
 };
 
 const hunk = (state: string, id = "h1", path = "src/a.ts"): Json => ({
@@ -101,6 +102,11 @@ function rust(cmd: string, args?: Json): unknown {
       };
     case "links":
       return structuredClone(fake.links);
+    case "space_page":
+      return fake.page ?? "# Fix it\n";
+    case "save_space_page":
+      fake.page = args!.text as string;
+      return null;
     case "add_link": {
       const l = {
         id: `l${fake.links.length + 1}`,
@@ -336,7 +342,7 @@ describe("shell on the Tauri backend", () => {
     expect($(".toast")?.textContent).toBe("Committed 2 commits in api on feat/fix-it");
   });
 
-  it("links: a pasted URL is linked, L lists it, Enter opens it, Backspace removes it", async () => {
+  it("the page: 0 loads it, a pasted URL is saved into it", async () => {
     const paste = (text: string, target: EventTarget = document.body) => {
       const e = new Event("paste", { bubbles: true, cancelable: true });
       Object.defineProperty(e, "clipboardData", { value: { getData: () => text } });
@@ -345,54 +351,29 @@ describe("shell on the Tauri backend", () => {
     };
     expect(paste("just words").defaultPrevented).toBe(false);
     expect(paste("javascript:alert(1)").defaultPrevented).toBe(false);
-    expect(calls.some((c) => c[0] === "add_link")).toBe(false);
-    expect(paste("  https://staging.acme.dev/billing \n").defaultPrevented).toBe(true);
-    await settle();
-    expect(calls.filter((c) => c[0] === "add_link").at(-1)![1]).toMatchObject({
-      spaceId: "fix-it",
-      url: "https://staging.acme.dev/billing",
-      source: "paste",
-    });
-    expect($(".toast")?.textContent).toBe("Linked added");
-    expect(app.links.map((l) => l.url)).toEqual(["https://staging.acme.dev/billing"]);
-    expect($$(".lk").length).toBe(1);
-
     // Not while typing in a field.
     const input = document.createElement("input");
     document.body.append(input);
     expect(paste("https://elsewhere.dev", input).defaultPrevented).toBe(false);
     input.remove();
+    expect(calls.some((c) => c[0] === "save_space_page")).toBe(false);
 
-    press("l");
+    expect(paste("  https://staging.acme.dev/billing \n").defaultPrevented).toBe(true);
+    await vi.waitFor(() => expect(calls.some((c) => c[0] === "save_space_page")).toBe(true));
+    expect(calls.find((c) => c[0] === "space_page")![1]).toEqual({ spaceId: "fix-it" });
+    const saved = calls.filter((c) => c[0] === "save_space_page").at(-1)![1] as { spaceId: string; text: string };
+    expect(saved.spaceId).toBe("fix-it");
+    expect(saved.text).toMatch(/^# Fix it\n\n- \[.+\]\(https:\/\/staging\.acme\.dev\/billing\)\n$/);
+    expect(calls.some((c) => c[0] === "add_link")).toBe(false);
+
+    press("0");
     await settle();
-    expect(app.overlay).toBe("links");
-    expect($$(".sheet .pit").length).toBe(1);
-    // The URL field has the focus; Enter adds what is typed.
-    const field = $("#links-in") as HTMLInputElement;
-    expect(document.activeElement).toBe(field);
-    field.value = "https://acme.dev/doc";
-    field.dispatchEvent(new Event("input", { bubbles: true }));
+    await vi.waitFor(() => expect($(".page .md a")?.getAttribute("href")).toBe("https://staging.acme.dev/billing"));
+    $(".page .md a")!.click();
     await settle();
-    expect($(".preview")?.textContent).toContain("acme.dev/doc");
-    press("Enter", {}, field);
+    expect(calls.filter((c) => c[0] === "open_url").at(-1)![1]).toEqual({ url: "https://staging.acme.dev/billing" });
+    press("1");
     await settle();
-    expect(calls.filter((c) => c[0] === "add_link").at(-1)![1]).toMatchObject({ url: "https://acme.dev/doc", source: "manual" });
-    expect($$(".sheet .pit").length).toBe(2);
-    // Esc leaves the field and keeps the sheet; Enter then opens the selected link.
-    press("Escape", {}, field);
-    field.blur();
-    await settle();
-    expect(app.overlay).toBe("links");
-    press("Enter");
-    await settle();
-    expect(calls.filter((c) => c[0] === "open_url").at(-1)![1]).toEqual({ url: app.orderedLinks[app.linksUi.i].url });
-    press("Backspace");
-    await settle();
-    expect(calls.some((c) => c[0] === "remove_link")).toBe(true);
-    expect($$(".sheet .pit").length).toBe(1);
-    press("Escape");
-    await settle();
-    expect(app.overlay).toBeNull();
   });
 
   it("shows backend errors as a toast with the message", async () => {

@@ -2,7 +2,7 @@
 
 An editor built around tasks, for people who code with agents.
 
-Arc replaced tabs with spaces. Vela replaces the open folder with the **space**: one task, the repos it touches, one worktree per repo, the agents working on it, its containers and runtimes. You switch tasks, not folders.
+Arc replaced tabs with spaces. Vela replaces the open folder with the **space**: one task, the repos it touches (the user's clones, where they are), the agents working on it, its containers and runtimes. You switch tasks, not folders.
 
 ## Principles
 
@@ -30,9 +30,9 @@ The types in `crates/vela-core/src/model.rs` are the contract. The UI mirrors th
 ## Storage
 
 - `VELA_HOME` (default `$XDG_DATA_HOME/vela`, else `~/.local/share/vela`).
-- `VELA_HOME/spaces/<id>.toml`: one file per space.
-- `VELA_HOME/worktrees/<space>/<repo>`: the user's worktree for that repo.
-- `VELA_HOME/worktrees/<space>/.agents/<agent>/<repo>`: an agent's worktree, on branch `<repo-branch>--<agent>`, created from the commit the space branch is on, then filled with your files as they are (uncommitted edits and new files included).
+- `VELA_HOME/spaces/<id>.toml`: one file per space. A space works in the user's clones (`SpaceRepo.worktree` is the clone); the branch of each repo is read from git on every load. Spaces made before that point to `VELA_HOME/worktrees/<space>/<repo>` until "Work in my clone" moves them (`space::move_into_clone`: the uncommitted work goes along through `git stash`).
+- `VELA_HOME/spaces/<id>.md`: the page of the space (view 0), free Markdown.
+- `VELA_HOME/worktrees/<space>/.agents/<agent>/<repo>`: an agent's worktree, on branch `vela/<space>/<agent>`, created from the commit your clone is on, then filled with your files as they are (uncommitted edits and new files included).
 - `VELA_HOME/spaces/<id>.agents.json`: the agents of a space; `VELA_HOME/spaces/<id>.agents/<agent>.jsonl`: the event log of each agent.
 - Global AI config: `$XDG_CONFIG_HOME/vela/` (default `~/.config/vela/`).
 

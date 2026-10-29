@@ -14,7 +14,6 @@ import { ops, readClipboard, SPACE_COLORS, splitKey, writeClipboard, basename, d
 import type { FileRow } from "./review";
 import type { Hunk, Link, Space } from "./types";
 import { repoBranch, spaceBranches } from "./types";
-import { removable } from "./links";
 
 type Part = Omit<MenuAction, "id"> & { id?: string };
 
@@ -121,10 +120,13 @@ function repoNodeMenu(repo: string): MenuEntry[] {
 /** Copy, reveal, terminal and remove for one repo: shared by the tree node and the top bar chip. */
 function repoItems(repo: string): MenuEntry[] {
   const only = app.space.repos.length < 2;
+  const r = app.space.repos.find((x) => x.name === repo);
+  const old = !!r && r.worktree !== r.source;
   return [
-    it("Copy worktree path", { icon: "copy", run: () => void ops.copyAbsolute(repo, "") }),
-    it("Reveal worktree", { icon: "reveal", run: () => void ops.reveal(repo, "") }),
+    it("Copy path", { icon: "copy", run: () => void ops.copyAbsolute(repo, "") }),
+    it("Reveal in file manager", { icon: "reveal", run: () => void ops.reveal(repo, "") }),
     it("Open terminal here", { icon: "terminal", run: () => void ops.terminal(repo, "") }),
+    ...(old ? [act("Work in my clone", { type: "move-repo-into-clone", repo }, "code", { icon: "reveal" })] : []),
     SEP,
     act("Remove repo from space", { type: "remove-repo", repo }, "code", {
       icon: "close",
@@ -336,16 +338,9 @@ export function archivedMenu(s: Space): MenuEntry[] {
 // ---------------------------------------------------------------------------
 
 export function linkMenu(l: Link): MenuEntry[] {
-  const manual = removable(l);
   return tidy([
     it("Open", { shortcut: "Enter", icon: "open", disabled: l.url ? false : "No tracker URL configured for this key", run: () => void app.openLink(l.id) }),
     it("Copy URL", { icon: "copy", disabled: l.url ? false : "No tracker URL configured for this key", run: () => void ops.copyUrl(l) }),
-    it("Remove", {
-      icon: "trash",
-      danger: true,
-      disabled: manual ? false : l.source === "repo" ? "Repo links live in .vela/links.toml" : "Found in the history, it cannot be removed here",
-      run: () => void ops.removeLink(l),
-    }),
   ]);
 }
 

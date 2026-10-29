@@ -4,6 +4,7 @@
   import Kbd from "./Kbd.svelte";
 
   const views: [View, string, string][] = [
+    ["space", "Page", "0"],
     ["code", "Code", "1"],
     ["agents", "Agents", "2"],
     ["review", "Review", "3"],

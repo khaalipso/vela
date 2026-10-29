@@ -36,11 +36,15 @@ pub struct Space {
 }
 
 impl Space {
-    /// Older spaces had one branch for every repo: give each repo that branch.
+    /// Older spaces had one branch for every repo: give each repo that branch. Then read the
+    /// branch each repo is on now.
     pub fn normalize(&mut self) {
         for r in &mut self.repos {
             if r.branch.trim().is_empty() {
                 r.branch = self.branch.clone();
+            }
+            if let Some(b) = crate::git::head_branch(std::path::Path::new(&r.worktree)) {
+                r.branch = b;
             }
         }
     }
@@ -63,15 +67,24 @@ impl Space {
 pub struct SpaceRepo {
     /// Short display name, defaults to the source directory name.
     pub name: String,
-    /// The user's original clone.
+    /// The user's clone.
     pub source: String,
-    /// The worktree Vela created for this space.
+    /// Where the space works: the clone itself. Spaces made before Vela worked in your
+    /// clones point to a worktree under `VELA_HOME/worktrees` (see [`SpaceRepo::is_clone`]).
     pub worktree: String,
     /// Ref the branch was created from, e.g. "main".
     pub base: String,
-    /// The branch of this repo's worktree. Repos of a space each have their own.
+    /// The branch checked out where the space works, read again from git on every load:
+    /// switch branches in another editor and the space follows.
     #[serde(default)]
     pub branch: String,
+}
+
+impl SpaceRepo {
+    /// The space works in the user's clone (false: an older space, in a Vela worktree).
+    pub fn is_clone(&self) -> bool {
+        self.worktree == self.source
+    }
 }
 
 /// Status letter of one side (index or worktree) of a file change.

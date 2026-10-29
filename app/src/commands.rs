@@ -112,8 +112,8 @@ pub fn create_space_with(
     )?)
 }
 
-/// Add a repo (by path) to an existing space: one more worktree, on `branch` (default: the
-/// branch the space was created with).
+/// Add a repo, or a folder of repos (by path), to an existing space. It stays on its branch,
+/// or is switched to `branch`.
 pub fn add_repo_to_space(vela: &Vela, id: &str, path: &str) -> AppResult<Space> {
     add_repo_to_space_on(vela, id, path, None)
 }
@@ -133,9 +133,24 @@ pub fn set_ticket(vela: &Vela, id: &str, ticket: &str) -> AppResult<Space> {
     Ok(space::set_ticket(vela, id, ticket)?)
 }
 
-/// Remove a repo from a space (its worktree must be clean).
+/// Remove a repo from a space; the clone is not touched.
 pub fn remove_repo_from_space(vela: &Vela, id: &str, repo: &str) -> AppResult<Space> {
     Ok(space::remove_repo(vela, id, repo)?)
+}
+
+/// The Markdown page of a space (a first one from its ticket and links when there is none).
+pub fn space_page(vela: &Vela, id: &str) -> AppResult<String> {
+    Ok(vela_core::page::read(vela, &load(vela, id)?)?)
+}
+
+pub fn save_space_page(vela: &Vela, id: &str, text: &str) -> AppResult<()> {
+    load(vela, id)?;
+    Ok(vela_core::page::write(vela, id, text)?)
+}
+
+/// Bring a repo of an older space out of its Vela worktree, into the user's clone.
+pub fn move_repo_into_clone(vela: &Vela, id: &str, repo: &str) -> AppResult<Space> {
+    Ok(space::move_into_clone(vela, id, repo)?)
 }
 
 /// Store the window of a space; None puts it back in the main window.
@@ -1318,19 +1333,25 @@ pub fn declare_repo(vela: &Vela, path: &str) -> AppResult<Vec<String>> {
     let expanded = expand_home(raw);
     let dir = fs::canonicalize(&expanded)
         .map_err(|_| AppError::invalid(format!("folder not found: {raw}")))?;
-    if !dir.join(".git").exists() {
-        return Err(AppError::invalid(format!("not a git repo: {raw}")));
-    }
     let own = fs::canonicalize(&vela.home).unwrap_or_else(|_| vela.home.clone());
     if dir.starts_with(&own) {
         return Err(AppError::invalid(
             "this folder is a Vela worktree, pick the original clone",
         ));
     }
-    let dir = dir.to_string_lossy().into_owned();
+    // A repo, or a folder of repos: each of them.
+    let found = if dir.join(".git").exists() {
+        vec![dir]
+    } else {
+        space::repos_in(&dir)
+            .map_err(|_| AppError::invalid(format!("not a git repo, and no repo inside: {raw}")))?
+    };
     let mut list = declared_repos(vela);
-    list.retain(|p| p != &dir);
-    list.insert(0, dir);
+    for d in found.iter().rev() {
+        let d = d.to_string_lossy().into_owned();
+        list.retain(|p| p != &d);
+        list.insert(0, d);
+    }
     fs::create_dir_all(&vela.home).map_err(|e| AppError::new("io", e.to_string()))?;
     let json =
         serde_json::to_string_pretty(&list).map_err(|e| AppError::new("io", e.to_string()))?;
