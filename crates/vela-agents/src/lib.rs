@@ -15,6 +15,7 @@
 //! - [`manager`]: runs agents on background threads and ties it all together.
 
 pub mod acp;
+pub mod apply;
 pub mod claude;
 pub mod codex;
 pub mod comments;

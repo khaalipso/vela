@@ -178,6 +178,8 @@ export type AgentEvent =
   | { type: "fileChanged"; path: string }
   | { type: "question"; text: string; options: string[] }
   | { type: "usage"; inputTokens: number; outputTokens: number; costUsd: number | null; model: string }
+  /** The work of a run went to your files, except `conflicts` (the agent resolves them, or they come to you with their markers when `toYou`). */
+  | { type: "applied"; files: string[]; conflicts: string[]; toYou: boolean }
   | { type: "done"; summary: string }
   | { type: "failed"; error: string }
   | { type: "prompt"; text: string }

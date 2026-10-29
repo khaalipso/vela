@@ -27,7 +27,7 @@ Every run happens in the agent's own worktree (`VELA_HOME/worktrees/<space>/.age
 
 Mapping to the UI:
 - `question` goes to the Up next island and the cross-space queue, with a desktop notification.
-- `file_changed` refreshes the proposals (diff of agent worktree against the user worktree).
+- `file_changed` shows what the agent edits in its worktree; `applied` (emitted by Vela, not a driver) says which files of a finished run went to the user's worktree and which conflict.
 - `usage` feeds the cost and budget of the space.
 - `plan` shows on the agent card.
 

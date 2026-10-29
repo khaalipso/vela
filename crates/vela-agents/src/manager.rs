@@ -123,11 +123,19 @@ pub struct AgentManager {
     labels_default: bool,
 }
 
+/// Runs an agent gets to resolve the conflicts of its work before they go to your files.
+const MAX_CONFLICT_ROUNDS: u32 = 2;
+
 /// How long a harness detection (which runs `--version` of each) is reused.
 const DETECT_TTL: Duration = Duration::from_secs(300);
 
 fn key(space: &str, agent: &str) -> String {
     format!("{space}\0{agent}")
+}
+
+/// Holds the space busy between a run that ended with conflicts and the run that resolves them.
+fn resolving_key(space: &str, agent: &str) -> String {
+    format!("{space}\0{agent}\0resolving")
 }
 
 /// Roles that only read: they run in the user's worktree in the harness's read only mode.
@@ -186,7 +194,7 @@ pub fn space_context(space: &Space, read_only: bool, worktrees: &[(String, Strin
         if read_only {
             "You run in the person's own worktree, read only."
         } else {
-            "You run in your own worktree of each repo. It starts as a copy of the person's files, uncommitted edits included; what you change there is shown to them as a diff they accept, edit or reject."
+            "You run in your own worktree of each repo. It starts as a copy of the person's files, uncommitted edits included; when your run ends, Vela applies what you changed to their files."
         },
         repos.join("\n")
     )
@@ -499,6 +507,7 @@ impl AgentManager {
                 bases: Vec::new(),
                 read_only,
                 pending_tools: Vec::new(),
+                conflict_rounds: 0,
             }
         })?
         .agent
@@ -1022,13 +1031,43 @@ impl AgentManager {
             };
             let _ = registry::append_log(&vela, &space_id, &agent_id, &prompt);
             emit(notice(prompt));
+            let mut conflicts: Vec<String> = Vec::new();
             while let Some(ev) = handle.recv() {
+                // The work of a run that ended well goes to the person's files first.
+                if matches!(ev, AgentEvent::Done { .. })
+                    && let Some(applied) = me.apply_run(&vela, &space_id, &agent_id)
+                {
+                    let _ = registry::append_log(&vela, &space_id, &agent_id, &applied);
+                    let ts = registry::now();
+                    let _ = registry::update(&vela, &space_id, &agent_id, |e| {
+                        registry::apply_event(e, &applied, &ts);
+                    });
+                    if let AgentEvent::Applied {
+                        conflicts: c,
+                        to_you: false,
+                        ..
+                    } = &applied
+                    {
+                        conflicts = c.clone();
+                    }
+                    emit(notice(applied));
+                }
                 let _ = registry::append_log(&vela, &space_id, &agent_id, &ev);
                 let ts = registry::now();
                 let _ = registry::update(&vela, &space_id, &agent_id, |e| {
                     registry::apply_event(e, &ev, &ts);
                 });
                 if ev.is_terminal() {
+                    // Busy until it is resumed to resolve its conflicts (see below).
+                    if !conflicts.is_empty() {
+                        me.live().insert(
+                            resolving_key(&space_id, &agent_id),
+                            Live {
+                                canceller: None,
+                                replier: None,
+                            },
+                        );
+                    }
                     // The agent is no longer live before anyone hears it is done.
                     me.live().remove(&key(&space_id, &agent_id));
                 }
@@ -1036,7 +1075,49 @@ impl AgentManager {
             }
             // A stream that ended without a terminal event (should not happen).
             me.live().remove(&key(&space_id, &agent_id));
+            // Its work conflicts with the person's edits: the agent resolves them.
+            if !conflicts.is_empty()
+                && let Ok(space) = vela_core::store::load(&vela, &space_id)
+                && let Ok(entry) = registry::find(&vela, &space_id, &agent_id)
+                && let Some(session) = entry.agent.session.clone()
+            {
+                let shown = format!(
+                    "Resolve the conflicts with your edits in {}",
+                    conflicts.join(", ")
+                );
+                let _ = me.resume(
+                    &vela,
+                    &space,
+                    &entry,
+                    &session,
+                    crate::apply::conflict_prompt(&conflicts),
+                    Vec::new(),
+                    &shown,
+                    &emit,
+                );
+            }
+            me.live().remove(&resolving_key(&space_id, &agent_id));
         });
+    }
+
+    /// Apply the work of a writing agent whose run ended well (see [`crate::apply`]). None for
+    /// a read only agent, or when there is nothing to apply.
+    fn apply_run(&self, vela: &Vela, space_id: &str, agent_id: &str) -> Option<AgentEvent> {
+        let space = vela_core::store::load(vela, space_id).ok()?;
+        let entry = registry::find(vela, space_id, agent_id).ok()?;
+        if entry.read_only || entry.agent.worktrees.is_empty() {
+            return None;
+        }
+        let to_you = entry.conflict_rounds >= MAX_CONFLICT_ROUNDS;
+        let a = crate::apply::apply(vela, &space, &entry, to_you).ok()?;
+        if a.files.is_empty() && a.conflicts.is_empty() {
+            return None;
+        }
+        Some(AgentEvent::Applied {
+            files: a.files,
+            conflicts: a.conflicts,
+            to_you: a.to_you,
+        })
     }
 
     /// Remove an agent that is not running: its worktrees, branches and registry entry.

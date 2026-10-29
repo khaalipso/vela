@@ -56,6 +56,7 @@ fn entry_with_trees(e: &Env, id: &str) -> Entry {
             .collect(),
         read_only: false,
         pending_tools: vec![],
+        conflict_rounds: 0,
     }
 }
 

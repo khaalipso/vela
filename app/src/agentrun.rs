@@ -51,7 +51,10 @@ impl Refresher {
 pub fn changes_proposals(e: &AgentEvent) -> bool {
     matches!(
         e,
-        AgentEvent::FileChanged { .. } | AgentEvent::Done { .. } | AgentEvent::Failed { .. }
+        AgentEvent::FileChanged { .. }
+            | AgentEvent::Applied { .. }
+            | AgentEvent::Done { .. }
+            | AgentEvent::Failed { .. }
     )
 }
 

@@ -110,6 +110,17 @@ describe("chatItems", () => {
     ]);
   });
 
+  it("says what went to your files after the answer", () => {
+    const items = chatItems([
+      at({ type: "toolCall", name: "Edit", summary: "a.ts" }),
+      at({ type: "message", text: "C'est fait." }),
+      at({ type: "applied", files: ["a.ts"], conflicts: ["b.ts"], toYou: false }),
+      at({ type: "done", summary: "C'est fait." }),
+    ]);
+    expect(items.map((i) => i.kind)).toEqual(["tools", "agent", "applied", "end"]);
+    expect(items[2]).toMatchObject({ files: ["a.ts"], conflicts: ["b.ts"], toYou: false });
+  });
+
   it("keeps a final summary that says more than the last message", () => {
     const items = chatItems([at({ type: "message", text: "Looking." }), at({ type: "done", summary: "The doc is current except for keys." })]);
     expect(items.map((i) => i.kind)).toEqual(["agent", "agent", "end"]);

@@ -10,7 +10,7 @@ use std::time::Duration;
 use common::*;
 use vela_agents::registry;
 use vela_agents::{AgentEvent, AskRequest, detect};
-use vela_core::model::{AgentRole, AgentStatus, Origin, Tier};
+use vela_core::model::{AgentRole, AgentStatus, Tier};
 
 /// First call: edit `notes.txt` in the working directory, ask a question, end.
 /// Resumed call (`--resume`): say it is done and end.
@@ -115,19 +115,20 @@ fn a_run_edits_asks_is_answered_and_finishes() {
         fs::canonicalize(&wt).unwrap()
     );
 
-    // The edit happened in the agent worktree only, and shows up as a proposal.
-    assert!(read(&user_wt.join("notes.txt")).contains("\nten\n"));
+    // The agent edited its worktree; when its run ended, the edit went to the user's file,
+    // and nothing is left to review apart.
     assert!(read(&wt.join("notes.txt")).contains("TEN by the agent"));
+    assert!(read(&user_wt.join("notes.txt")).contains("TEN by the agent"));
+    assert!(seen.lock().unwrap().iter().any(|n| n.event
+        == AgentEvent::Applied {
+            files: vec!["notes.txt".into()],
+            conflicts: vec![],
+            to_you: false,
+        }),);
     let entries = m.entries(&e.vela, "refunds").unwrap();
     let list =
         vela_agents::proposals::proposals(&e.space, &entries, &Default::default(), false).unwrap();
-    assert_eq!(list.len(), 1);
-    assert_eq!(
-        list[0].hunk.origin,
-        Origin::Agent {
-            agent: "developer-1".into()
-        }
-    );
+    assert!(list.is_empty(), "{list:?}");
 
     // Answer: a resumed run of the same session with the answer as the prompt.
     let r = m
@@ -176,6 +177,7 @@ fn a_run_edits_asks_is_answered_and_finishes() {
             "fileChanged",
             "question",
             "usage",
+            "applied",
             "done",
             "prompt",
             "sessionStarted",
@@ -557,11 +559,17 @@ fn acp_runs_and_grants_a_writer_its_permissions_without_asking() {
         }),
         "{events:?}"
     );
-    // The edit shows as a proposal.
+    // The edit went to the user's files when the run ended: nothing left to propose.
     let entries = registry::load(&e.vela, "refunds").unwrap();
     let props =
         vela_agents::proposals::proposals(&e.space, &entries, &Default::default(), false).unwrap();
-    assert_eq!(props.len(), 1);
+    assert!(props.is_empty(), "{props:?}");
+    assert!(
+        events
+            .iter()
+            .any(|ev| matches!(ev, AgentEvent::Applied { files, .. } if files == &["notes.txt"])),
+        "{events:?}"
+    );
 }
 
 #[test]

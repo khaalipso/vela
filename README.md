@@ -12,8 +12,9 @@ tasks, not folders.
 
 Vela does not ship its own coding agent. It drives the ones you already use (Claude Code, Codex,
 opencode) and adds what sits around them: worktrees, review, checks, commits, links, terminals.
-Agents never write in your repos: they work on a copy of your files and you review what they
-changed, as a diff you can edit before you accept it.
+Agents work on a copy of your files, in their own worktree; when a run ends, Vela merges their
+work into your files (an agent resolves its own conflicts with your edits). You review everything
+once, before you commit.
 
 ## Features
 
@@ -33,11 +34,11 @@ changed, as a diff you can edit before you accept it.
 - **Agents you can follow**: what each one does right now, how long it has been quiet, a
   warning with "Stop and ask where it is" when it says nothing for 5 minutes, and its session id
   one click away.
-- **Review** like a pull request: the tree of files on the left, every diff on the right, one
-  under the other (unified or side by side, <kbd>V</kbd>), each showing exactly what accepting
-  writes; <kbd>J</kbd> <kbd>K</kbd> or scrolling go from file to file. Agent changes
-  are merged into your edits (three-way); conflicts show in place with "Keep yours" / "Take the
-  agent's". Edit the result, revert one change, then <kbd>Space</kbd> accepts and stages the file.
+- **Review** before you commit, like a pull request: the tree of files on the left, every diff on
+  the right, one under the other (unified or side by side, <kbd>V</kbd>); <kbd>J</kbd> <kbd>K</kbd>
+  or scrolling go from file to file. The work of the agents is already in your files: there is
+  no separate review of agent changes. Edit, revert one change, then <kbd>Space</kbd> stages the
+  file.
   Checks (hooks, lint, types, tests) run on the staged set and are cached by tree.
 - **Reviewer notes**: findings of the reviewer and security agents show on the file they target;
   <kbd>F</kbd> sends one back to its author for a fix, <kbd>Shift</kbd>+<kbd>Y</kbd> resolves it.

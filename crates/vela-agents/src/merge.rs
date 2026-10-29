@@ -91,7 +91,7 @@ impl Content {
             _ => None,
         }
     }
-    fn bytes(&self) -> &[u8] {
+    pub fn bytes(&self) -> &[u8] {
         match self {
             Content::Absent => &[],
             Content::Text(s) => s.as_bytes(),

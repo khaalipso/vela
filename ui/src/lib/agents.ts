@@ -51,6 +51,8 @@ export function logLine(e: AgentEvent): { who: "you" | "agent" | "tool" | "end";
       return { who: "tool", text: `changed ${e.path}` };
     case "question":
       return { who: "agent", text: `Asks: ${e.text}${e.options.length ? ` (${e.options.join(" / ")})` : ""}` };
+    case "applied":
+      return { who: "tool", text: `applied ${e.files.join(", ")}${e.conflicts.length ? `; conflicts in ${e.conflicts.join(", ")}` : ""}` };
     case "done":
       return { who: "end", text: "Finished" };
     case "failed":
@@ -131,6 +133,7 @@ export type ChatItem =
   | { kind: "tools"; calls: { name: string; summary: string }[]; notes: WorkNote[]; files: string[]; ts: string }
   | { kind: "plan"; steps: string[]; ts: string }
   | { kind: "question"; text: string; options: string[]; ts: string }
+  | { kind: "applied"; files: string[]; conflicts: string[]; toYou: boolean; ts: string }
   | { kind: "end"; ok: boolean; text: string; ts: string };
 
 /**
@@ -190,6 +193,10 @@ export function chatItems(log: { ts: string; event: AgentEvent }[]): ChatItem[] 
       case "question":
         flush();
         out.push({ kind: "question", text: e.text, options: e.options, ts });
+        break;
+      case "applied":
+        flush();
+        out.push({ kind: "applied", files: e.files, conflicts: e.conflicts ?? [], toYou: !!e.toYou, ts });
         break;
       case "done": {
         flush();

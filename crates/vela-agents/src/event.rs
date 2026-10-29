@@ -47,6 +47,17 @@ pub enum AgentEvent {
         cost_usd: Option<f64>,
         model: String,
     },
+    /// The work of a run was brought into the person's files (paths), except the files that
+    /// conflict with their edits, which the agent is asked to resolve.
+    #[serde(rename_all = "camelCase")]
+    Applied {
+        files: Vec<String>,
+        #[serde(default)]
+        conflicts: Vec<String>,
+        /// The conflicts are in the person's files, with their markers, for them to resolve.
+        #[serde(default)]
+        to_you: bool,
+    },
     /// The run ended well.
     Done {
         summary: String,

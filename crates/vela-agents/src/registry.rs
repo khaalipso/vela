@@ -33,6 +33,9 @@ pub struct Entry {
     /// Tools the harness refused while the agent waits; an "allow" answer grants them.
     #[serde(default)]
     pub pending_tools: Vec<String>,
+    /// Runs in a row that ended with conflicts to resolve; 0 once its work applied cleanly.
+    #[serde(default)]
+    pub conflict_rounds: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -190,6 +193,15 @@ pub fn apply_event(entry: &mut Entry, ev: &AgentEvent, ts: &str) {
             a.activity = "Writing".to_string();
         }
         AgentEvent::Reasoning { .. } => a.activity = "Thinking".to_string(),
+        AgentEvent::Applied {
+            conflicts, to_you, ..
+        } => {
+            entry.conflict_rounds = if conflicts.is_empty() || *to_you {
+                0
+            } else {
+                entry.conflict_rounds + 1
+            };
+        }
         AgentEvent::Plan { steps } => a.plan = steps.clone(),
         AgentEvent::ToolCall { name, summary } => {
             a.activity = if summary.trim().is_empty() {

@@ -1,5 +1,5 @@
-//! Agents through the command layer: proposals in `hunks`, accept and reject, reasons, the
-//! question as Up next, and the debounced refresh. A fake `claude` on a temporary PATH stands
+//! Agents through the command layer: their work in your files when a run ends, the question
+//! as Up next, and the debounced refresh. A fake `claude` on a temporary PATH stands
 //! in for the real harness; no model is called.
 
 use std::fs;
@@ -113,27 +113,26 @@ fn run_developer(e: &Env) {
 }
 
 #[test]
-fn proposals_flow_through_hunks_reasons_accept_and_reject() {
+fn the_work_of_an_agent_lands_in_your_files_when_its_run_ends() {
     let e = env();
     // The user has uncommitted work of their own; the agent must not undo it.
     fs::write(e.wt.join("mine.txt"), "mine\n").unwrap();
     run_developer(&e);
 
+    // No proposals to review: the agent's edit is in the worktree, as an ordinary change.
+    assert!(
+        fs::read_to_string(e.wt.join("notes.txt"))
+            .unwrap()
+            .contains("TEN by the agent")
+    );
     let hs = commands::hunks(&e.vela, "refunds").unwrap();
-    let mine = hs.iter().filter(|h| h.origin == Origin::You).count();
-    let theirs: Vec<_> = hs
-        .iter()
-        .filter(|h| matches!(h.origin, Origin::Agent { .. }))
-        .collect();
-    assert_eq!(mine, 1);
-    assert_eq!(theirs.len(), 1);
-    let p = theirs[0];
-    assert_eq!(p.path, "notes.txt");
-    assert_eq!(p.state, HunkState::Pending);
-
-    // The reason is what the agent last said, not its question.
-    let reasons = commands::reasons(&e.vela, "refunds").unwrap();
-    assert_eq!(reasons[&p.id], "Raised ten to TEN.");
+    assert!(!hs.iter().any(|h| matches!(h.origin, Origin::Agent { .. })));
+    assert!(
+        hs.iter()
+            .any(|h| h.path == "notes.txt" && h.state == HunkState::Pending)
+    );
+    // The user's own file was left alone.
+    assert_eq!(fs::read_to_string(e.wt.join("mine.txt")).unwrap(), "mine\n");
 
     // The question is the space's Up next.
     assert_eq!(
@@ -147,40 +146,6 @@ fn proposals_flow_through_hunks_reasons_accept_and_reject() {
         .unwrap()
         .unwrap();
     assert_eq!((q.yes.as_str(), q.no.as_str()), ("Keep it", "Drop it"));
-
-    // Reject, then undo the rejection.
-    let r = commands::reject_hunk(&e.vela, "refunds", &p.id).unwrap();
-    assert_eq!(r.state, HunkState::Rejected);
-    assert!(
-        !commands::hunks(&e.vela, "refunds")
-            .unwrap()
-            .iter()
-            .any(|h| h.id == p.id)
-    );
-    let back = commands::unstage_hunk(&e.vela, "refunds", &p.id).unwrap();
-    assert_eq!(back.state, HunkState::Pending);
-    assert_eq!(back.origin, p.origin);
-
-    // Accept through the ordinary stage command: applied to the worktree and staged.
-    let staged = commands::stage_hunk(&e.vela, "refunds", &p.id).unwrap();
-    assert_eq!(staged.state, HunkState::Staged);
-    assert!(
-        fs::read_to_string(e.wt.join("notes.txt"))
-            .unwrap()
-            .contains("TEN by the agent")
-    );
-    assert_eq!(
-        sh(&e.wt, &["diff", "--cached", "--name-only"]).trim(),
-        "notes.txt"
-    );
-    let hs = commands::hunks(&e.vela, "refunds").unwrap();
-    assert!(!hs.iter().any(|h| matches!(h.origin, Origin::Agent { .. })));
-    assert!(
-        hs.iter()
-            .any(|h| h.path == "notes.txt" && h.state == HunkState::Staged)
-    );
-    // The user's own file was left alone.
-    assert_eq!(fs::read_to_string(e.wt.join("mine.txt")).unwrap(), "mine\n");
 }
 
 #[test]
@@ -295,6 +260,7 @@ fn recorded_events_reach_the_sink_in_order() {
             AgentEvent::FileChanged { .. } => "file",
             AgentEvent::Question { .. } => "question",
             AgentEvent::Usage { .. } => "usage",
+            AgentEvent::Applied { .. } => "applied",
             AgentEvent::Done { .. } => "done",
             _ => "other",
         })
@@ -302,7 +268,7 @@ fn recorded_events_reach_the_sink_in_order() {
     assert_eq!(
         kinds,
         [
-            "prompt", "session", "message", "tool", "file", "question", "usage", "done"
+            "prompt", "session", "message", "tool", "file", "question", "usage", "applied", "done"
         ]
     );
 }

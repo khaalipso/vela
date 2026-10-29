@@ -308,24 +308,22 @@ fn compute_hunks(vela: &Vela, id: &str) -> AppResult<Vec<Hunk>> {
         .filter(|h| !rejected.contains(&h.id) && !staged.iter().any(|s| s.id == h.id))
         .collect();
     out.extend(staged);
-    // What the agents propose: their changes that are not in the worktree yet.
-    out.extend(
-        agent_proposals(vela, &space, &rejected, false)?
-            .into_iter()
-            .map(|p| p.hunk),
-    );
+    // No proposals of agents: their work is in the worktree once their run ends.
     Ok(out)
 }
 
-/// The proposals of the agents of the space (see `vela_agents::proposals`).
+/// The proposals of the agents of the space (see `vela_agents::proposals`). None any more:
+/// agents apply their work to your files when their run ends (`vela_agents::apply`), so the
+/// Review only holds what goes in the next commit.
 fn agent_proposals(
     vela: &Vela,
     space: &Space,
     rejected: &BTreeSet<String>,
     with_rejected: bool,
 ) -> AppResult<Vec<Proposal>> {
+    const PROPOSALS: bool = false;
     let entries = registry::load(vela, &space.id)?;
-    if entries.iter().all(|e| e.agent.worktrees.is_empty()) {
+    if !PROPOSALS || entries.iter().all(|e| e.agent.worktrees.is_empty()) {
         return Ok(Vec::new());
     }
     let accepted = accepted_ids(vela, &space.id)?;
