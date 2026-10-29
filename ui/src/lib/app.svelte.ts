@@ -27,7 +27,7 @@ import { findConflicts } from "./conflicts";
 import type { Pane } from "./mergeview";
 import { composeMessage, cycleType, mergeAll, moveHunk, splitHunk } from "./commitplan";
 import { fileKey, plural, roleLabel, ROLES, toolLabel, uniq } from "./format";
-import type { Action, Overlay, View } from "./keymap";
+import { VIEWS, type Action, type Overlay, type View } from "./keymap";
 import { groupLinks, isHttpUrl, makeLink } from "./links";
 import { buildPaletteItems, filterPalette, type PaletteItem } from "./palette";
 import { closeTab, loadRecent, openTab, pushRecent, saveRecent, type Tab } from "./tabs";
@@ -184,6 +184,8 @@ export type SheetSpec =
 export class AppState {
   backend!: Backend;
   ready = $state(false);
+  /** Why the first load failed after its retries; the window offers to try again. */
+  bootError = $state<string | null>(null);
   spaces = $state.raw<Space[]>([]);
   data = $state.raw<Record<string, SpaceData>>({});
   ui = $state<Record<string, SpaceUi>>({});
@@ -455,12 +457,34 @@ export class AppState {
     this.offTerm?.();
     this.offTerm = backend.onTerm((e) => this.onTermEvent(e));
     void this.loadHarnesses();
-    this.repos = await backend.listRepos();
-    this.newSp.repos = this.defaultRepos();
-    this.spaces = this.forThisWindow(await backend.listSpaces());
-    await Promise.all(this.spaces.map((s) => this.load(s.id)));
-    await this.loadArchived();
-    this.ready = true;
+    await this.boot();
+  }
+
+  /**
+   * The first load. A call can fail while the backend starts (a git lock taken by the watchers,
+   * say): it is tried again a few times, then the window says why instead of staying blank.
+   */
+  async boot(tries = 5) {
+    const b = this.backend;
+    this.bootError = null;
+    for (let n = 1; ; n++) {
+      try {
+        this.repos = await b.listRepos();
+        this.newSp.repos = this.defaultRepos();
+        this.spaces = this.forThisWindow(await b.listSpaces());
+        await Promise.all(this.spaces.map((s) => this.load(s.id)));
+        await this.loadArchived();
+        this.ready = true;
+        return;
+      } catch (e) {
+        console.error(`vela: first load, try ${n}`, e);
+        if (n >= tries) {
+          this.bootError = e instanceof Error ? e.message : String(e);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 250 * n));
+      }
+    }
   }
 
   /** Refresh the list of archived spaces (the main window only; a pinned window has none). */
@@ -2521,6 +2545,8 @@ export class AppState {
       }
       case "view":
         return this.setView(a.view);
+      case "view-step":
+        return this.setView(VIEWS[(VIEWS.indexOf(this.view) + a.delta + VIEWS.length) % VIEWS.length]);
       case "space-prev":
         return this.goSpace((this.active - 1 + this.spaces.length) % this.spaces.length);
       case "space-next":

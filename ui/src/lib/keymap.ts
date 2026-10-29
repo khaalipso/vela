@@ -1,4 +1,7 @@
 export type View = "space" | "code" | "review" | "agents" | "prs";
+
+/** The views in the order of the top bar (and of Ctrl Left / Right). */
+export const VIEWS: View[] = ["space", "code", "agents", "review", "prs"];
 export type Overlay =
   | "palette"
   | "quickopen"
@@ -39,6 +42,7 @@ export type Action =
   | { type: "up-next" }
   | { type: "next-waiting" }
   | { type: "view"; view: View }
+  | { type: "view-step"; delta: 1 | -1 } // Ctrl Left / Right: previous, next view
   | { type: "space-prev" }
   | { type: "space-next" }
   | { type: "space-jump"; index: number }
@@ -170,6 +174,14 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
   // The terminal toggles from anywhere, the terminal itself included.
   if (ctrl && !alt && (k === "`" || e.code === "Backquote") && (!c.overlay || c.overlay === "palette")) {
     return shift ? { type: "new-terminal" } : { type: "toggle-terminal" };
+  }
+  // Ctrl Down shows or hides the terminal, from the terminal too; Ctrl Left / Right go through
+  // the views. In a text field or the editor these keys keep moving the caret.
+  if (ctrl && !alt && !shift && (!c.overlay || c.overlay === "palette")) {
+    if (k === "ArrowDown" && (!c.typing || c.inTerm)) return { type: "toggle-terminal" };
+    if ((k === "ArrowLeft" || k === "ArrowRight") && !c.typing) {
+      return { type: "view-step", delta: k === "ArrowRight" ? 1 : -1 };
+    }
   }
   // The menu key works everywhere, even in a text field or the editor.
   if (k === "ContextMenu" || (shift && !ctrl && !alt && k === "F10")) return { type: "context-menu" };

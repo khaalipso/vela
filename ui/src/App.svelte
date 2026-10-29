@@ -66,7 +66,17 @@
 
 <svelte:window onkeydown={onKeydown} onpaste={onPaste} oncontextmenu={onGlobalContextMenu} />
 
-{#if app.ready && !app.spaces.length}
+{#if !app.ready}
+  {#if app.bootError}
+    <main class="empty">
+      <h1>Vela could not load your spaces</h1>
+      <p class="small">{app.bootError}</p>
+      <div class="emptyacts"><button class="btn p" onclick={() => app.boot()}>Try again</button></div>
+    </main>
+  {:else}
+    <main class="empty"><p class="small">Loading your spaces…</p></main>
+  {/if}
+{:else if !app.spaces.length}
   <main class="empty">
     <h1>{app.pinned ? "This space is gone" : "No space yet"}</h1>
     <p>
@@ -86,7 +96,7 @@
   {#if app.overlay === "sheet"}<SheetModal />{/if}
   <ContextMenu />
   <Toast />
-{:else if app.ready}
+{:else}
   <div class="app" class:norail={app.railOff}>
     {#if !app.railOff}
       <Rail />
