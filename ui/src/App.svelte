@@ -253,12 +253,6 @@
   .termlayer > :global(.tp) {
     pointer-events: auto;
   }
-  .termlayer.both > :global(.tp.top) {
-    flex: 0 0 calc(var(--split) - 4px);
-  }
-  .termlayer.both > :global(.tp:not(.top)) {
-    flex: 1 1 0;
-  }
   .surface {
     flex: 1;
     min-width: 0;

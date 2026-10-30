@@ -520,6 +520,32 @@ export async function setLanguage(view: EditorView, lang: Lang, still: () => boo
   if (still()) view.dispatch({ effects: languageSlot.reconfigure(ext) });
 }
 
+/** Hold the middle button and drag: the editor scrolls both ways, like grabbing the page. */
+export const middlePan = EditorView.domEventHandlers({
+  mousedown(e, view) {
+    if (e.button !== 1) return false;
+    e.preventDefault();
+    const s = view.scrollDOM;
+    let x = e.clientX;
+    let y = e.clientY;
+    s.style.cursor = "grabbing";
+    const move = (ev: MouseEvent) => {
+      s.scrollLeft -= ev.clientX - x;
+      s.scrollTop -= ev.clientY - y;
+      x = ev.clientX;
+      y = ev.clientY;
+    };
+    const up = () => {
+      s.style.cursor = "";
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    return true;
+  },
+});
+
 // -- state and helpers ---------------------------------------------------------
 
 export function createState(f: FileContent, onUserChange: (content: string) => void): EditorState {
@@ -541,6 +567,7 @@ export function createState(f: FileContent, onUserChange: (content: string) => v
       languageSlot.of([]),
       syntaxHighlighting(editorHighlight),
       editorTheme,
+      middlePan,
       hunkField,
       changeField,
       spanField,

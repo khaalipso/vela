@@ -422,10 +422,8 @@ export class AppState {
   terms = $state<TermTab[]>([]);
   /** The terminal shown, per space and panel (see `termKey`). */
   termActive = $state<Record<string, number>>({});
-  /** Height of the panel at the bottom in px. */
-  termHeight = $state(260);
-  /** Height of the panel on top in px. */
-  termTopHeight = $state(220);
+  /** Share of the view each panel takes when it is alone (half by default). */
+  termFrac = $state({ bottom: 0.5, top: 0.5 });
   /** Share of the height the top panel takes when both are open. */
   termSplit = $state(0.5);
   /** Bumped when a terminal should take the focus: the shown one of `termFocusDock`. */

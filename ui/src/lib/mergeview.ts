@@ -9,7 +9,7 @@ import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/sea
 import { Compartment, EditorState, StateField, type Extension, type Range } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType, drawSelection, keymap, lineNumbers, type DecorationSet } from "@codemirror/view";
 import { findConflicts, pick, type Side } from "./conflicts";
-import { editorHighlight, editorTheme } from "./editor";
+import { editorHighlight, editorTheme, middlePan } from "./editor";
 import { loadLanguage, type Lang } from "./languages";
 
 export interface PaneOptions {
@@ -248,6 +248,7 @@ export function createPane(o: PaneOptions): Pane {
     slot.of([]),
     syntaxHighlighting(editorHighlight),
     editorTheme,
+    middlePan,
     mergeTheme,
   ];
   const after: Extension[] = [

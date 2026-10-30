@@ -11,38 +11,31 @@
   let { dock = "bottom" }: { dock?: TermDock } = $props();
   const top = $derived(dock === "top");
 
-  const MIN = 96;
   const list = $derived(app.termsOf(dock));
   const current = $derived(app.activeTermOf(dock));
   const open = $derived(app.isTermOpen(dock) && !app.elsewhere);
-  const height = $derived(top ? app.termTopHeight : app.termHeight);
   let el: HTMLElement | undefined = $state();
 
-  function setHeight(h: number) {
-    if (top) app.termTopHeight = h;
-    else app.termHeight = h;
-  }
   const both = $derived(app.termTopOpen && app.termOpen);
   const layer = () => el?.parentElement;
-  /** Floating over the view: as tall as the view itself, whatever the other panel does. */
-  function maxHeight(): number {
-    return Math.max(MIN, (layer()?.clientHeight ?? window.innerHeight) - (both ? MIN + 8 : 0));
-  }
+  const HANDLE_MIN = 72;
+  /** What the panel takes of the layer: its share alone, the split when both are open. */
+  const basis = $derived(both ? (top ? `calc(${app.termSplit * 100}% - 4px)` : "0") : `${app.termFrac[dock] * 100}%`);
   function drag(e: PointerEvent) {
     e.preventDefault();
-    const startY = e.clientY;
-    const start = el?.offsetHeight ?? height;
-    const max = maxHeight();
     const box = layer()?.getBoundingClientRect();
+    if (!box?.height) return;
+    const startY = e.clientY;
+    const start = el?.offsetHeight ?? 0;
     const move = (ev: PointerEvent) => {
-      if (both && box?.height) {
+      if (both) {
         // The limit between the two panels follows the pointer.
-        const y = Math.max(MIN + 4, Math.min(box.height - MIN - 4, ev.clientY - box.top));
-        app.termSplit = Math.round((y / box.height) * 1000) / 1000;
+        const y = Math.max(HANDLE_MIN, Math.min(box.height - HANDLE_MIN, ev.clientY - box.top));
+        app.termSplit = y / box.height;
         return;
       }
       const dy = top ? ev.clientY - startY : startY - ev.clientY;
-      setHeight(Math.round(Math.max(MIN, Math.min(max, start + dy))));
+      app.termFrac[dock] = Math.max(HANDLE_MIN, Math.min(box.height, start + dy)) / box.height;
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
@@ -56,22 +49,21 @@
     e.preventDefault();
     e.stopPropagation();
     const grow = top ? e.key === "ArrowDown" : e.key === "ArrowUp";
-    const box = layer();
-    if (both && box?.clientHeight) {
-      const d = (grow === top ? 24 : -24) / box.clientHeight;
-      app.termSplit = Math.max(0.1, Math.min(0.9, app.termSplit + d));
-      return;
-    }
-    setHeight(Math.max(MIN, Math.min(maxHeight(), (el?.offsetHeight ?? height) + (grow ? 24 : -24))));
+    const h = layer()?.clientHeight;
+    if (!h) return;
+    if (both) app.termSplit = Math.max(0.1, Math.min(0.9, app.termSplit + (e.key === "ArrowDown" ? 24 : -24) / h));
+    else app.termFrac[dock] = Math.max(0.1, Math.min(1, app.termFrac[dock] + (grow ? 24 : -24) / h));
   }
 </script>
 
 <section
   class="tp"
   class:top
+  class:both
   class:hidden={!open}
   bind:this={el}
-  style:flex-basis="{height}px"
+  style:flex-basis={basis}
+  style:flex-grow={both && !top ? 1 : 0}
   aria-label={top ? "Terminal on top" : "Terminal"}
   aria-hidden={!open}
 >
@@ -118,10 +110,13 @@
   .tp:not(.top) {
     margin-top: auto;
   }
+  .tp.both:not(.top) {
+    margin-top: 0;
+  }
   /* Floats over the view (the layer is in the app): a fixed height, or the split when both are open. */
   .tp {
-    flex: 0 0 auto;
-    min-height: 96px;
+    flex-shrink: 0;
+    min-height: 72px;
     max-height: 100%;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--line);
     position: relative;
@@ -136,9 +131,9 @@
     top: 0;
     left: 0;
     right: 0;
-    height: 6px;
+    height: 8px;
     cursor: row-resize;
-    z-index: 2;
+    z-index: 5;
   }
   .tp.top .handle {
     top: auto;
