@@ -1,6 +1,7 @@
 <script lang="ts">
   // The terminals of the space in one panel: under the view (Ctrl Down, T or Ctrl `) or above it
-  // (Ctrl Up). Both can be open: they shrink before the view between them gets too small.
+  // (Ctrl Up), floating over the view without changing its height. Both open: they share the
+  // whole height and the limit between them is dragged.
   // Hiding a panel keeps its shells running; Ctrl Shift ` adds one at the bottom.
   import { app, type TermDock } from "../lib/app.svelte";
   import { colorOfRepo } from "../lib/colors";
@@ -21,19 +22,25 @@
     if (top) app.termTopHeight = h;
     else app.termHeight = h;
   }
-  /** As tall as the view between the panels allows: it keeps its own minimum height. */
+  const both = $derived(app.termTopOpen && app.termOpen);
+  const layer = () => el?.parentElement;
+  /** Floating over the view: as tall as the view itself, whatever the other panel does. */
   function maxHeight(): number {
-    const view = el?.parentElement?.querySelector<HTMLElement>(":scope > .body");
-    if (!el || !view) return Math.max(MIN, window.innerHeight * 0.6);
-    const viewMin = parseFloat(getComputedStyle(view).minHeight) || 0;
-    return Math.max(MIN, el.offsetHeight + view.offsetHeight - viewMin);
+    return Math.max(MIN, (layer()?.clientHeight ?? window.innerHeight) - (both ? MIN + 8 : 0));
   }
   function drag(e: PointerEvent) {
     e.preventDefault();
     const startY = e.clientY;
     const start = el?.offsetHeight ?? height;
     const max = maxHeight();
+    const box = layer()?.getBoundingClientRect();
     const move = (ev: PointerEvent) => {
+      if (both && box?.height) {
+        // The limit between the two panels follows the pointer.
+        const y = Math.max(MIN + 4, Math.min(box.height - MIN - 4, ev.clientY - box.top));
+        app.termSplit = Math.round((y / box.height) * 1000) / 1000;
+        return;
+      }
       const dy = top ? ev.clientY - startY : startY - ev.clientY;
       setHeight(Math.round(Math.max(MIN, Math.min(max, start + dy))));
     };
@@ -49,6 +56,12 @@
     e.preventDefault();
     e.stopPropagation();
     const grow = top ? e.key === "ArrowDown" : e.key === "ArrowUp";
+    const box = layer();
+    if (both && box?.clientHeight) {
+      const d = (grow === top ? 24 : -24) / box.clientHeight;
+      app.termSplit = Math.max(0.1, Math.min(0.9, app.termSplit + d));
+      return;
+    }
     setHeight(Math.max(MIN, Math.min(maxHeight(), (el?.offsetHeight ?? height) + (grow ? 24 : -24))));
   }
 </script>
@@ -101,10 +114,16 @@
   .tp.hidden {
     display: none;
   }
-  /* Shrinks with the window, before the view between the panels gets under its minimum. */
+  /* Only the bottom panel open: it sits at the bottom of the layer. */
+  .tp:not(.top) {
+    margin-top: auto;
+  }
+  /* Floats over the view (the layer is in the app): a fixed height, or the split when both are open. */
   .tp {
-    flex: 0 1 auto;
+    flex: 0 0 auto;
     min-height: 96px;
+    max-height: 100%;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--line);
     position: relative;
     display: flex;
     flex-direction: column;

@@ -426,6 +426,8 @@ export class AppState {
   termHeight = $state(260);
   /** Height of the panel on top in px. */
   termTopHeight = $state(220);
+  /** Share of the height the top panel takes when both are open. */
+  termSplit = $state(0.5);
   /** Bumped when a terminal should take the focus: the shown one of `termFocusDock`. */
   termFocusSeq = $state(0);
   termFocusDock = $state<TermDock>("bottom");

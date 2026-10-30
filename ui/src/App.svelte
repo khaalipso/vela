@@ -123,11 +123,8 @@
       <div class="edge" role="presentation" onmouseenter={() => (app.railPeek = true)}></div>
       {#if app.railPeek}<Rail floating />{/if}
     {/if}
-    <div class="main" style:--termh={app.termOpen && !app.elsewhere ? `${app.termHeight + 8}px` : "0px"}>
+    <div class="main">
       <TopBar />
-      {#if app.termTopOpen || app.terms.some((t) => t.dock === "top")}
-        {#await import("./components/TerminalPanel.svelte") then { default: TerminalPanel }}<TerminalPanel dock="top" />{/await}
-      {/if}
       <div class="body">
         <!-- The Review view lists its own files: the tree would only take room there. -->
         {#if app.filesOpen && app.view === "code"}<FilesDrawer />{/if}
@@ -147,12 +144,20 @@
             </section>
           {/if}
         {/key}
+        <!-- The terminals float over the view, they never change its height. Both open: they share
+             the whole height, and the limit between them can be dragged. xterm.js is loaded the
+             first time one opens. A hidden panel stays mounted: its shells keep running. -->
+        {#if app.termTopOpen || app.termOpen || app.terms.length}
+          <div class="termlayer" class:both={app.termTopOpen && app.termOpen && !app.elsewhere} style:--split="{app.termSplit * 100}%">
+            {#if app.termTopOpen || app.terms.some((t) => t.dock === "top")}
+              {#await import("./components/TerminalPanel.svelte") then { default: TerminalPanel }}<TerminalPanel dock="top" />{/await}
+            {/if}
+            {#if app.termOpen || app.terms.some((t) => t.dock === "bottom")}
+              {#await import("./components/TerminalPanel.svelte") then { default: TerminalPanel }}<TerminalPanel dock="bottom" />{/await}
+            {/if}
+          </div>
+        {/if}
       </div>
-      {#if app.termOpen || app.terms.some((t) => t.dock === "bottom")}
-        <!-- xterm.js is loaded the first time a terminal opens. Hidden, a panel stays mounted:
-             its shells keep running and their screens are there when it comes back. -->
-        {#await import("./components/TerminalPanel.svelte") then { default: TerminalPanel }}<TerminalPanel dock="bottom" />{/await}
-      {/if}
       <!-- In the Review view the list already says what is next: the island only brings news. -->
       {#if app.overlay !== "composer" && app.view !== "agents" && !(app.view === "review" && ["review", "commit", "nothing"].includes(app.upNext.kind.type))}<Island />{/if}
       <BottomHints />
@@ -231,9 +236,28 @@
   /* The view keeps a third of the height when the terminals are open: they shrink first. */
   .body {
     flex: 1 1 0;
-    min-height: min(240px, 34%);
+    min-height: 0;
     display: flex;
     gap: 8px;
+    position: relative;
+  }
+  .termlayer {
+    position: absolute;
+    inset: 0;
+    z-index: 15;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+  }
+  .termlayer > :global(.tp) {
+    pointer-events: auto;
+  }
+  .termlayer.both > :global(.tp.top) {
+    flex: 0 0 calc(var(--split) - 4px);
+  }
+  .termlayer.both > :global(.tp:not(.top)) {
+    flex: 1 1 0;
   }
   .surface {
     flex: 1;

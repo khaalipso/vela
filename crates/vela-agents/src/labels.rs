@@ -191,7 +191,11 @@ mod tests {
             Some("Fix the refund webhook".into())
         );
         assert_eq!(parse_title("refunds, webhooks"), None);
-        assert!(parse_title(&format!("Title: {}", "x".repeat(100))).unwrap().ends_with('…'));
+        assert!(
+            parse_title(&format!("Title: {}", "x".repeat(100)))
+                .unwrap()
+                .ends_with('…')
+        );
     }
 
     #[test]

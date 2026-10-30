@@ -44,32 +44,57 @@ pub fn plain_command(cmd: &str) -> String {
 pub fn is_read_only_command(cmd: &str) -> bool {
     const READERS: &[&str] = &[
         "cat", "head", "tail", "sed", "ls", "tree", "wc", "grep", "rg", "find", "pwd", "echo",
-        "stat", "file", "diff", "uniq", "cut", "tr", "basename", "dirname", "realpath",
-        "which", "awk", "jq", "nl", "du", "df", "date", "true",
+        "stat", "file", "diff", "uniq", "cut", "tr", "basename", "dirname", "realpath", "which",
+        "awk", "jq", "nl", "du", "df", "date", "true",
     ];
     const GIT_READ: &[&str] = &[
-        "status", "diff", "log", "show", "blame", "ls-files", "rev-parse", "grep", "describe",
-        "shortlog", "cat-file", "ls-tree", "merge-base",
+        "status",
+        "diff",
+        "log",
+        "show",
+        "blame",
+        "ls-files",
+        "rev-parse",
+        "grep",
+        "describe",
+        "shortlog",
+        "cat-file",
+        "ls-tree",
+        "merge-base",
     ];
     if cmd.contains(['>', '`', '\n']) || cmd.contains("$(") || cmd.contains("<(") {
         return false;
     }
     let cmd = plain_command(cmd);
     let mut ok = false;
-    for part in cmd.split("&&").flat_map(|p| p.split("||")).flat_map(|p| p.split(['|', ';'])) {
+    for part in cmd
+        .split("&&")
+        .flat_map(|p| p.split("||"))
+        .flat_map(|p| p.split(['|', ';']))
+    {
         let words: Vec<&str> = part.split_whitespace().collect();
         let Some(&first) = words.first() else {
             continue;
         };
         let good = match first {
             "cd" => true,
-            "git" => words
+            "git" => {
+                words
+                    .iter()
+                    .skip(1)
+                    .find(|w| !w.starts_with('-'))
+                    .is_some_and(|sub| GIT_READ.contains(sub))
+                    && !words.iter().any(|w| {
+                        matches!(
+                            *w,
+                            "-d" | "-D" | "-m" | "-M" | "--set-upstream-to" | "--unset" | "--add"
+                        )
+                    })
+            }
+            "sed" => !words
                 .iter()
                 .skip(1)
-                .find(|w| !w.starts_with('-'))
-                .is_some_and(|sub| GIT_READ.contains(sub))
-                && !words.iter().any(|w| matches!(*w, "-d" | "-D" | "-m" | "-M" | "--set-upstream-to" | "--unset" | "--add")),
-            "sed" => !words.iter().skip(1).any(|w| w.starts_with("-i") || *w == "--in-place"),
+                .any(|w| w.starts_with("-i") || *w == "--in-place"),
             "find" => !words
                 .iter()
                 .any(|w| matches!(*w, "-exec" | "-execdir" | "-delete" | "-ok" | "-fprint")),

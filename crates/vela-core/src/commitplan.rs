@@ -971,17 +971,52 @@ fn restore(saved: &[Saved]) {
     }
 }
 
+/// What a group takes: a patch for the files that have hunks, and the files without any (binary
+/// files, pure renames, mode changes) which `git apply` cannot take from a diff without
+/// `--binary`: those are copied from the index as it was, see [`take_whole`].
+struct GroupPatch {
+    text: String,
+    /// `(old path of a rename, path)`.
+    whole: Vec<(Option<String>, String)>,
+}
+
+/// Put a file in the index as the saved tree has it (or out of it when the tree has no such file).
+fn take_whole(dir: &Path, tree: &str, path: &str) -> Result<()> {
+    let listed = git(dir, &["ls-tree", "-z", tree, "--", path])?;
+    let entry = listed.split('\0').find(|l| !l.is_empty());
+    match entry.and_then(|l| l.split_once('\t')) {
+        Some((meta, _)) => {
+            let mut it = meta.split(' ');
+            let (mode, sha) = (it.next().unwrap_or(""), it.nth(1).unwrap_or(""));
+            git(
+                dir,
+                &[
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    &format!("{mode},{sha},{path}"),
+                ],
+            )?;
+        }
+        None => {
+            git(dir, &["update-index", "--force-remove", "--", path])?;
+        }
+    }
+    Ok(())
+}
+
 /// Patch text for one group: file headers with only the hunks it takes, in file order.
-fn patch_for(group: &CommitGroup, files: &[&ParsedFile]) -> Result<String> {
+fn patch_for(group: &CommitGroup, files: &[&ParsedFile]) -> Result<GroupPatch> {
     let wanted: BTreeSet<&str> = group.hunks.iter().map(String::as_str).collect();
     let mut found: BTreeSet<&str> = BTreeSet::new();
     let mut patch = String::new();
+    let mut whole = Vec::new();
     for f in files {
         if f.hunks.is_empty() {
             let marker = file_marker(&f.repo, &f.path);
             if let Some(m) = wanted.get(marker.as_str()) {
                 found.insert(m);
-                patch.push_str(&f.header);
+                whole.push((f.from.clone(), f.path.clone()));
             }
             continue;
         }
@@ -1000,7 +1035,7 @@ fn patch_for(group: &CommitGroup, files: &[&ParsedFile]) -> Result<String> {
     if let Some(missing) = wanted.difference(&found).next() {
         return Err(Error::HunkNotFound((*missing).to_string()));
     }
-    Ok(patch)
+    Ok(GroupPatch { text: patch, whole })
 }
 
 /// Commit each group in order.
@@ -1048,7 +1083,7 @@ pub fn commit_groups_with(
     }
     let staged = staged_files(space)?;
     // Build every patch before touching git.
-    let mut patches: Vec<String> = Vec::new();
+    let mut patches: Vec<GroupPatch> = Vec::new();
     for g in groups {
         let files: Vec<&ParsedFile> = staged.iter().filter(|f| f.repo == g.repo).collect();
         patches.push(patch_for(g, &files)?);
@@ -1071,12 +1106,23 @@ pub fn commit_groups_with(
                 });
             }
             git(dir, &["read-tree", "HEAD"])?;
-            if !patch.is_empty() {
+            let tree = saved
+                .iter()
+                .find(|s| s.dir == dir)
+                .map(|s| s.tree.clone())
+                .unwrap_or_default();
+            for (from, path) in &patch.whole {
+                if let Some(from) = from {
+                    take_whole(dir, &tree, from)?;
+                }
+                take_whole(dir, &tree, path)?;
+            }
+            if !patch.text.is_empty() {
                 git_with(
                     dir,
                     &["apply", "--cached", "--whitespace=nowarn", "-"],
                     &[],
-                    Some(patch),
+                    Some(&patch.text),
                 )
                 .map_err(|e| match e {
                     Error::Git { stderr, .. } => Error::PatchFailed(stderr),

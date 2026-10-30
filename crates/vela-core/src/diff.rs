@@ -265,6 +265,14 @@ pub fn parse_diff(repo: &str, text: &str, state: HunkState) -> Vec<ParsedFile> {
             file.is_deleted = true;
         }
     }
+    // A binary file or a mode change has no ---/+++ lines: its path is on the first line.
+    for f in &mut files {
+        if f.path.is_empty() {
+            if let Some(p) = path_of_git_line(f.header.lines().next().unwrap_or("")) {
+                f.path = p;
+            }
+        }
+    }
     // Fix hunk paths for files whose path was only known from rename lines.
     for f in &mut files {
         for h in &mut f.hunks {
@@ -275,6 +283,15 @@ pub fn parse_diff(repo: &str, text: &str, state: HunkState) -> Vec<ParsedFile> {
         }
     }
     files
+}
+
+/// The path in `diff --git a/X b/X` (the same name on both sides, spaces allowed).
+fn path_of_git_line(l: &str) -> Option<String> {
+    let rest = l.strip_prefix("diff --git a/")?;
+    let n = rest.len().checked_sub(3)? / 2;
+    let (a, b) = (rest.get(..n)?, rest.get(n..)?);
+    let name = b.strip_prefix(" b/")?;
+    (a == name && !name.is_empty()).then(|| name.to_string())
 }
 
 /// Parse a unified diff into flat hunks.
@@ -616,6 +633,18 @@ diff --git a/t b/t
         let hunks = parse_unified("r", d, HunkState::Pending);
         assert_eq!(hunks.len(), 1);
         assert_eq!(hunks[0].path, "t");
+        let files = parse_diff("r", d, HunkState::Pending);
+        assert_eq!(files[0].path, "img.png");
+        assert!(files[0].hunks.is_empty());
+    }
+
+    #[test]
+    fn mode_change_and_spaces_keep_their_path() {
+        let d = "diff --git a/my dir/run.sh b/my dir/run.sh\nold mode 100644\nnew mode 100755\n";
+        assert_eq!(
+            parse_diff("r", d, HunkState::Pending)[0].path,
+            "my dir/run.sh"
+        );
     }
 
     #[test]

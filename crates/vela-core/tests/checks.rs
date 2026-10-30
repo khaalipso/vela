@@ -507,6 +507,29 @@ fn commit_groups_skip_the_hook_for_a_single_group_covering_the_index() {
 }
 
 #[test]
+fn a_binary_file_commits_with_the_text_ones() {
+    let e = env(&[]);
+    let d = e.dir();
+    fs::write(d.join(".DS_Store"), [0u8, 1, 2, 3, 255]).unwrap();
+    write(d, "x.txt", "1\n");
+    sh(d, &["add", "-f", ".DS_Store", "x.txt"]);
+    let plan = vela_core::commitplan::plan(&e.space, &[]).unwrap();
+    commit_groups_with(&e.space, plan.conventional, &plan.groups, None).unwrap();
+    let files = sh(d, &["show", "--name-only", "--format=", "HEAD"]);
+    assert!(
+        files.contains(".DS_Store") && files.contains("x.txt"),
+        "{files}"
+    );
+    assert!(sh(d, &["status", "--porcelain"]).trim().is_empty());
+    // And when it changes again, as a binary change of a tracked file.
+    fs::write(d.join(".DS_Store"), [9u8, 0, 9]).unwrap();
+    sh(d, &["add", "-f", ".DS_Store"]);
+    let plan = vela_core::commitplan::plan(&e.space, &[]).unwrap();
+    commit_groups_with(&e.space, plan.conventional, &plan.groups, None).unwrap();
+    assert!(sh(d, &["status", "--porcelain"]).trim().is_empty());
+}
+
+#[test]
 fn entries_reflect_config_cache_and_missing_tools() {
     let e = env(&[
         ("Cargo.toml", "[package]\nname=\"x\"\n"),
