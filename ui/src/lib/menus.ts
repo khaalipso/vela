@@ -152,6 +152,7 @@ function repoBranchItems(repo: string, named: boolean): MenuEntry[] {
   const b = repoBranch(app.space, repo);
   const of = named ? ` of ${repo}` : "";
   return [
+    it(`Switch branch${of}…`, { run: () => void ops.askSwitchBranch(repo) }),
     it(`Rename branch${of}…`, { icon: "rename", run: () => ops.askRenameBranch(repo) }),
     it(named ? `Copy ${b}` : "Copy branch name", { icon: "copy", run: () => void writeClipboard(b).then(() => app.toast(`Copied ${b}`)) }),
     it(`Push ${named ? b : "branch"}`, { run: () => void app.pushBranch(repo) }),
@@ -167,6 +168,7 @@ export function branchMenu(): MenuEntry[] {
     const b = branches[0];
     const many = space.repos.length > 1;
     return tidy([
+      it("Switch branch…", { run: () => void ops.askSwitchBranch() }),
       it(many ? "Rename in every repo…" : "Rename branch…", { icon: "rename", run: () => ops.askRenameBranch() }),
       it("Copy branch name", { icon: "copy", run: () => void writeClipboard(b).then(() => app.toast(`Copied ${b}`)) }),
       SEP,

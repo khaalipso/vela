@@ -6,7 +6,9 @@
   import { app } from "../lib/app.svelte";
   import type { GraphLine, RepoHistory } from "../lib/backend";
   import { colorOfRepo } from "../lib/colors";
+  import { parseCommitDiff, type CommitFile } from "../lib/commitdiff";
   import { plural } from "../lib/format";
+  import DiffBlock from "./DiffBlock.svelte";
   import { shapes } from "../lib/graph";
   import { spaceBranches } from "../lib/types";
   import Kbd from "./Kbd.svelte";
@@ -24,6 +26,23 @@
     untrack(() => void app.loadHistory(s));
   });
 
+  /** The commit opened under its line, per repo, with what it changed. */
+  let picked = $state<Record<string, string>>({});
+  let changes = $state<Record<string, { files: CommitFile[] } | { error: string } | null>>({});
+  async function pick(repo: string, hash: string) {
+    const k = `${repo}:${hash}`;
+    if (picked[repo] === hash) {
+      picked = { ...picked, [repo]: "" };
+      return;
+    }
+    picked = { ...picked, [repo]: hash };
+    if (changes[k]) return;
+    try {
+      changes[k] = { files: parseCommitDiff(repo, await app.backend.gitCommit(sid, repo, hash)) };
+    } catch (e) {
+      changes[k] = { error: e instanceof Error ? e.message : String(e) };
+    }
+  }
   const ROW = 28;
   const LINK = 12;
   const drawn = (lines: GraphLine[]) => {
@@ -80,13 +99,14 @@
           <ol class="graph">
             {#each shown(h) as l, i (i)}
               {@const s = d.sh[i]}
-              <li class:commit={!!l.hash} class:mine={l.mine} style:height={`${d.hs[i]}px`}>
+              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+              <li class:commit={!!l.hash} class:mine={l.mine} class:picked={!!l.hash && picked[h.repo] === l.hash} style:height={`${d.hs[i]}px`} onclick={() => l.hash && void pick(h.repo, l.hash)}>
                 <svg class="g" width={s.width} height={d.hs[i]} aria-hidden="true">
                   {#each s.segs as g, j (j)}<line x1={g.x1} y1={g.y1} x2={g.x2} y2={g.y2} stroke={g.color} stroke-width="2" stroke-linecap="round" />{/each}
                   {#if s.dot}<circle cx={s.dot.x} cy={d.hs[i] / 2} r={l.mine ? 4.5 : 3.5} fill={l.mine ? s.dot.color : "var(--panel)"} stroke={s.dot.color} stroke-width="2" />{/if}
                 </svg>
                 {#if l.hash}
-                  <button class="hash mono" onclick={() => copy(l.hash)} title="Copy the hash">{l.hash}</button>
+                  <button class="hash mono" onclick={(e) => (e.stopPropagation(), copy(l.hash))} title="Copy the hash">{l.hash}</button>
                   {#each l.refs as r (r)}<span class="ref" data-kind={refKind(r)}>{refText(r)}</span>{/each}
                   <span class="subj">{l.subject}</span>
                   <span class="who">{l.author}</span>
@@ -95,6 +115,30 @@
               </li>
             {/each}
           </ol>
+          {#if picked[h.repo]}
+            {@const c = changes[`${h.repo}:${picked[h.repo]}`]}
+            <div class="chg" aria-label="Changes of {picked[h.repo]}">
+              {#if !c}
+                <p class="empty">Reading the commit…</p>
+              {:else if "error" in c}
+                <p class="empty">{c.error}</p>
+              {:else if !c.files.length}
+                <p class="empty">This commit changes no file.</p>
+              {:else}
+                <p class="cs"><b class="mono">{picked[h.repo]}</b> {plural(c.files.length, "file", "files")} · <i class="a">+{c.files.reduce((n, f) => n + f.added, 0)}</i> <i class="d">−{c.files.reduce((n, f) => n + f.removed, 0)}</i></p>
+                {#each c.files as f (f.path)}
+                  <details class="cf" open={c.files.length <= 6}>
+                    <summary>
+                      <span class="fp mono">{f.from ? `${f.from} → ` : ""}{f.path}</span>
+                      <span class="fs">{f.status === "modified" ? "" : f.status}</span>
+                      <i class="a">+{f.added}</i> <i class="d">−{f.removed}</i>
+                    </summary>
+                    {#each f.hunks as hk (hk.id)}<DiffBlock hunk={hk} />{:else}<p class="empty">{f.status === "binary" ? "Binary file." : "No line changes."}</p>{/each}
+                  </details>
+                {/each}
+              {/if}
+            </div>
+          {/if}
           {#if h.lines.length > 40}
             <button class="more" onclick={() => (open = { ...open, [h.repo]: !open[h.repo] })}>
               {open[h.repo] ? "Show less" : `Show ${commitsOf(h.lines.slice(40))} older commits`}
@@ -321,5 +365,55 @@
   }
   .git > :global(.prs) {
     padding: 0;
+  }
+  .graph li.commit {
+    cursor: pointer;
+  }
+  .graph li.picked {
+    background: color-mix(in srgb, var(--rc) 14%, transparent);
+  }
+  .chg {
+    margin-top: 8px;
+    border-top: 1px solid var(--line);
+    padding-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .cs {
+    margin: 0;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .cf summary {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    cursor: pointer;
+    font-size: 12.5px;
+    padding: 3px 0;
+  }
+  .fp {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fs {
+    color: var(--faint);
+    font-size: 11px;
+    margin-left: auto;
+  }
+  .cf .a {
+    color: var(--add);
+    font-style: normal;
+  }
+  .cf .d,
+  .cs .d {
+    color: var(--del);
+    font-style: normal;
+  }
+  .cs .a {
+    color: var(--add);
+    font-style: normal;
   }
 </style>

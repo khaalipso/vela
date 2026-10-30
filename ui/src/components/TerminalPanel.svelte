@@ -44,6 +44,18 @@
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   }
+  // A click outside every terminal panel (and outside menus and sheets) puts the terminals away.
+  $effect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t?.isConnected) return;
+      if (t.closest(".tp, .ctxmenu, [role=dialog], [aria-modal=true], .toast")) return;
+      app.dispatch({ type: "hide-terminals" });
+    };
+    document.addEventListener("pointerdown", away, true);
+    return () => document.removeEventListener("pointerdown", away, true);
+  });
   function nudge(e: KeyboardEvent) {
     if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
     e.preventDefault();

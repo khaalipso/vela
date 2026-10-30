@@ -529,6 +529,30 @@ class Ops {
   // -- spaces ---------------------------------------------------------------------
 
   /** Rename the branch of one repo, or of every repo when `repo` is left out. */
+  /** A list of the branches to jump to: type to filter, or to name a new one. */
+  async askSwitchBranch(repo?: string) {
+    const space = app.space;
+    const name = repo ?? space.repos[0]?.name;
+    if (!name) return;
+    let list: Awaited<ReturnType<typeof app.backend.listBranches>> = [];
+    try {
+      list = await app.backend.listBranches(space.id, name);
+    } catch (e) {
+      return app.toast(msg(e));
+    }
+    app.sheet = {
+      kind: "pick",
+      title: repo || space.repos.length === 1 ? `Switch ${repo ?? name} to a branch` : `Switch every repo to a branch`,
+      placeholder: "Find a branch, or type a new name",
+      items: list.map((b) => ({ id: b.remote ? b.name.replace(/^[^/]+\//, "") : b.name, label: b.name, hint: b.current ? "current" : [b.when, b.subject].filter(Boolean).join(" · "), current: b.current })),
+      createLabel: "Create the branch",
+      run: async (id) => {
+        await app.switchBranch(id, repo ?? (space.repos.length > 1 ? null : name));
+      },
+    };
+    app.overlay = "sheet";
+  }
+
   askRenameBranch(repo?: string) {
     const space = app.space;
     const where = repo ? [repo] : space.repos.map((r) => r.name);

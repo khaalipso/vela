@@ -9,7 +9,8 @@
   import AgentChat from "./AgentChat.svelte";
   import Kbd from "./Kbd.svelte";
 
-  const agents = $derived(app.sd.agents);
+  const agents = $derived(app.branchAgents);
+  const elsewhere = $derived(app.sd.agents.filter((a) => !app.onThisBranch(a)).length);
   const total = $derived(usageLine(totalUsage(agents)));
   const shown = $derived(app.agentList);
   const active = $derived(shown.filter((a) => a.status === "working" || a.status === "waiting"));
@@ -130,6 +131,11 @@
         {/if}
         {#if !shown.length}
           <p class="none">No conversation matches “{app.agentQuery}”. <button class="btn ghost" onclick={() => (app.agentQuery = "")}>Clear</button></p>
+        {/if}
+        {#if elsewhere}
+          <button class="btn ghost more" onclick={() => (app.allBranches = !app.allBranches)}>
+            {app.allBranches ? "Only this branch" : `${plural(elsewhere, "agent", "agents")} on other branches`}
+          </button>
         {/if}
         {#if active.length}<h4>At work <span>{active.length}</span></h4>{/if}
         {#each active as a (a.id)}{@render item(a)}{/each}

@@ -1002,6 +1002,32 @@ pub fn accept_proposal(vela: &Vela, id: &str, hunk_id: &str) -> AppResult<Hunk> 
     Ok(hunk)
 }
 
+/// What one commit changed, as a unified diff (Git view). Capped so a huge commit stays light.
+pub fn git_commit(vela: &Vela, id: &str, repo: &str, hash: &str) -> AppResult<String> {
+    if hash.is_empty() || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(AppError::invalid("not a commit hash"));
+    }
+    let space = load(vela, id)?;
+    let r = space
+        .repos
+        .iter()
+        .find(|r| r.name == repo)
+        .ok_or_else(|| AppError::invalid(format!("no repo {repo}")))?;
+    let mut out = vela_core::git::git(
+        std::path::Path::new(&r.worktree),
+        &["show", "--format=", "--no-color", "-M", "--no-ext-diff", hash],
+    )?;
+    if out.len() > 600_000 {
+        let mut cut = 600_000;
+        while !out.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        out.truncate(cut);
+        out.push_str("\n");
+    }
+    Ok(out)
+}
+
 /// The commit graph and branch state of each repo of the space (Git view).
 pub fn git_history(vela: &Vela, id: &str) -> AppResult<Vec<vela_core::history::RepoHistory>> {
     Ok(vela_core::history::space_history(&load(vela, id)?, 120)?)
@@ -1877,7 +1903,63 @@ pub fn set_branch_template(dir: Option<&Path>, template: &str) -> AppResult<Bran
 /// Rename the branch (and those of its agents) of one repo, or of every repo (None).
 pub fn rename_branch(vela: &Vela, id: &str, branch: &str, repo: Option<&str>) -> AppResult<Space> {
     let _inv = Invalidate(id);
-    Ok(vela_core::branches::rename(vela, id, branch, repo)?)
+    let before = load(vela, id)?.branch_key();
+    let space = vela_core::branches::rename(vela, id, branch, repo)?;
+    // The conversations follow their branch to its new name.
+    let after = space.branch_key();
+    if before != after {
+        for e in vela_agents::registry::load(vela, id).unwrap_or_default() {
+            if e.agent.branch == before {
+                let _ = vela_agents::registry::update(vela, id, &e.agent.id, |x| x.agent.branch = after.clone());
+            }
+        }
+    }
+    Ok(space)
+}
+
+/// The branches of one repo of the space, to jump from one to another.
+pub fn list_branches(vela: &Vela, id: &str, repo: &str) -> AppResult<Vec<vela_core::branches::BranchInfo>> {
+    let space = load(vela, id)?;
+    let r = space
+        .repo(repo)
+        .ok_or_else(|| AppError::invalid(format!("no repo {repo} in this space")))?;
+    Ok(vela_core::branches::list(Path::new(&r.worktree))?)
+}
+
+/// Switch the clone of one repo (None: every repo) to `branch`: an existing local branch, a
+/// remote one, or a new branch from the base. Uncommitted changes go along; git refuses when
+/// they would be overwritten, and the message says so.
+pub fn switch_branch(vela: &Vela, id: &str, branch: &str, repo: Option<&str>) -> AppResult<Space> {
+    let _inv = Invalidate(id);
+    let branch = branch.trim();
+    if !vela_core::branches::is_valid(branch) {
+        return Err(AppError::invalid(format!("{branch} is not a valid branch name")));
+    }
+    let space = load(vela, id)?;
+    if let Some(name) = repo
+        && space.repo(name).is_none()
+    {
+        return Err(AppError::invalid(format!("no repo {name} in this space")));
+    }
+    let targets: Vec<_> = space.repos.iter().filter(|r| repo.is_none_or(|n| r.name == n)).collect();
+    for r in &targets {
+        vela_core::space::refuse_if_checked_out_elsewhere(Path::new(&r.worktree), &r.name, branch)?;
+    }
+    let mut switched: Vec<(&str, String)> = Vec::new();
+    for r in &targets {
+        let wt = Path::new(&r.worktree);
+        let previous = vela_core::git::head_branch(wt).unwrap_or_else(|| r.branch.clone());
+        let base = if r.base.is_empty() { previous.clone() } else { r.base.clone() };
+        if let Err(e) = vela_core::space::switch_to(wt, branch, &base) {
+            // Back to where the repos were, so the space is not half moved.
+            for (path, prev) in switched.iter().rev() {
+                let _ = git(Path::new(path), &["switch", "--quiet", prev]);
+            }
+            return Err(AppError::new("git", format!("{}: {e}", r.name)));
+        }
+        switched.push((&r.worktree, previous));
+    }
+    load(vela, id)
 }
 
 /// Push the branch of one repo, or of every repo (None): `git push -u origin <branch>`.

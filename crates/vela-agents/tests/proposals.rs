@@ -38,6 +38,7 @@ fn agent(id: &str, status: AgentStatus) -> Agent {
         last_event: None,
         labels: vec![],
         title: None,
+        branch: String::new(),
     }
 }
 

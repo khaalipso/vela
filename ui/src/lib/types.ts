@@ -151,6 +151,8 @@ export interface Agent {
   labels?: string[];
   /** A short title of the conversation, from the Vela model. */
   title?: string | null;
+  /** The branch it was asked on: it shows only while the space is on it (empty: always). */
+  branch?: string;
 }
 
 /** A harness Vela can drive, and whether it is installed. */

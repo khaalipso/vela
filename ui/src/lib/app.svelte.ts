@@ -174,6 +174,15 @@ export type SheetSpec =
       run: () => Promise<void> | void;
     }
   | {
+      kind: "pick";
+      title: string;
+      /** Typing filters; a name that matches nothing offers `createLabel`. */
+      placeholder: string;
+      items: { id: string; label: string; hint?: string; current?: boolean }[];
+      createLabel?: string;
+      run: (id: string) => Promise<void> | void;
+    }
+  | {
       kind: "prompt";
       title: string;
       label: string;
@@ -286,6 +295,24 @@ export class AppState {
       this.fail(e);
       return false;
     }
+  }
+
+  /** Jump to another branch in one repo, or in every repo when `repo` is left out. */
+  async switchBranch(branch: string, repo?: string | null): Promise<boolean> {
+    try {
+      const s = await this.backend.switchBranch(this.space.id, branch, repo ?? null);
+      await this.syncSpaces();
+      this.toast(repo ? `${repo} is now on ${repoBranch(s, repo)}` : `Now on ${spaceBranches(s).join(", ")}`);
+      return true;
+    } catch (e) {
+      this.fail(e);
+      return false;
+    }
+  }
+
+  /** Whether an agent belongs to the branch the space is on (agents from before show everywhere). */
+  onThisBranch(a: Agent): boolean {
+    return !a.branch || a.branch === spaceBranches(this.space).join(", ");
   }
 
   /** Push the branch of one repo, or of every repo when `repo` is left out. */
@@ -562,7 +589,15 @@ export class AppState {
   }
 
   private async onEvent(e: BackendEvent) {
+    const was = this.spaces.find((s) => s.id === e.spaceId);
+    const wasOn = was ? spaceBranches(was).join(", ") : "";
     await this.syncSpaces();
+    // Switched elsewhere (a terminal, another editor): follow it, and say so.
+    const now = this.spaces.find((s) => s.id === e.spaceId);
+    if (was && now && spaceBranches(now).join(", ") !== wasOn && !e.toast) {
+      this.toast(`Now on ${spaceBranches(now).join(", ")}: agents and changes follow the branch`);
+      if (e.spaceId === this.space.id) void this.loadHistory(e.spaceId);
+    }
     if (!this.data[e.spaceId] || !this.spaces.some((s) => s.id === e.spaceId)) return;
     try {
       await this.load(e.spaceId, e.kind === "file");
@@ -2008,9 +2043,15 @@ export class AppState {
   agentSel = $state<Record<string, string>>({});
   /** The search of the Agents view: words found in the labels, request, summary, role, session. */
   agentQuery = $state("");
+  /** Show the agents of the other branches too. */
+  allBranches = $state(false);
+  /** The agents of the branch the space is on (all of them with `allBranches`). */
+  get branchAgents(): Agent[] {
+    return this.allBranches ? this.sd.agents : this.sd.agents.filter((a) => this.onThisBranch(a));
+  }
   /** The agents of the space the search keeps, at work first. */
   get agentList(): Agent[] {
-    const list = this.sd.agents.filter((a) => matchesAgent(a, this.agentQuery));
+    const list = this.branchAgents.filter((a) => matchesAgent(a, this.agentQuery));
     return [
       ...list.filter((x) => x.status === "working" || x.status === "waiting"),
       ...list.filter((x) => x.status !== "working" && x.status !== "waiting"),
@@ -2024,7 +2065,7 @@ export class AppState {
   }
   /** The agent shown in the chat: the picked one, else the first at work, else the newest. */
   get selectedAgent(): Agent | null {
-    const list = this.sd.agents;
+    const list = this.branchAgents;
     const id = this.agentSel[this.space.id];
     return (
       list.find((a) => a.id === id) ??

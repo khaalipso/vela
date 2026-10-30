@@ -74,6 +74,35 @@
   const stuck = $derived(quiet >= QUIET_WARN_MS);
   const nudged = $derived(queued.includes(NUDGE));
 
+  /** Height of the writing area, dragged from the bar above it; kept between visits. */
+  let sayH = $state<number | null>(Number(localStorage.getItem("vela.sayH")) || null);
+  function setSayH(h: number | null) {
+    sayH = h === null ? null : Math.round(Math.max(48, Math.min(window.innerHeight * 0.7, h)));
+    try {
+      if (sayH) localStorage.setItem("vela.sayH", String(sayH));
+      else localStorage.removeItem("vela.sayH");
+    } catch {
+      /* private mode */
+    }
+  }
+  function dragSay(e: PointerEvent) {
+    e.preventDefault();
+    const startY = e.clientY;
+    const start = input?.offsetHeight ?? 56;
+    const move = (ev: PointerEvent) => setSayH(start + startY - ev.clientY);
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+  function nudgeSay(e: KeyboardEvent) {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    e.preventDefault();
+    setSayH((input?.offsetHeight ?? 56) + (e.key === "ArrowUp" ? 24 : -24));
+  }
+
   async function copySession() {
     if (!agent.session) return;
     app.toast((await writeClipboard(agent.session)) ? "Copied the session id" : "Could not reach the clipboard");
@@ -518,6 +547,8 @@
     {/each}
   </div>
 
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+  <div class="sayh" role="separator" aria-orientation="horizontal" aria-label="Resize the writing area" tabindex="0" title="Drag to enlarge (double click to reset)" onpointerdown={dragSay} ondblclick={() => setSayH(null)} onkeydown={nudgeSay}></div>
   <form
     class="say"
     onsubmit={(e) => {
@@ -529,6 +560,8 @@
       bind:this={input}
       bind:value={text}
       rows="2"
+      style:height={sayH ? `${sayH}px` : undefined}
+      style:max-height={sayH ? "none" : undefined}
       disabled={!canSend}
       onkeydown={onKey}
       aria-label="Message to {agent.id}"
@@ -1136,6 +1169,19 @@
   }
   .faint {
     color: var(--faint);
+  }
+  .sayh {
+    flex: none;
+    height: 6px;
+    margin-bottom: -6px;
+    cursor: ns-resize;
+    position: relative;
+    z-index: 1;
+  }
+  .sayh:hover,
+  .sayh:focus-visible {
+    background: color-mix(in srgb, var(--space) 40%, transparent);
+    outline: none;
   }
   .say {
     display: flex;

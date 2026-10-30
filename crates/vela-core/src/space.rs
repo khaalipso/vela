@@ -144,7 +144,7 @@ fn checked_branch(b: &str) -> Result<String> {
 /// Switch the clone `source` to `branch`: the existing local branch, a local branch tracking
 /// the remote one, or a new branch from `base`. Uncommitted changes go along (git refuses when
 /// they would be overwritten). True when the branch was made.
-fn switch_to(source: &Path, branch: &str, base: &str) -> Result<bool> {
+pub fn switch_to(source: &Path, branch: &str, base: &str) -> Result<bool> {
     if crate::git::head_branch(source).as_deref() == Some(branch) {
         return Ok(false);
     }
@@ -164,7 +164,7 @@ fn switch_to(source: &Path, branch: &str, base: &str) -> Result<bool> {
 }
 
 /// A branch checked out in another worktree cannot be switched to: say where.
-fn refuse_if_checked_out_elsewhere(source: &Path, repo_name: &str, branch: &str) -> Result<()> {
+pub fn refuse_if_checked_out_elsewhere(source: &Path, repo_name: &str, branch: &str) -> Result<()> {
     if let Some(path) = crate::branches::checked_out_in(source, branch)
         && Path::new(&path) != source
     {

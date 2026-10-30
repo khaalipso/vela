@@ -478,6 +478,7 @@ describe("spaces", () => {
     await settle();
     expect(items()).toEqual([
       "Show files",
+      "Switch branch…",
       "Rename branch…",
       "Copy branch name",
       "Push branch",

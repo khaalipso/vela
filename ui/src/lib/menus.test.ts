@@ -264,6 +264,7 @@ describe("folder and repo menus", () => {
     expect(labels(m)).toEqual([
       "Show files",
       "-",
+      "Switch branch…",
       "Rename branch…",
       "Copy branch name",
       "Push branch",

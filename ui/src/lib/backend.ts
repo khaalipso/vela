@@ -408,6 +408,10 @@ export interface Backend {
   setBranchTemplate(template: string): Promise<BranchNaming>;
   /** Rename the branch (and those of its agents) of one repo, or of every repo when `repo` is left out. */
   renameBranch(spaceId: string, branch: string, repo?: string | null): Promise<Space>;
+  /** The branches of one repo of the space, to jump between them. */
+  listBranches(spaceId: string, repo: string): Promise<BranchInfo[]>;
+  /** Switch one repo (or every repo) to a branch, creating it from the base when it does not exist. */
+  switchBranch(spaceId: string, branch: string, repo?: string | null): Promise<Space>;
   /** `git push -u origin <branch>` in one repo, or every repo; returns the repos pushed. */
   pushBranch(spaceId: string, repo?: string | null): Promise<string[]>;
   /** Add a repo, or a folder of repos (path), to a space: it stays on its branch, or switches to `branch`. */
@@ -449,6 +453,8 @@ export interface Backend {
   acceptHunks(spaceId: string, hunkIds: string[]): Promise<string[]>;
   /** The commit graph and branch state of each repo of the space. */
   gitHistory(spaceId: string): Promise<RepoHistory[]>;
+  /** What one commit changed, as a unified diff. */
+  gitCommit(spaceId: string, repo: string, hash: string): Promise<string>;
   /** What accepting a file gives, before anything is written. */
   reviewFile(spaceId: string, repo: string, path: string): Promise<FileReview>;
   /** Accept a file: write `content` (or the merged result as is) and stage it. Refused with conflict markers. */
@@ -1016,6 +1022,18 @@ export class MockBackend implements Backend {
     }
     s.space.repos = s.space.repos.map((r) => (!repo || r.name === repo ? { ...r, branch: b } : { ...r, branch: r.branch || s.space.branch }));
     if (!repo) s.space.branch = b;
+    this.emit(spaceId);
+    return structuredClone(s.space);
+  }
+  async listBranches(spaceId: string, repo: string): Promise<BranchInfo[]> {
+    const s = this.sp(spaceId);
+    const cur = repoBranch(s.space, repo);
+    const names = [...new Set([cur, "main", "develop", s.space.branch])];
+    return names.map((name) => ({ name, remote: false, current: name === cur, when: "2 days ago", subject: "Last commit" }));
+  }
+  async switchBranch(spaceId: string, branch: string, repo?: string | null): Promise<Space> {
+    const s = this.sp(spaceId);
+    s.space.repos = s.space.repos.map((r) => (!repo || r.name === repo ? { ...r, branch } : r));
     this.emit(spaceId);
     return structuredClone(s.space);
   }
@@ -1955,6 +1973,10 @@ export class MockBackend implements Backend {
     return failed;
   }
 
+  async gitCommit(_spaceId: string, _repo: string, hash: string): Promise<string> {
+    return `diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1,2 +1,3 @@\n # Demo\n-old line\n+new line\n+commit ${hash}\n`;
+  }
+
   async gitHistory(spaceId: string): Promise<RepoHistory[]> {
     const s = this.sp(spaceId);
     const st = await this.status(spaceId);
@@ -2577,6 +2599,12 @@ export class TauriBackend implements Backend {
   renameBranch(spaceId: string, branch: string, repo?: string | null) {
     return call<Space>("rename_branch", { spaceId, branch, repo: repo ?? null });
   }
+  listBranches(spaceId: string, repo: string) {
+    return call<BranchInfo[]>("list_branches", { spaceId, repo });
+  }
+  switchBranch(spaceId: string, branch: string, repo?: string | null) {
+    return call<Space>("switch_branch", { spaceId, branch, repo: repo ?? null });
+  }
   pushBranch(spaceId: string, repo?: string | null) {
     return call<string[]>("push_branch", { spaceId, repo: repo ?? null });
   }
@@ -2636,6 +2664,9 @@ export class TauriBackend implements Backend {
   }
   reviewFile(spaceId: string, repo: string, path: string) {
     return call<FileReview>("review_file", { spaceId, repo, path });
+  }
+  gitCommit(spaceId: string, repo: string, hash: string) {
+    return call<string>("git_commit", { spaceId, repo, hash });
   }
   gitHistory(spaceId: string) {
     return call<RepoHistory[]>("git_history", { spaceId });

@@ -510,6 +510,7 @@ impl AgentManager {
                     last_event: Some(registry::now()),
                     labels: crate::labels::known(space.ticket.as_deref(), &req.prompt),
                     title: None,
+                    branch: space.branch_key(),
                 },
                 bases: Vec::new(),
                 read_only,

@@ -394,6 +394,42 @@ pub async fn accept_hunks(
     Ok(failed)
 }
 
+/// The branches of one repo, local first.
+#[tauri::command]
+pub async fn list_branches(
+    vela: State<'_, Vela>,
+    space_id: String,
+    repo: String,
+) -> AppResult<Vec<vela_core::branches::BranchInfo>> {
+    blocking(&vela, move |v| commands::list_branches(v, &space_id, &repo)).await
+}
+
+/// Switch one repo (or every repo) to a branch.
+#[tauri::command]
+pub async fn switch_branch(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    branch: String,
+    repo: Option<String>,
+) -> AppResult<Space> {
+    let id = space_id.clone();
+    let space = blocking(&vela, move |v| commands::switch_branch(v, &id, &branch, repo.as_deref())).await?;
+    notify_state(&app, &space_id);
+    Ok(space)
+}
+
+/// What one commit changed, as a unified diff (Git view).
+#[tauri::command]
+pub async fn git_commit(
+    vela: State<'_, Vela>,
+    space_id: String,
+    repo: String,
+    hash: String,
+) -> AppResult<String> {
+    blocking(&vela, move |v| commands::git_commit(v, &space_id, &repo, &hash)).await
+}
+
 /// The commit graph and branch state of each repo (Git view).
 #[tauri::command]
 pub async fn git_history(

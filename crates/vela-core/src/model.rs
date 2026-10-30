@@ -53,6 +53,22 @@ impl Space {
         self.repos.iter().find(|r| r.name == name)
     }
 
+    /// The branches the repos are on now, one name each, joined: what an agent is tied to.
+    pub fn branch_key(&self) -> String {
+        let mut out: Vec<&str> = Vec::new();
+        for r in &self.repos {
+            let b = if r.branch.is_empty() { &self.branch } else { &r.branch };
+            if !out.contains(&b.as_str()) {
+                out.push(b);
+            }
+        }
+        if out.is_empty() {
+            self.branch.clone()
+        } else {
+            out.join(", ")
+        }
+    }
+
     /// The branch of a repo of the space (the space branch for an unknown repo).
     pub fn branch_of(&self, repo: &str) -> &str {
         self.repo(repo)
@@ -324,6 +340,10 @@ pub struct Agent {
     /// A short title of the conversation, from the Vela model.
     #[serde(default)]
     pub title: Option<String>,
+    /// The branch (see [`Space::branch_key`]) the agent was asked on: it shows only there.
+    /// Empty for agents from before, which show on every branch.
+    #[serde(default)]
+    pub branch: String,
 }
 
 /// One tool or service of the space stack.
