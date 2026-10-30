@@ -11,6 +11,7 @@ export type Overlay =
   | "help"
   | "sheet"
   | "settings"
+  | "filepeek"
   | null;
 
 /** Everything that can happen in the shell. Keys, buttons and the command bar all produce these. */
@@ -72,6 +73,8 @@ export type Action =
   | { type: "context-menu" } // Menu key / Shift F10: the right-click menu of the focused item
   | { type: "find" } // Ctrl F: find in the open file
   | { type: "split" } // Ctrl \: split view of the code view
+  | { type: "nav"; delta: 1 | -1 } // Ctrl Shift Left / Right, mouse back / forward: through where you were
+  | { type: "open-peek"; repo: string; path: string } // a path named in an answer: its changes in a mini page
   | { type: "toggle-terminal"; dock?: "top" } // Ctrl ` or T or Ctrl Down: the terminal panel; Ctrl Up: the one on top
   | { type: "new-terminal" } // Ctrl Shift `: one more terminal
   | { type: "toggle-preview" } // V in the code view: Markdown preview
@@ -177,6 +180,10 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
   // The terminal toggles from anywhere, the terminal itself included.
   if (ctrl && !alt && (k === "`" || e.code === "Backquote") && (!c.overlay || c.overlay === "palette")) {
     return shift ? { type: "new-terminal" } : { type: "toggle-terminal" };
+  }
+  // Ctrl Shift Left / Right: back and forward through where you were, as in a browser.
+  if (ctrl && !alt && shift && (k === "ArrowLeft" || k === "ArrowRight") && !c.inTerm && (!c.overlay || c.overlay === "filepeek")) {
+    return { type: "nav", delta: k === "ArrowRight" ? 1 : -1 };
   }
   // Ctrl Down shows or hides the terminal at the bottom, Ctrl Up the one on top, from a terminal
   // too; Ctrl Left / Right go through the views. In a text field or the editor these keys keep

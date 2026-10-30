@@ -28,6 +28,7 @@ import { findConflicts } from "./conflicts";
 import type { Pane } from "./mergeview";
 import { composeMessage, cycleType, mergeAll, moveHunk, splitHunk } from "./commitplan";
 import { fileKey, plural, roleLabel, ROLES, toolLabel, uniq } from "./format";
+import { emptyHist, placeOf, record, step as navStep, type NavHist, type Place } from "./navhist";
 import { VIEWS, type Action, type Overlay, type View } from "./keymap";
 import { groupLinks, isHttpUrl, makeLink } from "./links";
 import { buildPaletteItems, filterPalette, type PaletteItem } from "./palette";
@@ -1364,6 +1365,44 @@ export class AppState {
     if (v === "space") void this.loadPage();
   }
 
+  // -- back and forward -------------------------------------------------------
+
+  /** Where you were, per space (not reactive: only the keys and buttons read it). */
+  private navHist: Record<string, NavHist> = {};
+
+  /** The place now: the view, and the file or the agent that view shows. */
+  get place(): Place {
+    return placeOf(this.view, this.cui.file, this.selectedAgent?.id ?? "", "");
+  }
+
+  /** The shell calls this after each change of place; a place equal to the current one is not new. */
+  noteLocation(sid: string, p: Place) {
+    this.navHist[sid] = record(this.navHist[sid] ?? emptyHist(), p);
+  }
+
+  /** Back (-1) or forward (+1), like a browser: Ctrl Shift arrows, mouse buttons. */
+  navigate(delta: 1 | -1) {
+    const sid = this.space.id;
+    const r = navStep(this.navHist[sid] ?? emptyHist(), delta);
+    if (!r) return this.toast(delta < 0 ? "Nothing to go back to" : "Nothing to go forward to");
+    this.navHist[sid] = r.hist;
+    const p = r.place;
+    this.closeOverlay();
+    if (p.agent && this.sd.agents.some((a) => a.id === p.agent)) this.selectAgent(p.agent);
+    this.setView(p.view as View);
+    if (p.file) this.openFile(this.active, p.file, true);
+  }
+
+  // -- file named in an answer -------------------------------------------------
+
+  /** The file whose changes the mini page shows (overlay "filepeek"). */
+  peek = $state<{ repo: string; path: string } | null>(null);
+
+  openPeek(repo: string, path: string) {
+    this.peek = { repo, path };
+    this.overlay = "filepeek";
+  }
+
   goSpace(i: number) {
     if (i < 0 || i >= this.spaces.length) return;
     this.active = i;
@@ -2405,6 +2444,7 @@ export class AppState {
 
   closeOverlay() {
     this.overlay = null;
+    this.peek = null;
     this.sheet = null;
     this.gate = null;
     this.stackOpen = false;
@@ -2621,6 +2661,10 @@ export class AppState {
         return this.runPalette(this.paletteItems[this.pal.i]);
       case "close":
         return this.closeOverlay();
+      case "nav":
+        return this.navigate(a.delta);
+      case "open-peek":
+        return this.openPeek(a.repo, a.path);
       case "blur":
         return void (document.activeElement as HTMLElement | null)?.blur();
       case "newspace-submit":

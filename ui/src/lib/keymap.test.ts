@@ -332,5 +332,7 @@ describe("find and split", () => {
   });
   it("Ctrl \\ splits the code view", () => {
     expect(resolveKey({ key: "\\", ctrlKey: true }, code)).toEqual({ type: "split" });
+    expect(resolveKey({ key: "ArrowLeft", ctrlKey: true, shiftKey: true }, { ...code, typing: true })).toEqual({ type: "nav", delta: -1 });
+    expect(resolveKey({ key: "ArrowRight", ctrlKey: true, shiftKey: true }, code)).toEqual({ type: "nav", delta: 1 });
   });
 });

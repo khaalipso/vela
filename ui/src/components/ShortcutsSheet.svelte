@@ -15,6 +15,7 @@
         ["W", "Open space in its own window"],
         ["1  2  3  4", "Code, agents, review, git"],
         ["Ctrl ←  Ctrl →", "Previous, next view"],
+        ["Ctrl Shift ←  Ctrl Shift →", "Back, forward through agents, files, pages (also the mouse buttons)"],
         ["B", "Files drawer"],
         ["Ctrl B", "Hide the spaces bar (it floats in on the left edge)"],
         ["Ctrl W", "Close the file tab shown in the editor"],

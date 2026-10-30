@@ -8,6 +8,8 @@
   import { chatItems, currentActivity, handoffText, isAllowed, isPermission, isRunning, nextSteps, permissionLabel, NUDGE, QUIET_WARN_MS, quietFor, shortDuration, usageLine, type ChatItem, type WorkNote } from "../lib/agents";
   import { splitAnswer } from "../lib/answer";
   import { app } from "../lib/app.svelte";
+  import { files } from "../lib/files.svelte";
+  import { linkFiles } from "../lib/filelinks";
   import { agentStatusColor, ROLE_COLORS, roleLabel, toolLabel } from "../lib/format";
   import type { Agent, AgentLogEntry } from "../lib/types";
   import Kbd from "./Kbd.svelte";
@@ -78,7 +80,20 @@
   const lastAnswer = $derived(items.findLastIndex((x) => x.kind === "agent"));
   /** After a finished run: who can take its answer over, one click to the composer. */
   const next = $derived(!running && !waiting && agent.status === "done" && lastAnswer >= 0 ? nextSteps(agent.role) : []);
-  const md = (t: string) => DOMPurify.sanitize(marked.parse(t, { gfm: true, breaks: false, async: false }) as string);
+  // The files of the space: a path in an answer that names one becomes a link (the agent does not write it).
+  $effect(() => {
+    const sid = app.space.id;
+    if (!(sid in files.data)) void files.load(sid);
+  });
+  const known = $derived(files.prepare(app.space.id)?.entries ?? []);
+  const md = (t: string) => linkFiles(DOMPurify.sanitize(marked.parse(t, { gfm: true, breaks: false, async: false }) as string), known);
+
+  function onAnswerClick(e: MouseEvent) {
+    const a = (e.target as HTMLElement | null)?.closest?.<HTMLElement>("a.filelink");
+    if (!a?.dataset.path) return;
+    e.preventDefault();
+    app.openPeek(a.dataset.repo ?? "", a.dataset.path);
+  }
 
   async function load(id: string) {
     const seq = ++loadSeq;
@@ -228,7 +243,8 @@
     </span>
   </header>
 
-  <div class="scroll" bind:this={scroller} onscroll={onScroll} aria-live="polite">
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="scroll" bind:this={scroller} onscroll={onScroll} onclick={onAnswerClick} aria-live="polite">
     {#if log === null}
       <div class="skel"></div>
       <div class="skel short"></div>
@@ -670,6 +686,17 @@
   }
   .md :global(a) {
     color: var(--info);
+  }
+  .md :global(a.filelink) {
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .md :global(a.filelink code) {
+    color: var(--info);
+    box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--info) 55%, transparent);
+  }
+  .md :global(a.filelink:hover code) {
+    background: color-mix(in srgb, var(--info) 16%, transparent);
   }
   .md :global(blockquote) {
     margin: 0 0 12px;

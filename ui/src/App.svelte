@@ -19,6 +19,8 @@
   import AgentSettings from "./components/AgentSettings.svelte";
   import Toast from "./components/Toast.svelte";
   import TopBar from "./components/TopBar.svelte";
+  import { untrack } from "svelte";
+  import FilePeek from "./components/FilePeek.svelte";
   import { app } from "./lib/app.svelte";
   import { isTyping, resolveKey } from "./lib/keymap";
   import { isHttpUrl } from "./lib/links";
@@ -61,10 +63,25 @@
     if (app.ready && app.spaces.length) document.documentElement.style.setProperty("--space", app.space.color);
   });
 
+  // Where you are is remembered for back and forward.
+  $effect(() => {
+    if (!app.ready || !app.spaces.length) return;
+    const sid = app.space.id;
+    const p = app.place;
+    untrack(() => app.noteLocation(sid, p));
+  });
+
+  // Mouse back / forward buttons, as in a browser.
+  function onMouse(e: MouseEvent) {
+    if (e.button !== 3 && e.button !== 4) return;
+    e.preventDefault();
+    if (e.type === "mouseup" && app.ready && app.spaces.length) void app.dispatch({ type: "nav", delta: e.button === 3 ? -1 : 1 });
+  }
+
   const surfaceKey = $derived(app.ready && app.spaces.length ? `${app.space.id}:${app.view}:${app.space.window ?? 1}` : "");
 </script>
 
-<svelte:window onkeydown={onKeydown} onpaste={onPaste} oncontextmenu={onGlobalContextMenu} />
+<svelte:window onmouseup={onMouse} onmousedown={onMouse} onauxclick={onMouse} onkeydown={onKeydown} onpaste={onPaste} oncontextmenu={onGlobalContextMenu} />
 
 {#if !app.ready}
   {#if app.bootError}
@@ -149,6 +166,7 @@
   {#if app.overlay === "commit"}<CommitSheet />{/if}
   {#if app.overlay === "help"}<ShortcutsSheet />{/if}
   {#if app.overlay === "settings"}<AgentSettings />{/if}
+  {#if app.overlay === "filepeek"}<FilePeek />{/if}
   {#if app.overlay === "sheet"}<SheetModal />{/if}
   <ContextMenu />
   <Toast />

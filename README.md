@@ -40,6 +40,12 @@ once, before you commit.
   no separate review of agent changes. Edit, revert one change, then <kbd>Space</kbd> stages the
   file.
   Checks (hooks, lint, types, tests) run on the staged set and are cached by tree.
+- **Files in answers**: a path an agent writes in an answer that names a file of the space becomes
+  a link (Vela adds it, the agent does not). It opens a mini page with the changes of that file and
+  one click to open it in the editor (<kbd>E</kbd>) or in the Review (<kbd>R</kbd>).
+- **Back and forward** like a browser: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd> / <kbd>→</kbd>
+  or the mouse back and forward buttons go through the agents, files, Page, Review and Git you
+  visited, per space.
 - **Reviewer notes**: findings of the reviewer and security agents show on the file they target;
   <kbd>F</kbd> sends one back to its author for a fix, <kbd>Shift</kbd>+<kbd>Y</kbd> resolves it.
 - **Commit composer** (<kbd>C</kbd>): conventional commits inferred from the diff, split
