@@ -5,7 +5,7 @@
   import { tick } from "svelte";
   import { app } from "../lib/app.svelte";
   import { basename, dirname } from "../lib/ops.svelte";
-  import { ROLE_COLORS, roleLabel, toolLabel } from "../lib/format";
+  import { agentName, ROLE_COLORS, roleLabel, toolLabel } from "../lib/format";
   import type { Place } from "../lib/navhist";
 
   const strip = $derived(app.navStrip);
@@ -23,7 +23,7 @@
       const a = app.sd.agents.find((x) => x.id === p.agent);
       if (a) {
         const t = (a.title || a.prompt || a.summary || "").trim();
-        return { title: t.length > 70 ? `${t.slice(0, 70)}…` : t || "Conversation", sub: `${roleLabel(a.role)} · ${toolLabel(a.tool)}`, kind: "Agent", color: ROLE_COLORS[a.role] };
+        return { title: t.length > 70 ? `${t.slice(0, 70)}…` : t || "Conversation", sub: `${agentName(a.id)} · ${roleLabel(a.role)} · ${toolLabel(a.tool)}`, kind: "Agent", color: ROLE_COLORS[a.role] };
       }
       return { title: "Agent", sub: "", kind: "Agent" };
     }

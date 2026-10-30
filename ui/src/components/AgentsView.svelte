@@ -2,7 +2,8 @@
   // The agents of the space: the list on the left (at work first), the conversation with the
   // selected one on the right. J / K or a click picks an agent.
   import { app } from "../lib/app.svelte";
-  import { agentStatusColor, plural, ROLE_COLORS, roleLabel, toolLabel } from "../lib/format";
+  import { agentName, plural, ROLE_COLORS, roleLabel, tagColor, toolLabel } from "../lib/format";
+  import { unread } from "../lib/unread.svelte";
   import { isRunning, QUIET_WARN_MS, quietFor, shortDuration, totalUsage, usageLine } from "../lib/agents";
   import type { Agent } from "../lib/types";
   import AgentChat from "./AgentChat.svelte";
@@ -22,6 +23,19 @@
     for (const a of agents) for (const l of a.labels ?? []) n.set(l, (n.get(l) ?? 0) + 1);
     return [...n.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 8).map(([l]) => l);
   });
+  // Seen on screen = read: the open conversation, and the first load.
+  $effect(() => unread.seed(agents));
+  $effect(() => {
+    if (sel) unread.markRead(sel);
+  });
+  /** Blue: at work. Orange: needs you. Green: an answer you have not read. Nothing otherwise. */
+  function mark(a: Agent): { color: string; title: string; pulse: boolean } | null {
+    if (a.status === "working") return { color: "var(--info)", title: "At work", pulse: true };
+    if (a.status === "waiting" || a.status === "failed" || a.status === "interrupted")
+      return { color: "var(--warn)", title: a.status === "waiting" ? "Needs your answer" : "Needs a look", pulse: false };
+    if (unread.isUnread(a)) return { color: "var(--add)", title: "Unread answer", pulse: false };
+    return null;
+  }
   let now = $state(Date.now());
   $effect(() => {
     if (!active.some(isRunning)) return;
@@ -110,7 +124,7 @@
         {#if labels.length}
           <div class="labels" aria-label="Labels">
             {#each labels as l (l)}
-              <button class="lb" class:on={app.agentQuery.trim().toLowerCase() === l.toLowerCase()} onclick={() => (app.agentQuery = app.agentQuery.trim().toLowerCase() === l.toLowerCase() ? "" : l)}>{l}</button>
+              <button class="lb" style:--c={tagColor(l)} class:on={app.agentQuery.trim().toLowerCase() === l.toLowerCase()} onclick={() => (app.agentQuery = app.agentQuery.trim().toLowerCase() === l.toLowerCase() ? "" : l)}>{l}</button>
             {/each}
           </div>
         {/if}
@@ -134,18 +148,19 @@
 
 {#snippet item(a: Agent)}
   {@const w = when(a)}
+  {@const m = mark(a)}
   <button class="item" class:on={sel?.id === a.id} aria-current={sel?.id === a.id} data-agent={a.id} style:--rc={ROLE_COLORS[a.role]} onclick={() => app.selectAgent(a.id)}>
-    <span class="dot" class:pulse={a.status === "working"} style:--c={agentStatusColor(a.status)}></span>
+    <span class="mk">{#if m}<span class="dot" class:pulse={m.pulse} style:--c={m.color} title={m.title}></span>{/if}</span>
     <span class="body">
       <span class="top"
-        ><b>{roleLabel(a.role)}</b><span class="tool">{toolLabel(a.tool)}</span>{#if a.tier}<span class="tier" data-tier={a.tier}>{a.tier}</span>{/if}<span class="when" class:warn={w.warn} title={w.warn ? "No event for a while: it may be stuck" : undefined}
+        ><b>{agentName(a.id)}</b><span class="role">{roleLabel(a.role)}</span><span class="tool">{toolLabel(a.tool)}</span>{#if a.tier}<span class="tier" data-tier={a.tier}>{a.tier}</span>{/if}<span class="when" class:warn={w.warn} title={w.warn ? "No event for a while: it may be stuck" : undefined}
           >{w.text}</span
         ></span
       >
       <span class="sum" class:ttl={!!a.title}>{a.title || a.prompt || a.summary}</span>
       {#if isRunning(a) && a.activity}<span class="act">{a.activity}</span>{/if}
       {#if a.labels?.length}
-        <span class="tags">{#each a.labels as l (l)}<span class="lt">{l}</span>{/each}</span>
+        <span class="tags">{#each a.labels as l (l)}<span class="lt" style:--c={tagColor(l)}>{l}</span>{/each}</span>
       {/if}
     </span>
   </button>
@@ -193,18 +208,18 @@
     font-weight: 700;
     padding: 0 6px;
     border-radius: 9999px;
-    color: var(--c);
-    background: color-mix(in srgb, var(--c) 15%, transparent);
-    --c: var(--muted);
+    color: var(--faint);
+    background: var(--hover);
+    font-weight: 500;
   }
-  .tier[data-tier="high"] {
-    --c: var(--del);
+  .mk {
+    flex: none;
+    width: 8px;
+    margin-top: 6px;
   }
-  .tier[data-tier="medium"] {
-    --c: var(--warn);
-  }
-  .tier[data-tier="low"] {
-    --c: var(--add);
+  .role {
+    font-size: 12px;
+    color: var(--muted);
   }
   .bar {
     display: flex;
@@ -261,9 +276,6 @@
     padding: 8px 10px;
     border-radius: 10px;
     width: 100%;
-  }
-  .item .dot {
-    margin-top: 6px;
   }
   .item:hover {
     background: var(--hover);
@@ -335,6 +347,9 @@
     background: var(--hover);
     color: var(--muted);
   }
+  .lb {
+    color: color-mix(in srgb, var(--c) 70%, var(--muted));
+  }
   .lb:hover {
     color: var(--fg);
   }
@@ -372,8 +387,8 @@
     font-size: 10.5px;
     padding: 0 6px;
     border-radius: 9999px;
-    color: var(--rc);
-    background: color-mix(in srgb, var(--rc) 13%, transparent);
+    color: var(--c);
+    background: color-mix(in srgb, var(--c) 13%, transparent);
   }
   .empty {
     background: var(--raised);

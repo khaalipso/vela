@@ -1,4 +1,5 @@
 import type { AgentRole, AgentStatus, StackState } from "./types";
+import { hslToHex } from "./colors";
 
 export const uniq = <T>(a: T[]): T[] => a.filter((x, i) => a.indexOf(x) === i);
 
@@ -65,3 +66,26 @@ export function stackColor(s: StackState): string {
 export const GATE_NAMES = ["Reviewer", "Tests touched by the diff", "Lint and types", "Secrets and .env", "Repo rules"];
 
 export const fileKey =(repo: string, path: string): string => `${repo}/${path}`;
+
+const AGENT_NAMES = [
+  "Alan", "Ada", "Grace", "Linus", "Margaret", "Dennis", "Barbara", "Ken", "Edsger", "Radia", "Donald", "Hedy",
+  "Niklaus", "Frances", "Tim", "Katherine", "Bjarne", "Sophie", "Guido", "Joan", "Rob", "Anita", "Brian", "Lynn",
+  "Leslie", "Mary", "Vint", "Jean", "Claude", "Shafi", "Yukihiro", "Marissa", "John", "Evelyn", "Larry", "Dorothy",
+  "Ray", "Carol", "Fred", "Irene", "Walter", "Nadia", "Paul", "Elena", "Martin", "Clara", "Hugo", "Iris",
+];
+
+function hash(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+
+/** A first name for an agent, stable for its id: it ties a request to an agent ("Alan - Tester"). */
+export function agentName(id: string): string {
+  return AGENT_NAMES[hash(id) % AGENT_NAMES.length];
+}
+
+/** A soft color per tag: same tag, same color, calm saturation so a row of tags never shouts. */
+export function tagColor(tag: string): string {
+  return hslToHex((hash(tag.toLowerCase()) % 12) * 30 + 8, 42, 66);
+}

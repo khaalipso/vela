@@ -12,7 +12,7 @@
   import { openAtEvent } from "../lib/contextmenu.svelte";
   import { toolsMenu } from "../lib/menus";
   import { linkFiles } from "../lib/filelinks";
-  import { agentStatusColor, ROLE_COLORS, roleLabel, toolLabel } from "../lib/format";
+  import { agentName, agentStatusColor, ROLE_COLORS, roleLabel, tagColor, toolLabel } from "../lib/format";
   import type { Agent, AgentLogEntry } from "../lib/types";
   import Kbd from "./Kbd.svelte";
   import { writeClipboard } from "../lib/ops.svelte";
@@ -88,8 +88,111 @@
     if (!nudged) app.queueFor(agent.id, NUDGE);
     await app.cancelAgent(agent.id);
   }
-  /** Sections the reader opened or closed, by message and section. All start closed, with a blue dot until opened once. */
+  /** Sections the reader opened or closed, by message and section. The first and the last of the last answer start open; the others closed, with a blue dot while the answer is new to you. */
   let sectionOpen = $state<Record<string, boolean>>({});
+  const sectionsKey = (id: string) => `vela.sections.${id}`;
+  function readSections(id: string): Record<string, boolean> {
+    try {
+      const v: unknown = JSON.parse(localStorage.getItem(sectionsKey(id)) ?? "{}");
+      return v && typeof v === "object" ? (v as Record<string, boolean>) : {};
+    } catch {
+      return {};
+    }
+  }
+  /** Remembered per agent: coming back to the page must not bring the blue dots back. */
+  function toggleSection(k: string, open: boolean) {
+    sectionOpen = { ...sectionOpen, [k]: open };
+    try {
+      localStorage.setItem(sectionsKey(agentId), JSON.stringify(sectionOpen));
+    } catch {
+      /* private mode: the state stays in memory */
+    }
+  }
+  /** How many answers you had seen when you came: only the ones after it are news. */
+  let seenBefore = $state(0);
+  const seenKey = (id: string) => `vela.seen.${id}`;
+  const answerNo = $derived.by(() => {
+    let n = 0;
+    return items.map((it) => (it.kind === "agent" ? n++ : -1));
+  });
+  $effect(() => {
+    const n = log ? answerNo.filter((x) => x >= 0).length : 0;
+    if (!log) return;
+    try {
+      localStorage.setItem(seenKey(untrack(() => agentId)), String(n));
+    } catch {
+      /* private mode */
+    }
+  });
+  const defaultOpen = (i: number, j: number, count: number) => i === lastAnswer && (j === 0 || j === count - 1);
+
+  // Find in the conversation (Ctrl F): sections with a match open, matches are highlighted.
+  let finding = $state(false);
+  let query = $state("");
+  let findInput: HTMLInputElement | undefined = $state();
+  let hits = $state(0);
+  let cur = $state(0);
+  let ranges: Range[] = [];
+  const needle = $derived(finding ? query.trim().toLowerCase() : "");
+  const hasMatch = (s: { title: string; body: string }) => !!needle && `${s.title}\n${s.body}`.toLowerCase().includes(needle);
+  function onWindowKey(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      e.stopPropagation();
+      finding = true;
+      void tick().then(() => findInput?.select());
+    }
+  }
+  function onFindKey(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      finding = false;
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (hits) go(cur + (e.shiftKey ? -1 : 1));
+    }
+  }
+  function go(n: number) {
+    if (!ranges.length) return;
+    cur = (n + ranges.length) % ranges.length;
+    const h = (globalThis.CSS as { highlights?: Map<string, unknown> } | undefined)?.highlights;
+    const HL = (globalThis as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
+    if (h && HL) h.set("find-cur", new HL(ranges[cur]));
+    ranges[cur].startContainer.parentElement?.scrollIntoView({ block: "center" });
+  }
+  $effect(() => {
+    const q = needle;
+    void items;
+    void sectionOpen;
+    const h = (globalThis.CSS as { highlights?: Map<string, unknown> } | undefined)?.highlights;
+    const HL = (globalThis as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
+    void tick().then(() => {
+      h?.delete("find");
+      h?.delete("find-cur");
+      ranges = [];
+      if (q && scroller) {
+        const w = document.createTreeWalker(scroller, NodeFilter.SHOW_TEXT);
+        for (let n = w.nextNode(); n; n = w.nextNode()) {
+          const t = (n.textContent ?? "").toLowerCase();
+          for (let at = t.indexOf(q); at >= 0; at = t.indexOf(q, at + q.length)) {
+            const r = new Range();
+            r.setStart(n, at);
+            r.setEnd(n, at + q.length);
+            ranges.push(r);
+          }
+        }
+        if (h && HL && ranges.length) h.set("find", new HL(...ranges));
+      }
+      hits = ranges.length;
+      cur = 0;
+      if (ranges.length) go(0);
+    });
+    return () => {
+      h?.delete("find");
+      h?.delete("find-cur");
+    };
+  });
   const answers = $derived(items.map((it) => (it.kind === "agent" ? splitAnswer(it.text) : null)));
   /** The last answer is the one to read first: the older ones start closed. */
   const lastAnswer = $derived(items.findLastIndex((x) => x.kind === "agent"));
@@ -142,6 +245,9 @@
       log = null;
       stick = true;
       openTools = {};
+      sectionOpen = readSections(id);
+      seenBefore = Number(localStorage.getItem(seenKey(id)) ?? 0) || 0;
+      finding = false;
       void load(id);
     });
   });
@@ -231,16 +337,18 @@
   <li class={nt.kind}>{#if nt.kind === "thought"}<small>Thinking</small>{/if}{nt.text}</li>
 {/snippet}
 
+<svelte:window onkeydowncapture={onWindowKey} />
+
 <section class="chat" aria-label="Conversation with {agent.id}" style:--rc={ROLE_COLORS[agent.role]}>
   <header class="ch">
     <span class="dot" class:pulse={running} style:--c={agentStatusColor(agent.status)}></span>
-    <b>{roleLabel(agent.role)}</b>
+    <b>{agentName(agent.id)}</b><span class="role">{roleLabel(agent.role)}</span>
     {#if agent.title}<h2 class="title" title={agent.title}>{agent.title}</h2>{/if}
     <span class="tags">
       <span class="tag">{toolLabel(agent.tool)}</span>
       {#if agent.model}<span class="tag">{agent.model}</span>{/if}
       {#if agent.tier}<span class="tag">{agent.tier}</span>{/if}
-      {#each agent.labels ?? [] as l (l)}<button class="tag label" title="Show the conversations labelled {l}" onclick={() => (app.agentQuery = l)}>{l}</button>{/each}
+      {#each agent.labels ?? [] as l (l)}<button class="tag label" style:--c={tagColor(l)} title="Show the conversations labelled {l}" onclick={() => (app.agentQuery = l)}>{l}</button>{/each}
     </span>
     {#if agent.session}
       <button class="sid mono" title={`Session ${agent.session} of ${toolLabel(agent.tool)}: click to copy`} aria-label="Copy the session id {agent.session}" onclick={copySession}>
@@ -257,6 +365,14 @@
       {/if}
     </span>
   </header>
+
+  {#if finding}
+    <div class="findbar">
+      <input class="field small" bind:this={findInput} bind:value={query} onkeydown={onFindKey} placeholder="Find in this conversation" aria-label="Find in this conversation" autocomplete="off" spellcheck="false" />
+      <span class="hits">{needle ? (hits ? `${cur + 1} / ${hits}` : "No match") : ""}</span>
+      <button class="btn ghost" onclick={() => (finding = false)} aria-label="Close the search">Esc</button>
+    </div>
+  {/if}
 
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="scroll" bind:this={scroller} onscroll={onScroll} onclick={onAnswerClick} aria-live="polite">
@@ -276,12 +392,12 @@
             {#if ans.lead}<div class="lead md">{@html md(ans.lead)}</div>{/if}
             {#each ans.sections as s, j (j)}
               {@const k = `${i}:${j}`}
-              {@const open = sectionOpen[k] ?? false}
+              {@const open = sectionOpen[k] ?? (defaultOpen(i, j, ans.sections.length) || hasMatch(s))}
               <section class="sec" class:open>
-                <button class="sh" aria-expanded={open} onclick={() => (sectionOpen = { ...sectionOpen, [k]: !open })}>
+                <button class="sh" aria-expanded={open} onclick={() => toggleSection(k, !open)}>
                   <span class="chev" class:open>▸</span>
                   <b>{s.title}</b>
-                  {#if sectionOpen[k] === undefined}<span class="new" title="Not opened yet"></span>{/if}
+                  {#if sectionOpen[k] === undefined && !defaultOpen(i, j, ans.sections.length) && answerNo[i] >= seenBefore}<span class="new" title="Not opened yet"></span>{/if}
                 </button>
                 {#if open}<div class="sb md">{@html md(s.body)}</div>{/if}
               </section>
@@ -472,6 +588,31 @@
     padding: 12px 14px;
     border-bottom: 1px solid var(--line);
     box-shadow: inset 3px 0 0 var(--rc);
+  }
+  .role {
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .findbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+  }
+  .findbar .field {
+    flex: 1;
+    max-width: 360px;
+  }
+  .hits {
+    font-size: 12px;
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+  }
+  :global(::highlight(find)) {
+    background: color-mix(in srgb, var(--warn) 35%, transparent);
+  }
+  :global(::highlight(find-cur)) {
+    background: color-mix(in srgb, var(--space) 60%, transparent);
   }
   .tags {
     display: flex;
@@ -952,11 +1093,11 @@
     font-size: 11px;
     padding: 1px 7px;
     border-radius: 9999px;
-    color: var(--rc);
-    background: color-mix(in srgb, var(--rc) 14%, transparent);
+    color: var(--c);
+    background: color-mix(in srgb, var(--c) 14%, transparent);
   }
   .label:hover {
-    background: color-mix(in srgb, var(--rc) 24%, transparent);
+    background: color-mix(in srgb, var(--c) 24%, transparent);
   }
   .typing span {
     width: 5px;
