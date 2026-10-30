@@ -496,6 +496,15 @@ export function onGlobalContextMenu(e: MouseEvent) {
   );
 }
 
+/** Right click in the tools and the reasoning of an agent: close the list quickly, copy. */
+export function toolsMenu(o: { closeThis?: () => void; closeAll?: () => void; text: string }): MenuEntry[] {
+  return tidy([
+    o.closeThis ? it("Close this list", { icon: "collapse", run: o.closeThis }) : null,
+    o.closeAll ? it("Close all tool lists", { icon: "collapse", run: o.closeAll }) : null,
+    o.text ? it(selectedText() ? "Copy" : "Copy this text", { shortcut: "Ctrl C", icon: "copy", run: () => void writeClipboard(selectedText() || o.text) }) : null,
+  ]);
+}
+
 /** The text selected on the page, outside the fields. */
 export function selectedText(): string {
   return window.getSelection?.()?.toString() ?? "";

@@ -9,6 +9,8 @@
   import { splitAnswer } from "../lib/answer";
   import { app } from "../lib/app.svelte";
   import { files } from "../lib/files.svelte";
+  import { openAtEvent } from "../lib/contextmenu.svelte";
+  import { toolsMenu } from "../lib/menus";
   import { linkFiles } from "../lib/filelinks";
   import { agentStatusColor, ROLE_COLORS, roleLabel, toolLabel } from "../lib/format";
   import type { Agent, AgentLogEntry } from "../lib/types";
@@ -40,6 +42,19 @@
   const waiting = $derived(agent.status === "waiting");
   /** Work and reasoning stay folded until you open them. */
   const isOpen = (g: number) => !!openTools[g];
+  /** Right click in the tools or the reasoning: close the list at once, or all of them. */
+  function toolsContext(e: MouseEvent, g?: number) {
+    const el = e.currentTarget as HTMLElement;
+    openAtEvent(
+      e,
+      toolsMenu({
+        closeThis: g !== undefined && isOpen(g) ? () => (openTools = { ...openTools, [g]: false }) : undefined,
+        closeAll: Object.values(openTools).some(Boolean) ? () => (openTools = {}) : undefined,
+        text: (el.innerText ?? "").trim(),
+      }),
+      "Tools",
+    );
+  }
   const q = $derived(waiting && app.sd.question?.agentId === agent.id ? app.sd.question : null);
   const canSend = $derived(running || waiting || !!agent.session);
   const queued = $derived(app.queuedFor(agent.id));
@@ -286,7 +301,8 @@
         {/if}
       {:else if it.kind === "tools"}
         {@const g = groupNo[i]}
-        <div class="tools">
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="tools" oncontextmenu={(e) => toolsContext(e, g)}>
           <button class="tsum" aria-expanded={isOpen(g)} onclick={() => (openTools = { ...openTools, [g]: !isOpen(g) })}>
             <span class="chev" class:open={isOpen(g)}>▸</span>
             {toolsLabel(it)}
@@ -353,7 +369,8 @@
       </div>
     {/if}
     {#if running}
-      {#if thinking}<p class="thinking" title={thinking}>{thinking}</p>{/if}
+      {#if thinking}<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <p class="thinking" title={thinking} oncontextmenu={(e) => toolsContext(e)}>{thinking}</p>{/if}
       <div class="typing" class:stuck title={agent.lastEvent ? `Last event ${new Date(agent.lastEvent).toLocaleTimeString()}` : undefined}>
         <span></span><span></span><span></span>
         <b class="act">{activity || "Working"}</b>

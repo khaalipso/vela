@@ -365,6 +365,7 @@
   </div>
 {/if}
 {#if preview}
+  <div class="mdscroll">
   {#await markdownView() then { default: MarkdownView }}
   <MarkdownView
     {text}
@@ -382,6 +383,7 @@
     }}
   />
   {/await}
+  </div>
 {/if}
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
@@ -407,6 +409,13 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+  /* The pane does not scroll (the editor has its own scroller): the preview needs one. */
+  .mdscroll {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: auto;
+    --find-top: 0px;
   }
   .pane.split {
     border-left: 1px solid var(--line);

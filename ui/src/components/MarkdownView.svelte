@@ -146,7 +146,7 @@
 <style>
   .find {
     position: sticky;
-    top: 46px;
+    top: var(--find-top, 46px);
     z-index: 3;
     display: flex;
     align-items: center;
