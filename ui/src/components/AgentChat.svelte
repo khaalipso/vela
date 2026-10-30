@@ -43,6 +43,16 @@
   const queued = $derived(app.queuedFor(agent.id));
   const use = $derived(usageLine(agent.usage));
   const activity = $derived(currentActivity(agent, log));
+  /** The first words of the last thing the agent thought, shown above what it does now. */
+  const thinking = $derived.by(() => {
+    for (let k = (log?.length ?? 0) - 1; k >= 0; k--) {
+      const e = log![k].event;
+      if (e.type !== "reasoning") continue;
+      const line = e.text.split("\n").map((l) => l.replace(/^[#*\s>-]+/, "").replace(/\*+/g, "").trim()).find(Boolean) ?? "";
+      if (line) return line.length > 110 ? `${line.slice(0, 109).trimEnd()}…` : line;
+    }
+    return "";
+  });
   const quiet = $derived(quietFor(agent, now, log?.[log.length - 1]?.ts));
   const stuck = $derived(quiet >= QUIET_WARN_MS);
   const nudged = $derived(queued.includes(NUDGE));
@@ -61,7 +71,7 @@
     if (!nudged) app.queueFor(agent.id, NUDGE);
     await app.cancelAgent(agent.id);
   }
-  /** Sections the reader opened or closed, by message and section; the last answer starts open, older ones closed. */
+  /** Sections the reader opened or closed, by message and section. All start closed, with a blue dot until opened once. */
   let sectionOpen = $state<Record<string, boolean>>({});
   const answers = $derived(items.map((it) => (it.kind === "agent" ? splitAnswer(it.text) : null)));
   /** The last answer is the one to read first: the older ones start closed. */
@@ -235,11 +245,12 @@
             {#if ans.lead}<div class="lead md">{@html md(ans.lead)}</div>{/if}
             {#each ans.sections as s, j (j)}
               {@const k = `${i}:${j}`}
-              {@const open = sectionOpen[k] ?? (i === lastAnswer)}
+              {@const open = sectionOpen[k] ?? false}
               <section class="sec" class:open>
                 <button class="sh" aria-expanded={open} onclick={() => (sectionOpen = { ...sectionOpen, [k]: !open })}>
                   <span class="chev" class:open>▸</span>
                   <b>{s.title}</b>
+                  {#if sectionOpen[k] === undefined}<span class="new" title="Not opened yet"></span>{/if}
                 </button>
                 {#if open}<div class="sb md">{@html md(s.body)}</div>{/if}
               </section>
@@ -326,6 +337,7 @@
       </div>
     {/if}
     {#if running}
+      {#if thinking}<p class="thinking" title={thinking}>{thinking}</p>{/if}
       <div class="typing" class:stuck title={agent.lastEvent ? `Last event ${new Date(agent.lastEvent).toLocaleTimeString()}` : undefined}>
         <span></span><span></span><span></span>
         <b class="act">{activity || "Working"}</b>
@@ -557,6 +569,23 @@
   }
   .sh:hover {
     background: var(--hover);
+  }
+  .new {
+    width: 7px;
+    height: 7px;
+    margin-left: 2px;
+    border-radius: 50%;
+    background: var(--info);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--info) 25%, transparent);
+  }
+  .thinking {
+    margin: 0 0 -4px;
+    font-size: 12px;
+    font-style: italic;
+    color: var(--faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .sh .chev {
     display: inline-block;
