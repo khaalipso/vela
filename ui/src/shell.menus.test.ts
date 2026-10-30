@@ -94,6 +94,19 @@ describe("opening", () => {
     expect($(".ctxmenu")).toBeNull();
   });
 
+  it("text you can read (a command, an answer) gets a Copy menu", async () => {
+    const pre = document.createElement("pre");
+    pre.textContent = "cargo test --workspace";
+    document.body.append(pre);
+    const e = rightClick(pre);
+    await settle();
+    expect(e.defaultPrevented).toBe(true);
+    expect($('.ctxmenu [data-id="copy-this-text"]')).not.toBeNull();
+    press("Escape");
+    await settle();
+    pre.remove();
+  });
+
   it("a text field gets Cut, Copy, Paste and Select all", async () => {
     press("t", { ctrlKey: true });
     await settle();

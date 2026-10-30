@@ -486,6 +486,27 @@ export function onGlobalContextMenu(e: MouseEvent) {
     return;
   }
   e.preventDefault();
+  const text = copyTextAt(e.target as HTMLElement | null);
+  if (!text) return;
+  const some = !!selectedText();
+  openAtEvent(
+    e,
+    tidy([it(some ? "Copy" : "Copy this text", { shortcut: "Ctrl C", icon: "copy", run: () => void writeClipboard(text).then((ok) => app.toast(ok ? "Copied" : "Could not reach the clipboard")) })]),
+    "Copy",
+  );
+}
+
+/** The text selected on the page, outside the fields. */
+export function selectedText(): string {
+  return window.getSelection?.()?.toString() ?? "";
+}
+
+/** What a right click copies: the selection, else the command, code or paragraph under the pointer. */
+function copyTextAt(el: HTMLElement | null): string {
+  const sel = selectedText();
+  if (sel.trim()) return sel;
+  const block = el?.closest?.<HTMLElement>("pre, code, .cmd, .mono, .bubble, li, p, td");
+  return (block?.innerText ?? block?.textContent ?? "").trim();
 }
 
 /** Wire the command bar and the Menu key to the builders above. */

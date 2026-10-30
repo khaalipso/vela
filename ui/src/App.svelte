@@ -25,7 +25,8 @@
   import { isTyping, resolveKey } from "./lib/keymap";
   import { isHttpUrl } from "./lib/links";
   import SpacePage from "./components/SpacePage.svelte";
-  import { installMenus, onGlobalContextMenu } from "./lib/menus";
+  import { installMenus, onGlobalContextMenu, selectedText } from "./lib/menus";
+  import { writeClipboard } from "./lib/ops.svelte";
 
   installMenus();
 
@@ -40,6 +41,16 @@
 
   function onKeydown(e: KeyboardEvent) {
     if (!app.ready) return;
+    // Ctrl C on text selected in the page (an answer, a command, an output): copy it ourselves,
+    // so it works whatever the webview does with a selection that moves while an agent writes.
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === "c" || e.key === "C") && !isTyping(e.target as HTMLElement | null) && !(e.target as HTMLElement | null)?.closest?.(".xterm")) {
+      const text = selectedText();
+      if (text) {
+        e.preventDefault();
+        void writeClipboard(text);
+        return;
+      }
+    }
     // With no space yet only the new space sheet takes keys (the button opens it).
     if (!app.spaces.length && app.overlay !== "newspace") return;
     const action = resolveKey(e, {

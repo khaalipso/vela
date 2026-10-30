@@ -687,6 +687,15 @@
   .md :global(a) {
     color: var(--info);
   }
+  .scroll,
+  .scroll :global(*) {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  .scroll :global(button) {
+    -webkit-user-select: none;
+    user-select: none;
+  }
   .md :global(a.filelink) {
     text-decoration: none;
     cursor: pointer;
