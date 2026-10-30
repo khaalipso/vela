@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isTyping, resolveKey, type Action, type KeyContext, type KeyLike } from "./keymap";
+import { appOwnsTermKey, isTyping, resolveKey, type Action, type KeyContext, type KeyLike } from "./keymap";
 
 const ctx = (o: Partial<KeyContext> = {}): KeyContext => ({
   typing: false,
@@ -337,5 +337,16 @@ describe("find and split", () => {
     expect(resolveKey({ key: "\\", ctrlKey: true }, code)).toEqual({ type: "split" });
     expect(resolveKey({ key: "ArrowRight", ctrlKey: true, shiftKey: true }, { ...code, typing: true })).toEqual({ type: "nav", delta: -1 });
     expect(resolveKey({ key: "ArrowLeft", ctrlKey: true, shiftKey: true }, code)).toEqual({ type: "nav", delta: 1 });
+  });
+});
+
+describe("keys the terminal leaves to the app", () => {
+  it("Esc and Ctrl Up / Down go to the app, the rest stays with the shell", () => {
+    expect(appOwnsTermKey(key("Escape"))).toBe(true);
+    expect(appOwnsTermKey(key("ArrowDown", { ctrlKey: true }))).toBe(true);
+    expect(appOwnsTermKey(key("ArrowUp", { metaKey: true }))).toBe(true);
+    expect(appOwnsTermKey(key("ArrowDown"))).toBe(false);
+    expect(appOwnsTermKey(key("ArrowUp", { ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(appOwnsTermKey(key("ArrowLeft", { ctrlKey: true }))).toBe(false);
   });
 });

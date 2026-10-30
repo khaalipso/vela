@@ -83,8 +83,13 @@
     const down = (e: PointerEvent) => {
       if (!inside(e.target)) menu.close(true);
     };
+    const opened = performance.now();
     const away = (e: Event) => {
-      if (!inside(e.target)) menu.close(true);
+      if (inside(e.target)) return;
+      // Opening from a click scrolls something into view on Linux (the focus moving to the button):
+      // that scroll is not the user leaving the menu. A wheel always is.
+      if (e.type === "scroll" && performance.now() - opened < 250) return;
+      menu.close(true);
     };
     const gone = () => menu.close(false);
     window.addEventListener("pointerdown", down, true);

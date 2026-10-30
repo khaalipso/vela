@@ -120,6 +120,17 @@ export interface KeyLike {
   shiftKey?: boolean;
 }
 
+/**
+ * Keys a terminal must leave to the app: xterm.js answers every key it maps (Esc, Ctrl arrows)
+ * and stops the event, so the window handler would never see it. Esc hides the panels, Ctrl Up /
+ * Down show or hide the one on top / at the bottom.
+ */
+export function appOwnsTermKey(e: KeyLike): boolean {
+  if (e.key === "Escape") return true;
+  const ctrl = !!(e.ctrlKey || e.metaKey);
+  return ctrl && !e.altKey && !e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown");
+}
+
 export interface KeyContext {
   /** Focus is in an input, a textarea or the editor. */
   typing: boolean;

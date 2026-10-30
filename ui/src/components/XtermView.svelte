@@ -5,6 +5,7 @@
   import "@xterm/xterm/css/xterm.css";
   import { onDestroy, onMount } from "svelte";
   import { app, type TermDock } from "../lib/app.svelte";
+  import { appOwnsTermKey } from "../lib/keymap";
 
   let { id, active, dock = "bottom" }: { id: number; active: boolean; dock?: TermDock } = $props();
   let host: HTMLDivElement | undefined = $state();
@@ -49,6 +50,7 @@
       fit = new FitAddon();
       term.loadAddon(fit);
       term.open(host);
+      term.attachCustomKeyEventHandler((e) => !appOwnsTermKey(e));
       term.onData((d) => void app.backend.termWrite(id, d).catch(() => {}));
       detach = app.attachTerm(id, (d) => term?.write(d));
       ro = new ResizeObserver(() => resize());

@@ -163,11 +163,17 @@ pub fn switch_to(source: &Path, branch: &str, base: &str) -> Result<bool> {
     Ok(made)
 }
 
-/// A branch checked out in another worktree cannot be switched to: say where.
+/// A branch checked out in another worktree cannot be switched to. When that checkout is the
+/// repo's own clone (the first worktree), it is detached at the same commit, its changes stay:
+/// the person asked for the branch, git's "already used" error would only send them to the
+/// terminal. Any other checkout (an agent's, a linked one) is refused with its path.
 pub fn refuse_if_checked_out_elsewhere(source: &Path, repo_name: &str, branch: &str) -> Result<()> {
     if let Some(path) = crate::branches::checked_out_in(source, branch)
         && Path::new(&path) != source
     {
+        if crate::branches::main_worktree(source).as_deref() == Some(path.as_str()) {
+            return git(Path::new(&path), &["switch", "--quiet", "--detach"]).map(|_| ());
+        }
         return Err(Error::Invalid(format!(
             "{branch} is checked out in {path} ({repo_name}): switch that checkout to another branch first"
         )));

@@ -1005,3 +1005,14 @@ fn the_ticket_of_a_space() {
     let s = space::set_ticket(&e.vela, &s.id, "  ").unwrap();
     assert_eq!(s.ticket, None);
 }
+
+#[test]
+fn a_branch_held_by_the_clone_is_freed_for_the_space() {
+    let e = env();
+    let a = repo(&e.root, "api", &[("a", "a\n")]);
+    let linked = e.root.join("linked");
+    sh(&a, &["worktree", "add", "-q", "-b", "feat/side", &linked.to_string_lossy()]);
+    // The linked checkout wants `main`, which the clone holds: the clone is detached.
+    space::refuse_if_checked_out_elsewhere(&linked, "api", "main").unwrap();
+    assert!(sh(&a, &["branch", "--show-current"]).trim().is_empty());
+}
