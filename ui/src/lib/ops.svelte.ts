@@ -578,12 +578,19 @@ class Ops {
       confirmLabel: "Remove space",
       danger: true,
       run: async () => {
+        const at = app.active;
+        app.hideSpace(space.id);
+        app.active = Math.max(0, Math.min(at, app.spaces.length - 1));
         try {
           await app.backend.removeSpace(space.id);
           await this.spacesChanged();
           app.toast(`Removed ${space.name}`);
         } catch (e) {
           app.fail(e);
+          app.removing.delete(space.id);
+          await this.spacesChanged();
+        } finally {
+          app.removing.delete(space.id);
         }
       },
     };

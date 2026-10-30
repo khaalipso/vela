@@ -117,6 +117,8 @@ export interface SpaceUi {
   tabs: Tab[];
   /** Files opened last, most recent first (quick open boosts them). */
   recent: string[];
+  /** File shown in the second pane of the code view (split view), if any. */
+  split?: string | null;
 }
 
 /** An agent hunk with what the UI needs to show it. */
@@ -408,6 +410,8 @@ export class AppState {
   mdSource = $state<Record<string, true>>({});
   /** Bumped by Ctrl F so the code view opens its find bar. */
   findSeq = $state(0);
+  /** The pane of the code view that has the focus: Ctrl F and the change keys go to it. */
+  activePane = $state<"main" | "split">("main");
 
   /** The terminal panel at the bottom is open, remembered per window. */
   termOpen = $state(readFlag("vela.termOpen", false));
@@ -517,6 +521,7 @@ export class AppState {
   /** A pinned window shows its one space only. */
   private forThisWindow(list: Space[]): Space[] {
     const pin = this.pinned;
+    list = list.filter((s) => !this.removing.has(s.id));
     return pin ? list.filter((s) => s.id === pin) : list;
   }
 
@@ -530,6 +535,29 @@ export class AppState {
     const list = this.forThisWindow(await this.backend.listSpaces());
     await Promise.all(list.filter((s) => !this.data[s.id]).map((s) => this.load(s.id)));
     this.spaces = list;
+    this.forget(list);
+  }
+
+  /** Drop what is held for spaces that are gone (removed): their data, ui state and counters. */
+  private forget(alive: Space[]) {
+    const keep = new Set(alive.map((s) => s.id));
+    const gone = Object.keys(this.data).filter((id) => !keep.has(id));
+    if (!gone.length) return;
+    this.data = Object.fromEntries(Object.entries(this.data).filter(([id]) => keep.has(id)));
+    for (const id of gone) {
+      delete this.ui[id];
+      delete this.contentRev[id];
+    }
+  }
+
+  /** Spaces being removed: hidden even while the backend still lists them. */
+  removing = new Set<string>();
+
+  /** Hide a space at once, before the backend has finished removing it. */
+  hideSpace(id: string) {
+    this.removing.add(id);
+    this.spaces = this.spaces.filter((s) => s.id !== id);
+    this.forget(this.spaces);
   }
 
   private async onEvent(e: BackendEvent) {
@@ -1360,6 +1388,21 @@ export class AppState {
   gotoLine(file: string, line: number) {
     this.openFile(this.active, file, true);
     this.focusRequest = { file, line, seq: ++this.focusSeq };
+  }
+
+  /** Split view: show a file beside the open one (the open file again when none is given); a second call closes it. */
+  toggleSplit(key?: string) {
+    const u = this.cui;
+    if (u.split && !key) return this.closeSplit();
+    const f = key ?? u.file;
+    if (!f) return this.toast("Open a file first");
+    u.split = f;
+    this.activePane = "split";
+  }
+
+  closeSplit() {
+    this.cui.split = null;
+    this.activePane = "main";
   }
 
   closeTab(key: string) {
@@ -2626,6 +2669,9 @@ export class AppState {
         return this.answer(a.yes);
       case "find":
         this.findSeq++;
+        return;
+      case "split":
+        this.toggleSplit();
         return;
       case "agent-move": {
         const list = this.agentList;

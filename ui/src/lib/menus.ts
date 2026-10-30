@@ -212,6 +212,7 @@ export function tabMenu(key: string): MenuEntry[] {
     it("Close all", { run: () => ops.closeAllTabs() }),
     SEP,
     it(tab?.pinned === false ? "Pin" : "Unpin", { icon: "pin", run: () => ops.togglePin(key) }),
+    it(app.cui.split === key ? "Close split" : "Open in split view", { run: () => (app.cui.split === key ? app.closeSplit() : app.toggleSplit(key)) }),
     SEP,
     it("Copy path", { icon: "copy", run: () => void ops.copyAbsolute(repo, path) }),
     it("Reveal in tree", { icon: "tree", run: () => void ops.revealInTree(key) }),

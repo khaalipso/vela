@@ -368,7 +368,7 @@ describe("tabs and editor", () => {
     const tab = $$(".tab").find((t) => t.querySelector(".rp")?.textContent === "api" && t.querySelector(".mono")?.textContent === "lib/stripe.ts")!;
     rightClick(tab);
     await settle();
-    expect(items()).toEqual(["Close", "Close others", "Close to the right", "Close all", "Unpin", "Copy path", "Reveal in tree"]);
+    expect(items()).toEqual(["Close", "Close others", "Close to the right", "Close all", "Unpin", "Open in split view", "Copy path", "Reveal in tree"]);
     item("Close others").click();
     await settle();
     expect($$(".tab")).toHaveLength(1);

@@ -390,7 +390,7 @@ describe("tabs", () => {
       { key: "api/b.ts", pinned: false },
     ];
     const pinned = tabMenu("api/a.ts");
-    expect(labels(pinned)).toEqual(["Close", "Close others", "Close to the right", "Close all", "-", "Unpin", "-", "Copy path", "Reveal in tree"]);
+    expect(labels(pinned)).toEqual(["Close", "Close others", "Close to the right", "Close all", "-", "Unpin", "Open in split view", "-", "Copy path", "Reveal in tree"]);
     expect(find(pinned, "Close to the right").disabled).toBe(false);
     const preview = tabMenu("api/b.ts");
     expect(has(preview, "Pin")).toBe(true);

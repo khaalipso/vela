@@ -324,3 +324,13 @@ describe("Cmd K asks an agent", () => {
     expect(resolveKey(key("k", { metaKey: true }), ctx({ overlay: "composer" }))).toEqual({ type: "close" });
   });
 });
+
+describe("find and split", () => {
+  const code: KeyContext = { typing: false, overlay: null, stackOpen: false, view: "code", hasQuestion: false };
+  it("Ctrl Shift F opens the command bar like Ctrl T", () => {
+    expect(resolveKey({ key: "F", ctrlKey: true, shiftKey: true }, { ...code, typing: true })).toEqual({ type: "palette-toggle" });
+  });
+  it("Ctrl \\ splits the code view", () => {
+    expect(resolveKey({ key: "\\", ctrlKey: true }, code)).toEqual({ type: "split" });
+  });
+});

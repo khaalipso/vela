@@ -71,6 +71,7 @@ export type Action =
   | { type: "open-file"; space: number; file: string }
   | { type: "context-menu" } // Menu key / Shift F10: the right-click menu of the focused item
   | { type: "find" } // Ctrl F: find in the open file
+  | { type: "split" } // Ctrl \: split view of the code view
   | { type: "toggle-terminal"; dock?: "top" } // Ctrl ` or T or Ctrl Down: the terminal panel; Ctrl Up: the one on top
   | { type: "new-terminal" } // Ctrl Shift `: one more terminal
   | { type: "toggle-preview" } // V in the code view: Markdown preview
@@ -161,6 +162,8 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
 
   // Cmd/Ctrl T: the command bar (spaces, files, actions). Cmd/Ctrl K: ask an agent.
   if (ctrl && !alt && (k === "t" || k === "T")) return { type: "palette-toggle" };
+  // Ctrl Shift F: the same command bar, where files and the rest are found.
+  if (ctrl && !alt && shift && (k === "f" || k === "F")) return { type: "palette-toggle" };
   if (ctrl && !alt && (k === "k" || k === "K")) {
     return c.overlay === "composer" ? { type: "close" } : { type: "open-composer" };
   }
@@ -267,6 +270,8 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
   if (ctrl && !alt && !shift && (k === "f" || k === "F") && !c.overlay && c.view === "code" && !c.typing) {
     return { type: "find" };
   }
+
+  if (ctrl && !alt && !shift && k === "\\" && !c.overlay && c.view === "code") return { type: "split" };
 
   if (c.typing) return null;
 

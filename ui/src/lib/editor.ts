@@ -2,13 +2,14 @@
 // as block widgets above their position, a blue gutter mark on the lines you typed.
 
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
+import { closeSearchPanel, highlightSelectionMatches, openSearchPanel, search, searchKeymap, searchPanelOpen } from "@codemirror/search";
 import { HighlightStyle, bracketMatching, indentOnInput, syntaxHighlighting } from "@codemirror/language";
 import {
   Annotation,
   Compartment,
   EditorState,
   Facet,
+  Prec,
   RangeSet,
   StateEffect,
   StateField,
@@ -266,6 +267,94 @@ const changeGutter = gutter({
   },
 });
 
+// -- changed text: a discreet green highlight where text was added or modified ----
+
+/** A stretch of text of one line (1-based document line, offsets inside the line). */
+export interface ChangeSpan {
+  line: number;
+  from: number;
+  to: number;
+}
+
+/**
+ * The text that is new in your hunks: for a line that replaces another, what lies between
+ * their common start and common end; for an added line, its content without the indent.
+ */
+export function changeSpans(
+  hunks: { lines: { kind: string; text: string; new: number | null }[] }[],
+  firstLine: number,
+  docLines: number,
+): ChangeSpan[] {
+  const out: ChangeSpan[] = [];
+  for (const h of hunks) {
+    let dels: string[] = [];
+    let prev = "context";
+    for (const l of h.lines) {
+      if (l.kind === "del") {
+        if (prev !== "del") dels = [];
+        dels.push(l.text);
+      } else if (l.kind === "add" && l.new !== null) {
+        const line = l.new - firstLine + 1;
+        const old = prev === "add" || prev === "del" ? dels.shift() : undefined;
+        if (line >= 1 && line <= docLines) {
+          let from = l.text.length - l.text.trimStart().length;
+          let to = l.text.trimEnd().length;
+          if (old !== undefined && old !== l.text) {
+            const n = Math.min(old.length, l.text.length);
+            let a = 0;
+            while (a < n && old[a] === l.text[a]) a++;
+            let b = 0;
+            while (b < n - a && old[old.length - 1 - b] === l.text[l.text.length - 1 - b]) b++;
+            from = a;
+            to = l.text.length - b;
+          }
+          if (to > from) out.push({ line, from, to });
+        }
+      }
+      prev = l.kind;
+    }
+  }
+  return out;
+}
+
+export const setChangeSpans = StateEffect.define<ChangeSpan[]>();
+
+const spanMark = Decoration.mark({ class: "cm-changed" });
+
+const spanField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    value = value.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(setChangeSpans)) {
+        const doc = tr.state.doc;
+        value = Decoration.set(
+          e.value
+            .filter((sp) => sp.line >= 1 && sp.line <= doc.lines)
+            .map((sp) => {
+              const ln = doc.line(sp.line);
+              return spanMark.range(ln.from + Math.min(sp.from, ln.length), ln.from + Math.min(sp.to, ln.length));
+            })
+            .filter((r) => r.to > r.from),
+          true,
+        );
+      }
+    }
+    return value;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+/** Ctrl F: open the find bar, or close it when it is already open. */
+export function toggleFind(view: EditorView): boolean {
+  if (searchPanelOpen(view.state)) closeSearchPanel(view);
+  else {
+    view.focus();
+    openSearchPanel(view);
+  }
+  return true;
+}
+
 // -- the peek: one change of yours, inline under its lines ---------------------
 
 export interface PeekSpec {
@@ -323,10 +412,11 @@ const peekField = StateField.define<DecorationSet>({
 // -- theme ---------------------------------------------------------------------
 
 export const editorTheme = EditorView.theme({
-  "&": { backgroundColor: "transparent", color: "var(--fg)", fontSize: "13px" },
+  "&": { backgroundColor: "transparent", color: "var(--fg)", fontSize: "13px", height: "100%" },
   "&.cm-focused": { outline: "none" },
-  ".cm-scroller": { fontFamily: "var(--code)", lineHeight: "22px", overflowX: "auto" },
-  ".cm-content": { caretColor: "var(--space)", padding: "0" },
+  ".cm-scroller": { fontFamily: "var(--code)", lineHeight: "22px", overflow: "auto", overflowAnchor: "none", scrollbarGutter: "stable" },
+  ".cm-content": { caretColor: "var(--space)", padding: "0 0 96px" },
+  ".cm-changed": { backgroundColor: "color-mix(in srgb, var(--add) 13%, transparent)", borderRadius: "2px" },
   ".cm-line": { padding: "0 16px 0 12px" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--space)" },
   "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
@@ -334,7 +424,7 @@ export const editorTheme = EditorView.theme({
   },
   ".cm-activeLine": { backgroundColor: "transparent" },
   "&.cm-focused .cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--space) 9%, transparent)" },
-  ".cm-gutters": { backgroundColor: "transparent", color: "var(--gutter)", border: "none", userSelect: "none" },
+  ".cm-gutters": { backgroundColor: "var(--panel)", color: "var(--gutter)", border: "none", userSelect: "none", zIndex: "2" },
   ".cm-lineNumbers .cm-gutterElement": { minWidth: "44px", padding: "0 0 0 0", textAlign: "right" },
   ".cm-change-gutter": { width: "14px", paddingLeft: "8px" },
   ".cm-change-gutter .cm-gutterElement": { width: "6px", cursor: "pointer", position: "relative" },
@@ -446,12 +536,14 @@ export function createState(f: FileContent, onUserChange: (content: string) => v
       highlightActiveLine(),
       search({ top: true }),
       highlightSelectionMatches(),
+      Prec.high(keymap.of([{ key: "Mod-f", scope: "editor search-panel", run: toggleFind, preventDefault: true }])),
       keymap.of([...searchKeymap, ...defaultKeymap, ...historyKeymap]),
       languageSlot.of([]),
       syntaxHighlighting(editorHighlight),
       editorTheme,
       hunkField,
       changeField,
+      spanField,
       peekField,
       EditorView.updateListener.of((u) => {
         if (u.docChanged && !u.transactions.some((tr) => tr.annotation(External))) onUserChange(u.state.doc.toString());

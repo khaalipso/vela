@@ -126,7 +126,7 @@
             </section>
           {:else}
             <section class="surface enter" aria-label={app.view}>
-              {#if app.view === "review"}<ReviewView />{:else if app.view === "code"}<CodeView />{:else if app.view === "space"}<SpacePage />{:else if app.view === "prs"}{#await import("./components/GitView.svelte") then { default: GitView }}<GitView />{/await}{:else}<AgentsView />{/if}
+              {#if app.view === "review"}<ReviewView />{:else if app.view === "code"}<div class="panes"><CodeView pane="main" />{#if app.cui.split}<CodeView pane="split" />{/if}</div>{:else if app.view === "space"}<SpacePage />{:else if app.view === "prs"}{#await import("./components/GitView.svelte") then { default: GitView }}<GitView />{/await}{:else}<AgentsView />{/if}
             </section>
           {/if}
         {/key}
@@ -227,10 +227,16 @@
     padding-bottom: 96px;
   }
   /* The Review fills the height: its diff scrolls on its own. */
+  .surface[aria-label="code"],
   .surface[aria-label="review"],
   .surface[aria-label="agents"] {
     padding-bottom: 0;
     overflow: hidden;
+  }
+  .panes {
+    display: flex;
+    height: 100%;
+    min-height: 0;
   }
   .surface.enter {
     animation: enter 320ms var(--ease);

@@ -28,7 +28,7 @@ const titles = (q: string) => filterPalette(items, q).map((i) => i.title);
 describe("command bar", () => {
   it("lists actions, then spaces, then files", () => {
     expect(items.map((i) => i.sec)).toEqual([
-      ...Array(25).fill("Actions"),
+      ...Array(26).fill("Actions"),
       "Spaces",
       "Spaces",
       "Files",
@@ -98,8 +98,8 @@ describe("links in the command bar", () => {
 
   it("lists the links with a URL between the actions and the spaces", () => {
     const sec = withLinks.map((i) => i.sec);
-    expect(sec.indexOf("Links")).toBe(25);
-    expect(sec.lastIndexOf("Links")).toBe(27);
+    expect(sec.indexOf("Links")).toBe(26);
+    expect(sec.lastIndexOf("Links")).toBe(28);
     const l = withLinks.filter((i) => i.sec === "Links");
     expect(l.map((x) => x.title)).toEqual(["Open PAY-412", "Open Staging acme.dev", "Open Add refunds"]);
     expect(l[0].action).toEqual({ type: "open-link", id: "l1" });

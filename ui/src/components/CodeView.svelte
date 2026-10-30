@@ -1,7 +1,6 @@
 <script lang="ts">
   import { selectAll } from "@codemirror/commands";
-  import { openSearchPanel } from "@codemirror/search";
-  import { isMarkdown } from "../lib/app.svelte";
+    import { isMarkdown } from "../lib/app.svelte";
   import { colorOfRepo } from "../lib/colors";
   // The Markdown renderer is loaded with the first preview.
   const markdownView = () => import("./MarkdownView.svelte");
@@ -17,7 +16,10 @@
     firstLineFacet,
     focusLine,
     replaceContent,
+    setChangeSpans,
     setChanges,
+    changeSpans,
+    toggleFind,
     setHunks,
     setLanguage,
     setPeek,
@@ -28,6 +30,9 @@
   import { editorMenu, tabMenu } from "../lib/menus";
   import { readClipboard, writeClipboard } from "../lib/ops.svelte";
 
+  /** "main" has the tabs; "split" shows the file chosen for the second pane. */
+  let { pane = "main" }: { pane?: "main" | "split" } = $props();
+
   let host: HTMLDivElement | undefined = $state();
   let view: EditorView | undefined;
   /** Space and file the editor currently shows, and the load in flight. */
@@ -35,13 +40,14 @@
   let loadSeq = 0;
   let loading = false;
   let handledFocus = 0;
-  let handledFind = 0;
+  let handledFind = app.findSeq;
   /** Text of the open file, for the Markdown preview. */
   let text = $state("");
   let previewFind = $state(0);
 
   const tabs = $derived(app.cui.tabs);
-  const current = $derived(app.cui.file);
+  const current = $derived(pane === "main" ? app.cui.file : (app.cui.split ?? ""));
+  const active = $derived(app.activePane === pane || (pane === "main" && !app.cui.split));
   const rev = $derived(app.contentRev[app.space.id] ?? 0);
   /** A Markdown file shows rendered unless V asked for its source. */
   const preview = $derived(!!current && isMarkdown(current) && !app.mdSource[`${app.space.id}:${current}`]);
@@ -84,6 +90,9 @@
         marks: changeMarks(mine, firstLine, view.state.doc.lines),
         onClick: (id) => openPeek(peekId === id ? null : id),
       }),
+    });
+    view.dispatch({
+      effects: setChangeSpans.of(changeSpans(mine, firstLine, view.state.doc.lines)),
     });
   }
 
@@ -283,11 +292,12 @@
     peekId = null;
   });
 
-  let handledMove = 0;
+  let handledMove = app.changeMove.seq;
   $effect(() => {
     const m = app.changeMove;
     if (m.seq === handledMove) return;
     handledMove = m.seq;
+    if (!active) return;
     moveChange(m.delta);
   });
 
@@ -296,15 +306,22 @@
     const seq = app.findSeq;
     if (seq === handledFind) return;
     handledFind = seq;
-    if (!current) return;
+    if (!current || !active) return;
     if (preview) previewFind++;
-    else if (view) {
-      view.focus();
-      openSearchPanel(view);
-    }
+    else if (view) toggleFind(view);
   });
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="pane" class:split={pane === "split"} onfocusin={() => (app.activePane = pane)} onpointerdown={() => (app.activePane = pane)}>
+{#if pane === "split"}
+  <div class="tabs">
+    <div class="tab" style:--rc={current ? tint(current) : "var(--faint)"} aria-selected="true">
+      {#if current}<span class="rdot"></span><span class="rp">{current.slice(0, current.indexOf("/"))}</span><span class="mono">{current.slice(current.indexOf("/") + 1)}</span>{:else}<span class="mono">Split view</span>{/if}
+      <button class="close" aria-label="Close split" title="Close split (Ctrl \\)" onclick={() => app.closeSplit()}>×</button>
+    </div>
+  </div>
+{:else}
 <div class="tabs" role="tablist">
   {#each tabs as t (t.key)}
     {@const k = t.key}
@@ -313,12 +330,16 @@
       <button class="close" aria-label="Close tab" onclick={(e) => { e.stopPropagation(); app.closeTab(k); }}>×</button>
     </div>
   {/each}
+  {#if tabs.length && !app.cui.split}
+    <button class="splitbtn" title="Split view (Ctrl \\)" aria-label="Split view" onclick={() => app.toggleSplit()}>⫴</button>
+  {/if}
 </div>
+{/if}
 {#if !current}
   <div class="nofile">
     <b>No file open</b>
     <span>Pick a file in the tree on the left, or press <kbd>Ctrl P</kbd> to find one.</span>
-    {#if !app.filesOpen}<button class="btn" onclick={() => app.dispatch({ type: "toggle-files" })}>Show files <kbd>B</kbd></button>{/if}
+    {#if pane === "main" && !app.filesOpen}<button class="btn" onclick={() => app.dispatch({ type: "toggle-files" })}>Show files <kbd>B</kbd></button>{/if}
   </div>
 {/if}
 {#if current && mine.length && !preview}
@@ -376,8 +397,30 @@
     }
   }}
 ></div>
+</div>
 
 <style>
+  .pane {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .pane.split {
+    border-left: 1px solid var(--line);
+  }
+  .splitbtn {
+    margin-left: auto;
+    color: var(--faint);
+    padding: 0 10px;
+    border-radius: 6px;
+  }
+  .splitbtn:hover {
+    background: var(--hover);
+    color: var(--fg);
+  }
   .nofile {
     padding: 64px 24px;
     display: flex;
@@ -403,6 +446,7 @@
     display: none;
   }
   .tabs {
+    flex: none;
     display: flex;
     gap: 4px;
     padding: 8px;
@@ -512,6 +556,12 @@
     color: var(--fg);
   }
   .code {
+    flex: 1 1 0;
+    min-height: 0;
     padding: 8px 0 0;
+    overflow: hidden;
+  }
+  .code :global(.cm-editor) {
+    height: 100%;
   }
 </style>

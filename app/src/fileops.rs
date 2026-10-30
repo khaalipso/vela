@@ -387,7 +387,7 @@ pub fn list_archived(vela: &Vela) -> AppResult<Vec<Space>> {
 pub fn remove_space(vela: &Vela, id: &str) -> AppResult<()> {
     space::remove(vela, id)?;
     let dir = vela_core::paths::spaces_dir(&vela.home);
-    for f in ["rejected.json", "agents.json", "notes.json"] {
+    for f in ["rejected.json", "accepted.json", "agents.json", "notes.json", "comments.json"] {
         let _ = fs::remove_file(dir.join(format!("{id}.{f}")));
     }
     let _ = fs::remove_dir_all(dir.join(format!("{id}.agents")));

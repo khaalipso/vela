@@ -50,6 +50,7 @@ export function buildPaletteItems(src: PaletteSource): PaletteItem[] {
     ["Terminal on top", "Ctrl ↑", { type: "toggle-terminal", dock: "top" }],
     ["New terminal", "Ctrl Shift `", { type: "new-terminal" }],
     ["Find in file", "Ctrl F", { type: "find" }],
+    ["Split view: open file beside, or close it", "Ctrl \\", { type: "split" }],
     ["Markdown preview or source", "V", { type: "toggle-preview" }],
     ["Agent tiers: model and effort per tool", "", { type: "open-settings" }],
     ["Agent prompts: edit the brief of each role", "", { type: "open-prompts" }],
