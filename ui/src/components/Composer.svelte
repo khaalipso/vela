@@ -28,7 +28,7 @@
   >
   <textarea
     id="cmp-in"
-    rows={app.composerWide ? 14 : 2}
+    rows={app.composerWide ? 20 : 2}
     placeholder="Handle charge.refunded in the webhook"
     bind:this={ta}
     bind:value={app.composerText}
@@ -102,8 +102,8 @@
     top: 50%;
     bottom: auto;
     transform: translate(-50%, -50%);
-    width: min(880px, calc(100vw - 48px));
-    max-height: calc(100vh - 64px);
+    width: min(1100px, calc(100vw - 48px));
+    max-height: calc(100vh - 32px);
     padding: 18px;
     gap: 12px;
     border-radius: 20px;
@@ -112,8 +112,9 @@
   }
   .composer.wide textarea {
     flex: 1;
-    min-height: 260px;
-    max-height: calc(100vh - 260px);
+    min-height: 50vh;
+    max-height: calc(100vh - 200px);
+    field-sizing: content;
     overflow-y: auto;
     resize: none;
     font-size: 14.5px;

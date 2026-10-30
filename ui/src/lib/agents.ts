@@ -254,10 +254,8 @@ export function forNextAgent(answer: string): string {
 
 /** The request to give the next agent: what to do, then the answer it starts from. */
 export function handoffText(step: NextStep, from: AgentRole, answer: string): string {
-  const fr = isFrench(answer);
-  const ask = fr ? step.ask.fr : step.ask.en;
-  const head = fr ? `Réponse du ${from}` : `Answer of the ${from}`;
-  return `${ask}\n\n**${head}**\n\n${forNextAgent(answer)}`;
+  const ask = isFrench(answer) ? step.ask.fr : step.ask.en;
+  return `${ask}\n\n---\n\n${forNextAgent(answer)}`;
 }
 
 // -- chat ---------------------------------------------------------------------

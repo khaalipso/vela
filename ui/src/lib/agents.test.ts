@@ -196,7 +196,7 @@ describe("handoff", () => {
     expect(nextSteps("planner").map((s) => s.role)).toEqual(["developer", "tester"]);
     expect(nextSteps("reviewer")[0].role).toBe("developer");
     const t = handoffText(nextSteps("planner")[0], "planner", " 1. Do x ");
-    expect(t).toContain("**Answer of the planner**\n\n1. Do x");
+    expect(t).toBe("Implement this plan, step by step. Say where you had to depart from it.\n\n---\n\n1. Do x");
   });
 });
 
