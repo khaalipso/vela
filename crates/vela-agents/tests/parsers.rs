@@ -341,7 +341,7 @@ fn opencode_json_run() {
     assert_eq!(
         ev.last(),
         Some(&AgentEvent::Usage {
-            input_tokens: 960,
+            input_tokens: 910,
             output_tokens: 120,
             cost_usd: Some(0.0123),
             model: "anthropic/sonnet".into()

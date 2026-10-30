@@ -191,8 +191,8 @@ impl LineParser for OpencodeParser {
             "step_finish" => {
                 let t = &part["tokens"];
                 out.push(AgentEvent::Usage {
+                    // Cache reads are left out: every step re-reads the whole context.
                     input_tokens: t["input"].as_u64().unwrap_or(0)
-                        + t["cache"]["read"].as_u64().unwrap_or(0)
                         + t["cache"]["write"].as_u64().unwrap_or(0),
                     output_tokens: t["output"].as_u64().unwrap_or(0),
                     cost_usd: part["cost"].as_f64(),
