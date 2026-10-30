@@ -1,12 +1,22 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { app } from "../lib/app.svelte";
   import { ROLES, roleLabel, toolLabel } from "../lib/format";
   import type { Tier } from "../lib/types";
   import Kbd from "./Kbd.svelte";
+  import PasteChips from "./PasteChips.svelte";
+  import { collapsePaste } from "../lib/paste";
 
   let ta: HTMLTextAreaElement | undefined = $state();
   onMount(() => ta?.focus());
+
+  function onPasteText(e: ClipboardEvent) {
+    const el = ta;
+    const r = el && collapsePaste(e, el);
+    if (!r) return;
+    app.composerText = r.value;
+    void tick().then(() => el?.setSelectionRange(r.caret, r.caret));
+  }
 
   const TIER_LIST: Tier[] = ["high", "medium", "low"];
   const readOnly = $derived(app.role === "reviewer" || app.role === "planner");
@@ -32,7 +42,9 @@
     placeholder="Handle charge.refunded in the webhook"
     bind:this={ta}
     bind:value={app.composerText}
+    onpaste={onPasteText}
   ></textarea>
+  <PasteChips bind:text={app.composerText} />
   <div class="row">
     {#each ROLES as r (r)}
       <button

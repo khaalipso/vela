@@ -23,7 +23,7 @@
   import NavStrip from "./components/NavStrip.svelte";
   import FilePeek from "./components/FilePeek.svelte";
   import { app } from "./lib/app.svelte";
-  import { isTyping, resolveKey } from "./lib/keymap";
+  import { isTyping, resolveKey, VIEWS } from "./lib/keymap";
   import { isHttpUrl } from "./lib/links";
   import SpacePage from "./components/SpacePage.svelte";
   import { installMenus, onGlobalContextMenu, selectedText } from "./lib/menus";
@@ -32,6 +32,60 @@
   installMenus();
 
   // A URL pasted while no field has the focus goes on the page of the current space.
+  // Two fingers on the trackpad, sideways: the page follows a little, a firm swipe turns to the
+  // next or previous view (it never wraps), and the new page slides in from that side.
+  const SWIPE_AT = 150;
+  let swipeAcc = 0;
+  let swipeLocked = false;
+  let swipeIdle: ReturnType<typeof setTimeout> | undefined;
+  let pull = $state(0);
+  let slide = $state<"next" | "prev" | "">("");
+  const near = $derived(VIEWS[VIEWS.indexOf(app.view) + (pull < 0 ? 1 : -1)]);
+  /** True when the pointer is over something that scrolls sideways itself (code, a table, tabs). */
+  function scrollsSideways(el: HTMLElement | null, dx: number): boolean {
+    for (let n = el; n && n !== document.body; n = n.parentElement) {
+      if (n.scrollWidth <= n.clientWidth + 1) continue;
+      const ox = getComputedStyle(n).overflowX;
+      if (ox !== "auto" && ox !== "scroll") continue;
+      if (dx > 0 ? n.scrollLeft + n.clientWidth < n.scrollWidth - 1 : n.scrollLeft > 0) return true;
+    }
+    return false;
+  }
+  function onWheel(e: WheelEvent) {
+    if (!app.ready || !app.spaces.length || app.overlay || e.ctrlKey) return;
+    const dx = e.deltaX;
+    if (Math.abs(dx) < Math.abs(e.deltaY) * 1.2 || Math.abs(dx) < 1) return;
+    const t = e.target as HTMLElement | null;
+    if (t?.closest?.(".xterm") || scrollsSideways(t, dx)) return;
+    e.preventDefault();
+    clearTimeout(swipeIdle);
+    swipeIdle = setTimeout(() => {
+      swipeAcc = 0;
+      swipeLocked = false;
+      pull = 0;
+    }, 180);
+    if (swipeLocked) return;
+    const i = VIEWS.indexOf(app.view);
+    const to = VIEWS[i + (dx > 0 ? 1 : -1)];
+    swipeAcc += dx;
+    // The page follows with a growing resistance; at either end it only stretches.
+    const r = Math.min(1, Math.abs(swipeAcc) / SWIPE_AT);
+    pull = -Math.sign(swipeAcc) * (to ? 44 : 14) * Math.sqrt(r);
+    if (Math.abs(swipeAcc) >= SWIPE_AT && to) {
+      swipeLocked = true;
+      swipeAcc = 0;
+      pull = 0;
+      slide = dx > 0 ? "next" : "prev";
+      app.setView(to);
+      setTimeout(() => (slide = ""), 450);
+    }
+  }
+
+  $effect(() => {
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
+  });
+
   function onPaste(e: ClipboardEvent) {
     if (!app.ready || !app.spaces.length || app.overlay || isTyping(e.target as HTMLElement | null)) return;
     const text = e.clipboardData?.getData("text/plain") ?? "";
@@ -137,7 +191,8 @@
     {/if}
     <div class="main">
       <TopBar />
-      <div class="body">
+      <div class="body" class:pulling={pull !== 0} data-slide={slide} style:--pull="{pull}px" style:--pa={Math.min(1, Math.abs(pull) / 36)}>
+        {#if pull !== 0 && near}<span class="swipe-hint" class:r={pull < 0} aria-hidden="true">{near === "prs" ? "Git" : near.charAt(0).toUpperCase() + near.slice(1)}</span>{/if}
         <!-- The Review view lists its own files: the tree would only take room there. -->
         {#if app.filesOpen && app.view === "code"}<FilesDrawer />{/if}
         {#key surfaceKey}
@@ -289,6 +344,49 @@
   }
   .surface.enter {
     animation: enter 320ms var(--ease);
+  }
+  .body[data-slide="next"] .surface.enter {
+    animation: enter-next 380ms var(--ease);
+  }
+  .body[data-slide="prev"] .surface.enter {
+    animation: enter-prev 380ms var(--ease);
+  }
+  @keyframes enter-next {
+    from {
+      opacity: 0;
+      transform: translateX(36px);
+    }
+  }
+  @keyframes enter-prev {
+    from {
+      opacity: 0;
+      transform: translateX(-36px);
+    }
+  }
+  .body.pulling > :global(.surface) {
+    transform: translateX(var(--pull));
+    opacity: calc(1 - var(--pa) * 0.25);
+  }
+  .body > :global(.surface) {
+    transition: transform 260ms var(--ease), opacity 260ms var(--ease);
+  }
+  .swipe-hint {
+    position: absolute;
+    top: 50%;
+    left: 10px;
+    z-index: 5;
+    transform: translateY(-50%);
+    padding: 4px 10px;
+    border-radius: 9999px;
+    font-size: 12px;
+    background: var(--raised);
+    color: var(--muted);
+    opacity: var(--pa);
+    pointer-events: none;
+  }
+  .swipe-hint.r {
+    left: auto;
+    right: 10px;
   }
   .elsewhere {
     height: 100%;

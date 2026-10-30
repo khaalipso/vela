@@ -29,6 +29,7 @@ import type { Pane } from "./mergeview";
 import { composeMessage, cycleType, mergeAll, moveHunk, splitHunk } from "./commitplan";
 import { fileKey, plural, roleLabel, ROLES, toolLabel, uniq } from "./format";
 import { emptyHist, placeOf, record, step as navStep, type NavHist, type Place } from "./navhist";
+import { expandPasted } from "./paste";
 import { VIEWS, type Action, type Overlay, type View } from "./keymap";
 import { groupLinks, isHttpUrl, makeLink } from "./links";
 import { buildPaletteItems, filterPalette, type PaletteItem } from "./palette";
@@ -2202,7 +2203,7 @@ export class AppState {
   }
 
   async sendComposer() {
-    const text = this.composerText.trim();
+    const text = expandPasted(this.composerText).trim();
     if (!text) return false;
     const s = this.space;
     try {

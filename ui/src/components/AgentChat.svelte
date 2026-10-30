@@ -15,12 +15,16 @@
   import { agentName, agentStatusColor, ROLE_COLORS, roleLabel, tagColor, toolLabel } from "../lib/format";
   import type { Agent, AgentLogEntry } from "../lib/types";
   import Kbd from "./Kbd.svelte";
+  import PasteChips from "./PasteChips.svelte";
+  import { collapsePaste, draftOf, expandPasted, setDraft } from "../lib/paste";
   import { writeClipboard } from "../lib/ops.svelte";
 
   let { agent }: { agent: Agent } = $props();
 
   let log = $state<AgentLogEntry[] | null>(null);
-  let text = $state("");
+  // What you typed and did not send stays when you change page or agent.
+  let text = $state(draftOf(untrack(() => agent.id)));
+  $effect(() => setDraft(agentId, text));
   let scroller: HTMLDivElement | undefined = $state();
   let input: HTMLTextAreaElement | undefined = $state();
   /** Open groups of work, by their place among the groups: new events do not close them. */
@@ -320,7 +324,7 @@
   }
 
   async function send() {
-    const t = text.trim();
+    const t = expandPasted(text).trim();
     if (!t || !canSend) return;
     text = "";
     stick = true;
@@ -339,6 +343,14 @@
     stick = true;
     await app.reply(option);
     await load(agent.id);
+  }
+
+  function onPasteText(e: ClipboardEvent) {
+    const el = input;
+    const r = el && collapsePaste(e, el);
+    if (!r) return;
+    text = r.value;
+    void tick().then(() => el?.setSelectionRange(r.caret, r.caret));
   }
 
   function onKey(e: KeyboardEvent) {
@@ -549,6 +561,7 @@
 
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
   <div class="sayh" role="separator" aria-orientation="horizontal" aria-label="Resize the writing area" tabindex="0" title="Drag to enlarge (double click to reset)" onpointerdown={dragSay} ondblclick={() => setSayH(null)} onkeydown={nudgeSay}></div>
+  <PasteChips bind:text />
   <form
     class="say"
     onsubmit={(e) => {
@@ -564,6 +577,7 @@
       style:max-height={sayH ? "none" : undefined}
       disabled={!canSend}
       onkeydown={onKey}
+      onpaste={onPasteText}
       aria-label="Message to {agent.id}"
       placeholder={running
         ? "Write the next step: it is sent as soon as this run ends (Enter)"
