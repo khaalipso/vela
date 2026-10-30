@@ -15,7 +15,7 @@ use vela_core::{Error, Result};
 
 use crate::driver::{AgentDriver, LineParser, RunHandle, RunSpec, launch_with_env, locate};
 use crate::event::AgentEvent;
-use crate::util::{rel_path, shorten};
+use crate::util::{plain_command, rel_path, shorten};
 
 pub struct OpencodeDriver {
     bin: Option<PathBuf>,
@@ -217,7 +217,7 @@ impl LineParser for OpencodeParser {
                     .or_else(|| v["permission"].as_str())
                     .unwrap_or("an action");
                 out.push(AgentEvent::Question {
-                    text: format!("opencode asks permission: {}", shorten(what, 160)),
+                    text: shorten(&plain_command(what), 200),
                     options: vec!["Allow".to_string(), "Deny".to_string()],
                     tools: Vec::new(),
                 });

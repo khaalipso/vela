@@ -5,7 +5,8 @@
   import DOMPurify from "dompurify";
   import { marked } from "marked";
   import { tick, untrack } from "svelte";
-  import { chatItems, currentActivity, isRunning, NUDGE, QUIET_WARN_MS, quietFor, shortDuration, usageLine, type ChatItem, type WorkNote } from "../lib/agents";
+  import { chatItems, currentActivity, handoffText, isAllowed, isPermission, isRunning, nextSteps, permissionLabel, NUDGE, QUIET_WARN_MS, quietFor, shortDuration, usageLine, type ChatItem, type WorkNote } from "../lib/agents";
+  import { splitAnswer } from "../lib/answer";
   import { app } from "../lib/app.svelte";
   import { agentStatusColor, ROLE_COLORS, roleLabel, toolLabel } from "../lib/format";
   import type { Agent, AgentLogEntry } from "../lib/types";
@@ -35,6 +36,9 @@
   const agentId = $derived(agent.id);
   const running = $derived(isRunning(agent));
   const waiting = $derived(agent.status === "waiting");
+  /** The group of work in progress: open while the agent works, so its reasoning reads live. */
+  const liveGroup = $derived(running && items.length && items[items.length - 1].kind === "tools" ? groupNo[items.length - 1] : -1);
+  const isOpen = (g: number) => openTools[g] ?? g === liveGroup;
   const q = $derived(waiting && app.sd.question?.agentId === agent.id ? app.sd.question : null);
   const canSend = $derived(running || waiting || !!agent.session);
   const queued = $derived(app.queuedFor(agent.id));
@@ -58,6 +62,13 @@
     if (!nudged) app.queueFor(agent.id, NUDGE);
     await app.cancelAgent(agent.id);
   }
+  /** Sections the reader opened or closed, by message and section; the rest follow their length. */
+  let sectionOpen = $state<Record<string, boolean>>({});
+  const answers = $derived(items.map((it) => (it.kind === "agent" ? splitAnswer(it.text) : null)));
+  /** The last answer is the one to read first: the older ones start closed. */
+  const lastAnswer = $derived(items.findLastIndex((x) => x.kind === "agent"));
+  /** After a finished run: who can take its answer over, one click to the composer. */
+  const next = $derived(!running && !waiting && agent.status === "done" && lastAnswer >= 0 ? nextSteps(agent.role) : []);
   const md = (t: string) => DOMPurify.sanitize(marked.parse(t, { gfm: true, breaks: false, async: false }) as string);
 
   async function load(id: string) {
@@ -185,6 +196,7 @@
   <header class="ch">
     <span class="dot" class:pulse={running} style:--c={agentStatusColor(agent.status)}></span>
     <b>{roleLabel(agent.role)}</b>
+    {#if agent.title}<h2 class="title" title={agent.title}>{agent.title}</h2>{/if}
     <span class="tags">
       <span class="tag">{toolLabel(agent.tool)}</span>
       {#if agent.model}<span class="tag">{agent.model}</span>{/if}
@@ -218,15 +230,41 @@
       {#if it.kind === "you"}
         <div class="you"><div class="bubble">{it.text}</div></div>
       {:else if it.kind === "agent"}
-        <div class="agent-msg md">{@html md(it.text)}</div>
+        {@const ans = answers[i]}
+        {#if ans}
+          <article class="card agent-msg" class:old={i !== lastAnswer}>
+            {#if ans.lead}<div class="lead md">{@html md(ans.lead)}</div>{/if}
+            {#each ans.sections as s, j (j)}
+              {@const k = `${i}:${j}`}
+              {@const open = sectionOpen[k] ?? (!s.long && i === lastAnswer)}
+              <section class="sec" class:open>
+                <button class="sh" aria-expanded={open} onclick={() => (sectionOpen = { ...sectionOpen, [k]: !open })}>
+                  <span class="chev" class:open>▸</span>
+                  <b>{s.title}</b>
+                </button>
+                {#if open}<div class="sb md">{@html md(s.body)}</div>{/if}
+              </section>
+            {/each}
+          </article>
+        {/if}
+        {#if i === lastAnswer && next.length && it.kind === "agent"}
+          <div class="next" role="group" aria-label="Next">
+            <span class="nl">Next</span>
+            {#each next as st (st.label)}
+              <button class="btn" style:--rc={ROLE_COLORS[st.role]} title="Open the composer for the {roleLabel(st.role)} with this answer in it; you can edit before sending" onclick={() => app.handoff(agent, st, it.text)}>
+                <span class="dot" style:--c={ROLE_COLORS[st.role]}></span>{st.label}<small>{roleLabel(st.role)}</small>
+              </button>
+            {/each}
+          </div>
+        {/if}
       {:else if it.kind === "tools"}
         {@const g = groupNo[i]}
         <div class="tools">
-          <button class="tsum" aria-expanded={!!openTools[g]} onclick={() => (openTools = { ...openTools, [g]: !openTools[g] })}>
-            <span class="chev" class:open={openTools[g]}>▸</span>
+          <button class="tsum" aria-expanded={isOpen(g)} onclick={() => (openTools = { ...openTools, [g]: !isOpen(g) })}>
+            <span class="chev" class:open={isOpen(g)}>▸</span>
             {toolsLabel(it)}
           </button>
-          {#if openTools[g]}
+          {#if isOpen(g)}
             <ul>
               {#each it.calls as c, j (j)}
                 {#each it.notes.filter((x) => x.before === j) as nt, k (k)}{@render workNote(nt)}{/each}
@@ -247,13 +285,16 @@
           </ol>
         </div>
       {:else if it.kind === "question"}
-        <div class="question">
-          <small>Asks you</small>
-          <p>{it.text}</p>
-          {#if q && i === items.findLastIndex((x) => x.kind === "question")}
+        {@const perm = isPermission(it.options)}
+        {@const pending = !!q && i === items.findLastIndex((x) => x.kind === "question")}
+        {@const verdict = perm && !pending ? (it.answer === undefined || isAllowed(it.answer) ? "allowed" : "denied") : ""}
+        <div class="question" class:perm class:pending={perm && pending} class:allowed={verdict === "allowed"} class:denied={verdict === "denied"}>
+          <small>{perm ? (verdict === "allowed" ? "Allowed" : verdict === "denied" ? "Denied" : "Permission") : "Asks you"}</small>
+          {#if perm}<code class="cmd">{it.text}</code>{:else}<p>{it.text}</p>{/if}
+          {#if pending}
             <div class="opts">
               {#each q.options?.length ? q.options : [q.yes, q.no] as o, j (j)}
-                <button class="btn" class:p={j === 0} onclick={() => answer(o)}>{o}</button>
+                <button class="btn" class:p={j === 0} onclick={() => answer(o)}>{perm ? permissionLabel(o) : o}</button>
               {/each}
             </div>
           {/if}
@@ -273,12 +314,13 @@
       {/if}
     {/each}
     {#if q && !items.some((x) => x.kind === "question")}
-      <div class="question">
-        <small>Asks you</small>
-        <p>{q.text}</p>
+      {@const perm = isPermission(q.options ?? [])}
+      <div class="question" class:perm class:pending={perm}>
+        <small>{perm ? "Permission" : "Asks you"}</small>
+        {#if perm}<code class="cmd">{q.text}</code>{:else}<p>{q.text}</p>{/if}
         <div class="opts">
           {#each q.options?.length ? q.options : [q.yes, q.no] as o, j (j)}
-            <button class="btn" class:p={j === 0} onclick={() => answer(o)}>{o}</button>
+            <button class="btn" class:p={j === 0} onclick={() => answer(o)}>{perm ? permissionLabel(o) : o}</button>
           {/each}
         </div>
       </div>
@@ -441,10 +483,91 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
-  .agent-msg {
+  .next {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .nl {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .next .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .next .btn small {
+    color: var(--faint);
+    font-size: 11px;
+  }
+  .next .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--c);
+  }
+  .title {
+    flex: 1 1 100%;
+    order: -1;
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .card {
+    max-width: 68ch;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
     font-size: 13.5px;
     line-height: 1.6;
     overflow-wrap: anywhere;
+  }
+  .card.old {
+    opacity: 0.8;
+  }
+  .lead {
+    padding: 12px 14px;
+    font-size: 14px;
+    border-left: 3px solid var(--space);
+  }
+  .sec {
+    border-top: 1px solid var(--line);
+  }
+  .sh {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 8px 14px;
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+    text-align: left;
+  }
+  .sh:hover {
+    background: var(--hover);
+  }
+  .sh .chev {
+    display: inline-block;
+    transition: transform 0.15s var(--ease);
+  }
+  .sh .chev.open {
+    transform: rotate(90deg);
+  }
+  .sb {
+    padding: 0 14px 12px 28px;
+    color: var(--fg);
   }
   .md :global(p) {
     margin: 0 0 8px;
@@ -589,6 +712,35 @@
   }
   .question {
     box-shadow: 0 0 0 1px var(--space);
+  }
+  .question.perm {
+    box-shadow: 0 0 0 1.5px var(--info);
+  }
+  .question.allowed {
+    box-shadow: 0 0 0 1.5px var(--add);
+  }
+  .question.denied {
+    box-shadow: 0 0 0 1.5px var(--del);
+  }
+  .question.allowed small {
+    color: var(--add);
+  }
+  .question.denied small {
+    color: var(--del);
+  }
+  .question.pending small {
+    color: var(--info);
+  }
+  .cmd {
+    display: block;
+    margin: 4px 0 0;
+    font-family: var(--code);
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .question.pending .cmd {
+    margin-bottom: 8px;
   }
   .question p {
     margin: 4px 0 8px;

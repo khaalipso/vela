@@ -16,13 +16,14 @@ import type {
   RolePrompt,
   ReviewComment,
   VelaModelSetting,
+  VelaPrompt,
   NewComment,
   ReviewNote,
   TermEvent,
   Unsubscribe,
 } from "./backend";
 import type { FileReview, RepoHistory } from "./backend";
-import { matchesAgent } from "./agents";
+import { handoffText, matchesAgent, type NextStep } from "./agents";
 import { findConflicts } from "./conflicts";
 import type { Pane } from "./mergeview";
 import { composeMessage, cycleType, mergeAll, moveHunk, splitHunk } from "./commitplan";
@@ -435,6 +436,7 @@ export class AppState {
   /** Model names per harness, loaded after the sheet is open. */
   agentModelList = $state.raw<Record<string, string[]>>({});
   rolePrompts = $state.raw<RolePrompt[]>([]);
+  velaPrompt = $state.raw<VelaPrompt | null>(null);
 
   /** Pull requests per space, fetched with the GitHub CLI when the PRs view opens. */
   prs = $state.raw<Record<string, { list: RepoPr[]; at: number; loading: boolean; error: string | null }>>({});
@@ -1664,9 +1666,10 @@ export class AppState {
   private async loadSettings() {
     const b = this.backend;
     try {
-      const [tiers, prompts, velaModel] = await Promise.all([b.agentTiers(), b.agentPrompts(), b.velaModel().catch(() => null)]);
+      const [tiers, prompts, velaModel, velaPrompt] = await Promise.all([b.agentTiers(), b.agentPrompts(), b.velaModel().catch(() => null), b.velaPrompt().catch(() => null)]);
       this.tierSettings = tiers;
       this.rolePrompts = prompts;
+      this.velaPrompt = velaPrompt;
       this.velaModel = velaModel;
       this.settingsLoaded = true;
     } catch (e) {
@@ -1684,6 +1687,19 @@ export class AppState {
   /** Models to suggest for a harness: what the tiers call gave, else the lazily loaded list. */
   modelsOf(h: HarnessTiers): string[] {
     return h.models.length ? h.models : (this.agentModelList[h.harness] ?? []);
+  }
+  /** Save the Vela prompt (null or blank: back to the built in one). */
+  async setVelaPromptText(text: string | null) {
+    const def = this.velaPrompt?.default;
+    const t = text?.trim() || null;
+    const custom = t && t !== def?.trim() ? t : null;
+    if (this.velaPrompt) this.velaPrompt = { ...this.velaPrompt, custom };
+    try {
+      await this.backend.setVelaPrompt(custom);
+      this.toast(custom ? "Vela prompt saved" : "Vela prompt reset");
+    } catch (e) {
+      this.fail(e);
+    }
   }
   /** Save the brief of a role (null or blank: back to the built in one). */
   async setPrompt(role: AgentRole, text: string | null) {
@@ -2015,6 +2031,14 @@ export class AppState {
     }
     await this.loadAgents(this.space.id);
     return true;
+  }
+
+  /** Open the composer for the next agent, with the answer of this one in it: you read and edit it, then send. */
+  handoff(a: Agent, step: NextStep, answer: string) {
+    this.role = step.role;
+    this.tier = null;
+    this.composerText = handoffText(step, a.role, answer);
+    this.openComposer();
   }
 
   /** Open the composer with the request of an agent, to edit it and run it again. */

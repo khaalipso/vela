@@ -17,7 +17,7 @@ use vela_core::{Error, Result};
 
 use crate::driver::{AgentDriver, LineParser, RunHandle, RunSpec, launch, locate};
 use crate::event::AgentEvent;
-use crate::util::{rel_path, shorten};
+use crate::util::{plain_command, rel_path, shorten};
 
 pub struct CodexDriver {
     bin: Option<PathBuf>,
@@ -214,7 +214,7 @@ fn approval(v: &Value) -> AgentEvent {
     let text = ["command", "reason", "message", "text"]
         .iter()
         .find_map(|k| v[*k].as_str())
-        .map(|s| format!("Codex asks to run: {}", shorten(s, 160)))
+        .map(|s| shorten(&plain_command(s), 200))
         .unwrap_or_else(|| "Codex asks for approval".to_string());
     AgentEvent::Question {
         text,

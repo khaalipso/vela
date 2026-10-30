@@ -127,7 +127,8 @@ opencode = "cli"                         # acp or cli
 reviewer = "Review like a staff engineer: correctness first, then naming."
 
 [agents.vela]
-enabled = true                           # labels of the conversations
+enabled = true                           # title and labels of the conversations
+# prompt = "..."                         # replaces the built in Vela prompt (the rules of every role)
 harness = "claude"                       # default: the first installed harness
 model = "haiku"                          # default: the low tier model of that harness
 ```
@@ -140,7 +141,7 @@ model = "haiku"                          # default: the low tier model of that h
 | `agents.transport.<harness>` | ACP when installed | `acp` or `cli`. See `docs/HARNESS.md`. |
 | `agents.roles.<role>.tier` | planner, reviewer, debugger, product, security `high`; developer `medium`; tester `low` | Tier of the role. |
 | `agents.roles.<role>.harness` | `claude` | Harness of the role. If it is not installed, the first installed one (claude, codex, opencode) is used. |
-| `agents.vela.enabled` | `true` | The Vela model, the small model Vela runs for its own tasks, gives each new conversation one or two labels (plus the ticket of the space) to find it again. `false` turns it off. |
+| `agents.vela.enabled` | `true` | The Vela model, the small model Vela runs for its own tasks, gives each new conversation a short title and one or two labels (plus the ticket of the space) to find it again. `agents.vela.prompt` replaces the built in Vela prompt, the rules every role gets before its brief (also editable in the Prompts tab, row Vela). `false` turns it off. |
 | `agents.vela.harness` | first installed | Harness the Vela model runs on, chosen apart from the tiers. |
 | `agents.vela.model` | low tier model | Model Vela runs (`haiku` for Claude Code when the low tier has none). |
 

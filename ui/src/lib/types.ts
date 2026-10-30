@@ -149,6 +149,8 @@ export interface Agent {
   lastEvent?: string | null;
   /** One or two words to find the conversation again (and the ticket). */
   labels?: string[];
+  /** A short title of the conversation, from the Vela model. */
+  title?: string | null;
 }
 
 /** A harness Vela can drive, and whether it is installed. */
@@ -183,7 +185,7 @@ export type AgentEvent =
   | { type: "done"; summary: string }
   | { type: "failed"; error: string }
   | { type: "prompt"; text: string }
-  | { type: "labels"; labels: string[] };
+  | { type: "labels"; labels: string[]; title?: string | null };
 
 /** One line of an agent's log. */
 export interface AgentLogEntry {

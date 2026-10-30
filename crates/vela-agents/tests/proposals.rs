@@ -37,6 +37,7 @@ fn agent(id: &str, status: AgentStatus) -> Agent {
         activity: String::new(),
         last_event: None,
         labels: vec![],
+        title: None,
     }
 }
 

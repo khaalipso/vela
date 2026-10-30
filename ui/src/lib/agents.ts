@@ -1,6 +1,6 @@
 // Small pure helpers for the agents view: numbers, one line per log event.
 
-import type { Agent, AgentEvent, AgentUsage } from "./types";
+import type { Agent, AgentEvent, AgentRole, AgentUsage } from "./types";
 
 /** 1234 → "1.2k", 1500000 → "1.5M". */
 export function formatTokens(n: number): string {
@@ -111,10 +111,66 @@ export const NUDGE =
 export function matchesAgent(a: Agent, query: string): boolean {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return true;
-  const hay = [a.id, a.role, a.tool, a.model ?? "", a.tier ?? "", a.prompt ?? "", a.summary, a.session ?? "", ...(a.labels ?? [])]
+  const hay = [a.id, a.title ?? "", a.role, a.tool, a.model ?? "", a.tier ?? "", a.prompt ?? "", a.summary, a.session ?? "", ...(a.labels ?? [])]
     .join("\n")
     .toLowerCase();
   return words.every((w) => hay.includes(w));
+}
+
+/** A permission request: Allow / Deny (or Approve / Reject) rather than a real question. */
+export function isPermission(options: string[]): boolean {
+  return options.length >= 2 && /^(allow|approve|yes|always)/i.test(options[0]);
+}
+
+/** Did the answer to a permission say yes? Mirrors `is_yes` of the agents crate. */
+export function isAllowed(answer: string): boolean {
+  const w = answer.trim().split(/\s+/)[0]?.replace(/[^\p{L}\p{N}]/gu, "").toLowerCase() ?? "";
+  return ["allow", "always", "yes", "y", "approve", "approved", "ok", "okay", "sure", "oui"].includes(w);
+}
+
+/** The label of a permission button: "Allow once" is just "Allow", "Reject" is "Deny". */
+export function permissionLabel(option: string): string {
+  if (/^allow once$/i.test(option)) return "Allow";
+  if (/^(reject|reject once|deny once)$/i.test(option)) return "Deny";
+  return option;
+}
+
+// -- handoff ------------------------------------------------------------------
+
+/** What to do next with the answer of an agent: the role that takes it over and what it is asked. */
+export interface NextStep {
+  role: AgentRole;
+  label: string;
+  ask: string;
+}
+
+const NEXT: Partial<Record<AgentRole, NextStep[]>> = {
+  planner: [
+    { role: "developer", label: "Implement", ask: "Implement this plan. Follow it step by step; say where you had to depart from it." },
+    { role: "tester", label: "Write the tests", ask: "Write the tests this plan calls for, before it is implemented." },
+  ],
+  product: [
+    { role: "planner", label: "Plan it", ask: "Turn this into an implementation plan for this code base." },
+    { role: "developer", label: "Implement", ask: "Implement this." },
+  ],
+  developer: [
+    { role: "reviewer", label: "Review", ask: "Review the changes described below, and the uncommitted changes of the space." },
+    { role: "tester", label: "Test it", ask: "Write or complete the tests for the changes described below." },
+  ],
+  tester: [{ role: "reviewer", label: "Review", ask: "Review these tests and the changes they cover." }],
+  debugger: [{ role: "developer", label: "Fix it", ask: "Fix the bug as diagnosed below. Add a test that fails without the fix." }],
+  reviewer: [{ role: "developer", label: "Fix these", ask: "Fix the findings below, most severe first. Change only what they ask for." }],
+  security: [{ role: "developer", label: "Fix these", ask: "Fix the findings below, most severe first. Change only what they ask for." }],
+};
+
+/** The agents that can take over after `role`. */
+export function nextSteps(role: AgentRole): NextStep[] {
+  return NEXT[role] ?? [];
+}
+
+/** The request to give the next agent: what to do, then the answer it starts from. */
+export function handoffText(step: NextStep, from: AgentRole, answer: string): string {
+  return `${step.ask}\nAnswer in the language of the text below.\n\n---\nAnswer of the ${from}:\n\n${answer.trim()}`;
 }
 
 // -- chat ---------------------------------------------------------------------
@@ -132,7 +188,7 @@ export type ChatItem =
    */
   | { kind: "tools"; calls: { name: string; summary: string }[]; notes: WorkNote[]; files: string[]; ts: string }
   | { kind: "plan"; steps: string[]; ts: string }
-  | { kind: "question"; text: string; options: string[]; ts: string }
+  | { kind: "question"; text: string; options: string[]; ts: string; answer?: string }
   | { kind: "applied"; files: string[]; conflicts: string[]; toYou: boolean; ts: string }
   | { kind: "end"; ok: boolean; text: string; ts: string };
 
@@ -156,10 +212,14 @@ export function chatItems(log: { ts: string; event: AgentEvent }[]): ChatItem[] 
   };
   for (const { ts, event: e } of log) {
     switch (e.type) {
-      case "prompt":
+      case "prompt": {
         flush();
-        out.push({ kind: "you", text: e.text, ts });
+        const prev = out[out.length - 1];
+        // The answer to a permission goes into its card, which turns green or red.
+        if (prev?.kind === "question" && isPermission(prev.options) && prev.answer === undefined) prev.answer = e.text;
+        else out.push({ kind: "you", text: e.text, ts });
         break;
+      }
       case "message":
         if (!e.text.trim()) break;
         flush();

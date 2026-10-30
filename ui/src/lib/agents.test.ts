@@ -4,15 +4,19 @@ import {
   currentActivity,
   formatCost,
   formatTokens,
+  isAllowed,
+  permissionLabel,
   logLine,
   matchesAgent,
+  nextSteps,
+  handoffText,
   quietFor,
   shortDuration,
   totalUsage,
   usageLine,
   type ChatItem,
 } from "./agents";
-import type { Agent } from "./types";
+import type { Agent, AgentEvent } from "./types";
 
 describe("agent numbers", () => {
   it("formats tokens and cost", () => {
@@ -160,5 +164,36 @@ describe("activity and search", () => {
     expect(matchesAgent(a, "refunds developer")).toBe(true);
     expect(matchesAgent(a, "0f3c")).toBe(true);
     expect(matchesAgent(a, "refunds tester")).toBe(false);
+  });
+});
+
+describe("permissions", () => {
+  const at = (event: AgentEvent) => ({ ts: "t", event });
+  it("folds the answer into the permission card", () => {
+    const items = chatItems([
+      at({ type: "question", text: "sed -n 1,80p a.py", options: ["Allow once", "Reject"], tools: [] } as AgentEvent),
+      at({ type: "prompt", text: "Allow once" }),
+    ]);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ kind: "question", answer: "Allow once" });
+  });
+  it("keeps the answer to a real question as a message", () => {
+    const items = chatItems([at({ type: "question", text: "Which API?", options: ["v1", "v2"], tools: [] } as AgentEvent), at({ type: "prompt", text: "v2" })]);
+    expect(items.map((i) => i.kind)).toEqual(["question", "you"]);
+  });
+  it("reads yes and no, and relabels", () => {
+    expect(isAllowed("Allow once")).toBe(true);
+    expect(isAllowed("Reject")).toBe(false);
+    expect(permissionLabel("Allow once")).toBe("Allow");
+    expect(permissionLabel("Reject")).toBe("Deny");
+  });
+});
+
+describe("handoff", () => {
+  it("offers the next roles and carries the answer", () => {
+    expect(nextSteps("planner").map((s) => s.role)).toEqual(["developer", "tester"]);
+    expect(nextSteps("reviewer")[0].role).toBe("developer");
+    const t = handoffText(nextSteps("planner")[0], "planner", " 1. Do x ");
+    expect(t).toContain("Answer of the planner:\n\n1. Do x");
   });
 });

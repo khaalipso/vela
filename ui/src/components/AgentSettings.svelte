@@ -42,22 +42,27 @@
   let role = $state<AgentRole>(app.role);
   let draft = $state("");
   let editor: HTMLTextAreaElement | undefined = $state();
-  const current = $derived(app.rolePrompts.find((p) => p.role === role));
+  /** The Vela prompt (the rules of every role) is edited in the same editor, instead of a role. */
+  let velaMode = $state(false);
+  const rolePrompt = $derived(app.rolePrompts.find((p) => p.role === role));
+  const current = $derived(velaMode ? app.velaPrompt : rolePrompt);
   const dirty = $derived(!!current && draft.trim() !== (current.custom ?? current.default).trim());
+  const heading = $derived(velaMode ? "Vela prompt" : `${roleLabel(role)} brief`);
 
   // Load the brief of the picked role into the editor (and when the prompts arrive).
   let loadedFor = "";
   $effect(() => {
     const p = current;
-    const key = p ? `${p.role}:${p.custom ?? ""}:${p.default.length}` : "";
+    const key = p ? `${velaMode ? "vela" : role}:${p.custom ?? ""}:${p.default.length}` : "";
     if (p && key !== loadedFor) {
       loadedFor = key;
       draft = p.custom ?? p.default;
     }
   });
 
-  async function pick(r: AgentRole) {
-    role = r;
+  async function pick(r: AgentRole | "vela") {
+    velaMode = r === "vela";
+    if (r !== "vela") role = r;
     loadedFor = "";
     await tick();
     editor?.focus();
@@ -66,8 +71,12 @@
   function onEditorKey(e: KeyboardEvent) {
     if (e.key === "s" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
-      void app.setPrompt(role, draft);
+      void save(draft);
     }
+  }
+
+  function save(text: string | null) {
+    return velaMode ? app.setVelaPromptText(text) : app.setPrompt(role, text);
   }
 </script>
 
@@ -221,9 +230,14 @@
     {:else}
       <div class="prompts" aria-label="Agent prompts">
         <nav class="roles">
+          <button class:on={velaMode} onclick={() => pick("vela")} title="The rules every agent gets before its own brief: language, length, how to answer">
+            <span class="dot" style:--c="var(--space)"></span>
+            Vela
+            {#if app.velaPrompt?.custom}<small>edited</small>{/if}
+          </button>
           {#each ROLES as r (r)}
             {@const p = app.rolePrompts.find((x) => x.role === r)}
-            <button class:on={r === role} onclick={() => pick(r)}>
+            <button class:on={!velaMode && r === role} onclick={() => pick(r)}>
               <span class="dot" style:--c={ROLE_COLORS[r]}></span>
               {roleLabel(r)}
               {#if p?.custom}<small>edited</small>{/if}
@@ -236,18 +250,18 @@
               bind:this={editor}
               bind:value={draft}
               spellcheck="false"
-              aria-label="{roleLabel(role)} brief"
+              aria-label={heading}
               onkeydown={onEditorKey}
             ></textarea>
-            {#if current.notes}
+            {#if !velaMode && rolePrompt?.notes}
               <p class="hint">Vela adds after it: how to write findings as NOTE lines, so they show on the code in the Review view.</p>
             {/if}
             <div class="acts">
-              <span class="hint">{current.custom ? "Your brief" : "Built in brief"}{dirty ? " · not saved" : ""}</span>
+              <span class="hint">{current.custom ? (velaMode ? "Your prompt" : "Your brief") : velaMode ? "Built in prompt" : "Built in brief"}{dirty ? " · not saved" : ""}</span>
               {#if current.custom}
-                <button class="btn" onclick={() => app.setPrompt(role, null)}>Reset to built in</button>
+                <button class="btn" onclick={() => save(null)}>Reset to built in</button>
               {/if}
-              <button class="btn p" disabled={!dirty} onclick={() => app.setPrompt(role, draft)}>Save <kbd>Ctrl S</kbd></button>
+              <button class="btn p" disabled={!dirty} onclick={() => save(draft)}>Save <kbd>Ctrl S</kbd></button>
             </div>
           {:else}
             <div class="skel tall"></div>

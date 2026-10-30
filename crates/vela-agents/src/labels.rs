@@ -58,15 +58,40 @@ pub fn pick(
     Some((harness, model))
 }
 
+/// The title is cut at this many characters.
+const MAX_TITLE: usize = 60;
+
 /// What the Vela model is asked for one request.
 pub fn prompt(request: &str) -> String {
     let request: String = request.trim().chars().take(4000).collect();
     format!(
-        "Give one or two labels (one or two words each, lowercase) that name the topic of this \
-         request to a coding agent, so the conversation is easy to find later: the feature, the \
-         area of the code, or the kind of work (bug, test, refactor). Do not use any tool. Answer \
-         with the labels only, separated by a comma, nothing else.\n\nRequest:\n{request}"
+        "Name this request to a coding agent so the conversation is easy to find later. Do not \
+         use any tool. Answer with exactly two lines and nothing else:\n\
+         Title: a title of three to seven words, in the language of the request, no final period\n\
+         Labels: one or two labels (one or two words each, lowercase), separated by a comma: the \
+         feature, the area of the code, or the kind of work (bug, test, refactor)\n\n\
+         Request:\n{request}"
     )
+}
+
+/// The title in what the model answered, None when it gave none.
+pub fn parse_title(text: &str) -> Option<String> {
+    text.lines().find_map(|l| {
+        let l = l.trim().trim_start_matches(['-', '*', '#']).trim();
+        let (k, v) = l.split_once(':')?;
+        if !k.trim().eq_ignore_ascii_case("title") {
+            return None;
+        }
+        let v = v.trim().trim_matches(['"', '\'', '`', '*', '.']).trim();
+        if v.is_empty() {
+            return None;
+        }
+        let mut t: String = v.chars().take(MAX_TITLE).collect();
+        if v.chars().count() > MAX_TITLE {
+            t = format!("{}…", t.trim_end());
+        }
+        Some(t)
+    })
 }
 
 /// Words that say nothing about a conversation.
@@ -77,11 +102,18 @@ const EMPTY: &[&str] = &[
 /// The labels in what the model answered.
 pub fn parse(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    let text = text.trim();
-    let text = text
-        .strip_prefix("Labels:")
-        .or_else(|| text.strip_prefix("labels:"))
-        .unwrap_or(text);
+    let text: String = text
+        .lines()
+        .filter(|l| !l.trim().to_lowercase().starts_with("title:"))
+        .map(|l| {
+            let t = l.trim();
+            match t.get(..7) {
+                Some(h) if h.eq_ignore_ascii_case("labels:") => &t[7..],
+                _ => t,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     for part in text.split([',', '\n', ';', '|', '·']) {
         let w = part
             .trim()
@@ -146,6 +178,20 @@ mod tests {
         assert_eq!(parse("PAY-412, bug"), vec!["PAY-412", "bug"]);
         assert!(parse("this is a whole sentence that explains nothing useful").is_empty());
         assert_eq!(parse("label, none, auth"), vec!["auth"]);
+        assert_eq!(
+            parse("Title: Fix the refund webhook\nLabels: refunds, webhooks"),
+            vec!["refunds", "webhooks"]
+        );
+    }
+
+    #[test]
+    fn finds_the_title() {
+        assert_eq!(
+            parse_title("Title: \"Fix the refund webhook.\"\nLabels: a"),
+            Some("Fix the refund webhook".into())
+        );
+        assert_eq!(parse_title("refunds, webhooks"), None);
+        assert!(parse_title(&format!("Title: {}", "x".repeat(100))).unwrap().ends_with('…'));
     }
 
     #[test]
@@ -179,6 +225,7 @@ mod tests {
             enabled: Some(true),
             harness: Some("codex".into()),
             model: None,
+            ..Default::default()
         };
         assert_eq!(
             pick(&cfg, &installed, false),

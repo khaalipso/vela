@@ -152,7 +152,8 @@ pub const VELA_PROMPT: &str = include_str!("../prompts/vela.md");
 
 /// Said again after the request: the last thing the agent reads before it starts.
 const CLOSING: &str = "Answer in the language of the request above, headings included. Work \
-     without writing between tool calls, then give one complete answer at the end.";
+     without writing between tool calls, then give one answer at the end: the outcome in one \
+     or two sentences, then short `##` sections of bullets. Length follows the question.";
 
 /// The built in brief of a role (`prompts/<role>.md`). `[agents.prompts]` replaces it; the
 /// common rules stay.
@@ -207,13 +208,18 @@ pub fn compose_prompt(
     role: AgentRole,
     prompt: &str,
     custom: Option<&str>,
+    vela: Option<&str>,
     context: &str,
 ) -> String {
+    let vela = vela
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .unwrap_or_else(|| VELA_PROMPT.trim());
     let brief = custom
         .map(str::trim)
         .filter(|c| !c.is_empty())
         .unwrap_or_else(|| role_brief(role));
-    let mut out = format!("{}\n\n{}", VELA_PROMPT.trim(), brief);
+    let mut out = format!("{vela}\n\n{brief}");
     if crate::notes::reports_notes(role) {
         out.push_str("\n\n");
         out.push_str(crate::notes::FORMAT);
@@ -503,6 +509,7 @@ impl AgentManager {
                     activity: "Starting".to_string(),
                     last_event: Some(registry::now()),
                     labels: crate::labels::known(space.ticket.as_deref(), &req.prompt),
+                    title: None,
                 },
                 bases: Vec::new(),
                 read_only,
@@ -545,6 +552,7 @@ impl AgentManager {
                 req.role,
                 &req.prompt,
                 cfg.prompts.get(req.role.as_str()).map(String::as_str),
+                cfg.vela.prompt.as_deref(),
                 &space_context(space, read_only, &wts),
             ),
             cwd,
@@ -641,7 +649,8 @@ impl AgentManager {
                 }
             }
             let labels = crate::labels::join(&known, crate::labels::parse(&text));
-            let event = AgentEvent::Labels { labels };
+            let title = crate::labels::parse_title(&text);
+            let event = AgentEvent::Labels { labels, title };
             let ts = registry::now();
             if registry::update(&vela, &space_id, &agent_id, |e| {
                 registry::apply_event(e, &event, &ts)

@@ -209,6 +209,8 @@ pub fn run() {
             c::comment_pull_request,
             c::agent_prompts,
             c::set_agent_prompt,
+            c::vela_prompt,
+            c::set_vela_prompt,
             c::term_open,
             c::term_write,
             c::term_resize,

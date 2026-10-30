@@ -212,7 +212,12 @@ pub fn apply_event(entry: &mut Entry, ev: &AgentEvent, ts: &str) {
         }
         AgentEvent::FileChanged { path } => a.activity = one_line(&format!("Edited {path}"), 120),
         AgentEvent::Prompt { .. } => {}
-        AgentEvent::Labels { labels } => a.labels = labels.clone(),
+        AgentEvent::Labels { labels, title } => {
+            a.labels = labels.clone();
+            if title.is_some() {
+                a.title = title.clone();
+            }
+        }
         AgentEvent::Question {
             text,
             options,

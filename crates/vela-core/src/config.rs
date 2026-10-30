@@ -143,6 +143,8 @@ pub struct VelaModelConfig {
     pub harness: Option<String>,
     /// Left out: the `low` tier model of the harness.
     pub model: Option<String>,
+    /// Replaces the built in Vela prompt, the rules every role gets before its brief.
+    pub prompt: Option<String>,
 }
 
 /// `[agents]`: tiers and roles. See `docs/HARNESS.md`.
@@ -255,7 +257,7 @@ fn is_known(path: &str) -> bool {
             | ["agents", "roles", _, "tier" | "harness"]
             | ["agents", "transport", _]
             | ["agents", "prompts", _]
-            | ["agents", "vela", "enabled" | "harness" | "model"]
+            | ["agents", "vela", "enabled" | "harness" | "model" | "prompt"]
             | ["spaces", "branch"]
     )
 }

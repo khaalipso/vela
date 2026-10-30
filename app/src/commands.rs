@@ -1781,6 +1781,37 @@ pub fn agent_prompts(agents: &AgentManager) -> Vec<RolePrompt> {
         .collect()
 }
 
+/// The Vela prompt, the rules every role gets before its brief.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VelaPrompt {
+    /// The built in prompt.
+    pub default: String,
+    /// The user's prompt from the global config, None when the default is used.
+    pub custom: Option<String>,
+}
+
+pub fn vela_prompt(agents: &AgentManager) -> VelaPrompt {
+    let cfg = config::load_global(agents.config_dir()).config.agents;
+    VelaPrompt {
+        default: vela_agents::manager::VELA_PROMPT.trim().to_string(),
+        custom: cfg.vela.prompt.filter(|p| !p.trim().is_empty()),
+    }
+}
+
+/// Set the Vela prompt; None or blank goes back to the built in one.
+pub fn set_vela_prompt(agents: &AgentManager, text: Option<&str>) -> AppResult<()> {
+    let dir = agents
+        .config_dir()
+        .ok_or_else(|| AppError::invalid("no config directory (set XDG_CONFIG_HOME or HOME)"))?;
+    let value = text
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && *t != vela_agents::manager::VELA_PROMPT.trim())
+        .map(|t| toml::Value::String(t.to_string()));
+    config::set_global_value(dir, &["agents", "vela", "prompt"], value)?;
+    Ok(())
+}
+
 /// Set the brief of a role; None or blank goes back to the built in one.
 pub fn set_agent_prompt(agents: &AgentManager, role: &str, text: Option<&str>) -> AppResult<()> {
     let role =

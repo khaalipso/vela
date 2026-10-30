@@ -12,7 +12,7 @@ use vela_core::{Error, Result};
 
 use crate::driver::{AgentDriver, LineParser, RunHandle, RunSpec, launch, locate};
 use crate::event::AgentEvent;
-use crate::util::{rel_path, shorten, steps_from_text};
+use crate::util::{plain_command, rel_path, shorten, steps_from_text};
 
 pub struct ClaudeDriver {
     bin: Option<PathBuf>,
@@ -285,10 +285,7 @@ impl ClaudeParser {
                 }
             }
             out.push(AgentEvent::Question {
-                text: format!(
-                    "Claude Code needs your permission to use {}",
-                    what.join("; ")
-                ),
+                text: shorten(&what.join("; "), 200),
                 options: vec!["Allow".to_string(), "Deny".to_string()],
                 tools,
             });
@@ -325,6 +322,8 @@ fn tool_summary(cwd: &Path, input: &Value) -> String {
         if let Some(s) = input[k].as_str() {
             let s = if k == "file_path" || k == "path" {
                 rel_path(cwd, s)
+            } else if k == "command" {
+                plain_command(s)
             } else {
                 s.to_string()
             };

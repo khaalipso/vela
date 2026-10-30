@@ -1006,6 +1006,19 @@ pub async fn agent_prompts(
 }
 
 #[tauri::command]
+pub fn vela_prompt(agents: State<'_, Arc<AgentManager>>) -> commands::VelaPrompt {
+    commands::vela_prompt(&agents)
+}
+
+#[tauri::command]
+pub fn set_vela_prompt(
+    agents: State<'_, Arc<AgentManager>>,
+    text: Option<String>,
+) -> AppResult<()> {
+    commands::set_vela_prompt(&agents, text.as_deref())
+}
+
+#[tauri::command]
 pub async fn set_agent_prompt(
     agents: State<'_, Arc<AgentManager>>,
     role: String,

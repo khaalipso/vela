@@ -142,7 +142,7 @@
           >{w.text}</span
         ></span
       >
-      <span class="sum">{a.prompt || a.summary}</span>
+      <span class="sum" class:ttl={!!a.title}>{a.title || a.prompt || a.summary}</span>
       {#if isRunning(a) && a.activity}<span class="act">{a.activity}</span>{/if}
       {#if a.labels?.length}
         <span class="tags">{#each a.labels as l (l)}<span class="lt">{l}</span>{/each}</span>
@@ -299,6 +299,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .sum.ttl {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--fg);
   }
   .more {
     align-self: center;

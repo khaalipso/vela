@@ -73,6 +73,8 @@ pub enum AgentEvent {
     /// Words to find the conversation again, from the Vela model. Never in the log.
     Labels {
         labels: Vec<String>,
+        #[serde(default)]
+        title: Option<String>,
     },
 }
 

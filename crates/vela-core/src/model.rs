@@ -321,6 +321,9 @@ pub struct Agent {
     /// One or two words to find the conversation again ("refunds", "PAY-412").
     #[serde(default)]
     pub labels: Vec<String>,
+    /// A short title of the conversation, from the Vela model.
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 /// One tool or service of the space stack.

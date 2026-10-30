@@ -219,6 +219,20 @@ export function mockLabels(prompt: string): string[] {
   return [...new Set(words.filter((w) => !skip.has(w)))].sort((a, b) => b.length - a.length).slice(0, 2);
 }
 
+/** The Vela prompt: the rules every role gets before its brief. */
+export interface VelaPrompt {
+  /** The built in prompt. */
+  default: string;
+  /** Yours, from the global config; null when the default is used. */
+  custom: string | null;
+}
+
+/** What the mock Vela model titles a request: its first words. */
+export function mockTitle(prompt: string): string {
+  const words = prompt.trim().split(/\s+/).slice(0, 6).join(" ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 /** The brief a role gets before each request. */
 export interface RolePrompt {
   role: AgentRole;
@@ -487,6 +501,8 @@ export interface Backend {
   agentPrompts(): Promise<RolePrompt[]>;
   /** Set the brief of a role; null or blank goes back to the built in one. */
   setAgentPrompt(role: AgentRole, text: string | null): Promise<void>;
+  velaPrompt(): Promise<VelaPrompt>;
+  setVelaPrompt(text: string | null): Promise<void>;
 
   /** The PR of the space branch in each repo, with reviews, comments, threads and checks. */
   pullRequests(spaceId: string): Promise<RepoPr[]>;
@@ -1397,6 +1413,7 @@ export class MockBackend implements Backend {
       agent.activity = "Read: README.md";
       agent.lastEvent = new Date().toISOString();
       agent.labels = [...(agent.labels ?? []), ...mockLabels(prompt)].slice(0, 3);
+      agent.title = mockTitle(prompt);
       this.emit(spaceId);
     });
     this.later(2200, () => {
@@ -1538,6 +1555,14 @@ export class MockBackend implements Backend {
     const t = text?.trim();
     if (t) this.prompts[role] = t;
     else delete this.prompts[role];
+  }
+
+  private velaCustom: string | null = null;
+  async velaPrompt(): Promise<VelaPrompt> {
+    return { default: "You are a coding agent working inside Vela.", custom: this.velaCustom };
+  }
+  async setVelaPrompt(text: string | null): Promise<void> {
+    this.velaCustom = text?.trim() || null;
   }
 
   private prs = new Map<string, RepoPr[]>();
@@ -2694,6 +2719,12 @@ export class TauriBackend implements Backend {
   }
   agentPrompts() {
     return call<RolePrompt[]>("agent_prompts");
+  }
+  velaPrompt() {
+    return call<VelaPrompt>("vela_prompt");
+  }
+  async setVelaPrompt(text: string | null) {
+    await call("set_vela_prompt", { text });
   }
   async setAgentPrompt(role: AgentRole, text: string | null) {
     await call("set_agent_prompt", { role, text });

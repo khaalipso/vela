@@ -29,7 +29,7 @@ use vela_core::{Error, Result};
 
 use crate::driver::{AgentDriver, Ctl, Replier, RunHandle, RunSpec, kill_group, locate};
 use crate::event::AgentEvent;
-use crate::util::{rel_path, shorten};
+use crate::util::{is_read_only_command, plain_command, rel_path, shorten};
 
 const PROTOCOL_VERSION: u64 = 1;
 const ID_INIT: u64 = 1;
@@ -605,7 +605,9 @@ impl Session {
                 .collect();
             names.sort();
             // An agent that writes works in its own worktree: it may change it without asking.
-            if !self.spec.read_only
+            // Plain reads (cat, sed -n, git diff...) need no answer from the person either.
+            let command = tc["rawInput"]["command"].as_str();
+            if (!self.spec.read_only || command.is_some_and(is_read_only_command))
                 && let Some(opt) = pick_option(&options, "yes")
             {
                 self.shared.send(&json!({
@@ -618,7 +620,7 @@ impl Session {
                 *g = Some(Pending { id, options });
             }
             self.emit(AgentEvent::Question {
-                text: format!("Allow {}?", shorten(&what, 160)),
+                text: shorten(&plain_command(&what), 200),
                 options: names.into_iter().map(|(_, n)| n).collect(),
                 tools: Vec::new(),
             });
