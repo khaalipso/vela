@@ -36,9 +36,8 @@
   const agentId = $derived(agent.id);
   const running = $derived(isRunning(agent));
   const waiting = $derived(agent.status === "waiting");
-  /** The group of work in progress: open while the agent works, so its reasoning reads live. */
-  const liveGroup = $derived(running && items.length && items[items.length - 1].kind === "tools" ? groupNo[items.length - 1] : -1);
-  const isOpen = (g: number) => openTools[g] ?? g === liveGroup;
+  /** Work and reasoning stay folded until you open them. */
+  const isOpen = (g: number) => !!openTools[g];
   const q = $derived(waiting && app.sd.question?.agentId === agent.id ? app.sd.question : null);
   const canSend = $derived(running || waiting || !!agent.session);
   const queued = $derived(app.queuedFor(agent.id));
@@ -62,7 +61,7 @@
     if (!nudged) app.queueFor(agent.id, NUDGE);
     await app.cancelAgent(agent.id);
   }
-  /** Sections the reader opened or closed, by message and section; the rest follow their length. */
+  /** Sections the reader opened or closed, by message and section; the last answer starts open, older ones closed. */
   let sectionOpen = $state<Record<string, boolean>>({});
   const answers = $derived(items.map((it) => (it.kind === "agent" ? splitAnswer(it.text) : null)));
   /** The last answer is the one to read first: the older ones start closed. */
@@ -236,7 +235,7 @@
             {#if ans.lead}<div class="lead md">{@html md(ans.lead)}</div>{/if}
             {#each ans.sections as s, j (j)}
               {@const k = `${i}:${j}`}
-              {@const open = sectionOpen[k] ?? (!s.long && i === lastAnswer)}
+              {@const open = sectionOpen[k] ?? (i === lastAnswer)}
               <section class="sec" class:open>
                 <button class="sh" aria-expanded={open} onclick={() => (sectionOpen = { ...sectionOpen, [k]: !open })}>
                   <span class="chev" class:open>▸</span>
@@ -251,8 +250,9 @@
           <div class="next" role="group" aria-label="Next">
             <span class="nl">Next</span>
             {#each next as st (st.label)}
-              <button class="btn" style:--rc={ROLE_COLORS[st.role]} title="Open the composer for the {roleLabel(st.role)} with this answer in it; you can edit before sending" onclick={() => app.handoff(agent, st, it.text)}>
-                <span class="dot" style:--c={ROLE_COLORS[st.role]}></span>{st.label}<small>{roleLabel(st.role)}</small>
+              <button class="btn" style:--rc={ROLE_COLORS[st.role]} title="Opens the composer for the {roleLabel(st.role)} with this answer in it; you edit before sending" onclick={() => app.handoff(agent, st, it.text)}>
+                <span class="dot" style:--c={ROLE_COLORS[st.role]}></span>
+                <span class="nb"><b>{st.label} <small>· {roleLabel(st.role)}</small></b><span>{st.hint}</span></span>
               </button>
             {/each}
           </div>
@@ -500,6 +500,22 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
+  }
+  .nb {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    text-align: left;
+    line-height: 1.3;
+  }
+  .nb > span {
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+  .next .btn {
+    height: auto;
+    padding-top: 6px;
+    padding-bottom: 6px;
   }
   .next .btn small {
     color: var(--faint);

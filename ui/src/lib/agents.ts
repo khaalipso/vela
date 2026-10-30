@@ -142,25 +142,27 @@ export interface NextStep {
   role: AgentRole;
   label: string;
   ask: string;
+  /** One sentence for the button: what the next agent will do with the answer. */
+  hint: string;
 }
 
 const NEXT: Partial<Record<AgentRole, NextStep[]>> = {
   planner: [
-    { role: "developer", label: "Implement", ask: "Implement this plan. Follow it step by step; say where you had to depart from it." },
-    { role: "tester", label: "Write the tests", ask: "Write the tests this plan calls for, before it is implemented." },
+    { role: "developer", label: "Implement", hint: "The developer carries out this plan in its own worktree.", ask: "Implement this plan. Follow it step by step; say where you had to depart from it." },
+    { role: "tester", label: "Write the tests", hint: "The tester writes the tests the plan calls for, before the code exists.", ask: "Write the tests this plan calls for, before it is implemented." },
   ],
   product: [
-    { role: "planner", label: "Plan it", ask: "Turn this into an implementation plan for this code base." },
-    { role: "developer", label: "Implement", ask: "Implement this." },
+    { role: "planner", label: "Plan it", hint: "The planner turns this into steps for this code base, without changing files.", ask: "Turn this into an implementation plan for this code base." },
+    { role: "developer", label: "Implement", hint: "The developer builds this in its own worktree.", ask: "Implement this." },
   ],
   developer: [
-    { role: "reviewer", label: "Review", ask: "Review the changes described below, and the uncommitted changes of the space." },
-    { role: "tester", label: "Test it", ask: "Write or complete the tests for the changes described below." },
+    { role: "reviewer", label: "Review", hint: "A read only reviewer checks these changes and reports findings.", ask: "Review the changes described below, and the uncommitted changes of the space." },
+    { role: "tester", label: "Test it", hint: "The tester writes or completes the tests for these changes.", ask: "Write or complete the tests for the changes described below." },
   ],
-  tester: [{ role: "reviewer", label: "Review", ask: "Review these tests and the changes they cover." }],
-  debugger: [{ role: "developer", label: "Fix it", ask: "Fix the bug as diagnosed below. Add a test that fails without the fix." }],
-  reviewer: [{ role: "developer", label: "Fix these", ask: "Fix the findings below, most severe first. Change only what they ask for." }],
-  security: [{ role: "developer", label: "Fix these", ask: "Fix the findings below, most severe first. Change only what they ask for." }],
+  tester: [{ role: "reviewer", label: "Review", hint: "A read only reviewer checks these tests and what they cover.", ask: "Review these tests and the changes they cover." }],
+  debugger: [{ role: "developer", label: "Fix it", hint: "The developer fixes the diagnosed bug and adds a test for it.", ask: "Fix the bug as diagnosed below. Add a test that fails without the fix." }],
+  reviewer: [{ role: "developer", label: "Fix these", hint: "The developer fixes the findings, most severe first, and nothing else.", ask: "Fix the findings below, most severe first. Change only what they ask for." }],
+  security: [{ role: "developer", label: "Fix these", hint: "The developer fixes the findings, most severe first, and nothing else.", ask: "Fix the findings below, most severe first. Change only what they ask for." }],
 };
 
 /** The agents that can take over after `role`. */
