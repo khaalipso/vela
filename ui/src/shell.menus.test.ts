@@ -152,7 +152,7 @@ describe("keyboard", () => {
     await k("ArrowDown");
     expect(active()).toBe("Open pinned");
     await k("ArrowDown");
-    expect(active()).toBe("Stage");
+    expect(active()).toBe("Open in split view");
     await k("ArrowUp");
     expect(active()).toBe("Open pinned");
     await k("ArrowUp");
@@ -207,6 +207,8 @@ describe("keyboard", () => {
     await settle();
     press("ContextMenu", {}, $(".files .tree")!);
     await settle();
+    await k("c"); // Cut
+    await k("c"); // Copy
     await k("c"); // Copy path
     expect(active()).toBe("Copy path");
     await k("Enter");
@@ -378,7 +380,7 @@ describe("tabs and editor", () => {
     app.openFile(app.active, "api/lib/stripe.ts", true);
     app.openFile(app.active, "api/src/billing/webhook.ts", true);
     await settle();
-    const tab = $$(".tab").find((t) => t.querySelector(".rp")?.textContent === "api" && t.querySelector(".mono")?.textContent === "lib/stripe.ts")!;
+    const tab = $$(".tab").find((t) => t.getAttribute("title") === "api/lib/stripe.ts")!;
     rightClick(tab);
     await settle();
     expect(items()).toEqual(["Close", "Close others", "Close to the right", "Close all", "Unpin", "Open in split view", "Copy path", "Reveal in tree"]);

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { colorOfRepo } from "../lib/colors";
+  import type { TNode } from "../lib/filetree";
   import { onMount, tick, untrack } from "svelte";
   import { app } from "../lib/app.svelte";
   import { files } from "../lib/files.svelte";
@@ -28,7 +29,7 @@
   } from "../lib/filetree";
   import { menu, openAtEvent } from "../lib/contextmenu.svelte";
   import { treeMenu } from "../lib/menus";
-  import { basename, ops } from "../lib/ops.svelte";
+  import { basename, dirname, ops } from "../lib/ops.svelte";
   import Kbd from "./Kbd.svelte";
 
   let root: HTMLElement | undefined = $state();
@@ -166,6 +167,36 @@
     const r = rows[cursorIndex];
     return r && r.node.id !== EDIT_ID ? r.node : null;
   }
+  // Drag and drop: a file or folder onto a folder (or the repo) of the same repo moves it there.
+  let dragged = $state<TNode | null>(null);
+  let dropId = $state("");
+  const targetDir = (n: TNode) => (n.kind === "repo" ? "" : n.kind === "dir" ? n.path : dirname(n.path));
+  function dragStart(e: DragEvent, n: TNode) {
+    dragged = n;
+    e.dataTransfer?.setData("text/plain", n.path);
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = "copyMove";
+  }
+  function dragOver(e: DragEvent, n: TNode) {
+    if (!dragged || dragged.repo !== n.repo || n.id === EDIT_ID) return;
+    const dir = targetDir(n);
+    if (dir === dirname(dragged.path) || (dragged.kind === "dir" && (dir === dragged.path || dir.startsWith(`${dragged.path}/`)))) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = e.ctrlKey ? "copy" : "move";
+    dropId = n.kind === "file" ? "" : n.id;
+  }
+  function drop(e: DragEvent, n: TNode) {
+    const d = dragged;
+    dragged = null;
+    dropId = "";
+    if (!d || d.repo !== n.repo) return;
+    e.preventDefault();
+    const dir = targetDir(n);
+    if (e.ctrlKey) {
+      ops.copyEntry(d.repo, d.path, d.kind === "dir");
+      void ops.paste(n.repo, dir);
+    } else void ops.moveTo(d.repo, d.path, d.kind === "dir", dir);
+  }
+
   function renameCursor() {
     const n = cursorNode();
     if (n && n.kind !== "repo") ops.startRename(n.repo, n.path, n.kind === "dir");
@@ -243,6 +274,16 @@
   };
 
   function onTreeKey(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && "xcv".includes(e.key.toLowerCase()) && e.key.length === 1) {
+      const n = cursorNode();
+      if (!n) return;
+      const x = e.key.toLowerCase();
+      e.preventDefault();
+      e.stopPropagation();
+      if (x === "v") void ops.paste(n.repo, n.kind === "repo" ? "" : n.kind === "dir" ? n.path : dirname(n.path));
+      else if (n.kind !== "repo") (x === "x" ? ops.cutEntry : ops.copyEntry)(n.repo, n.path, n.kind === "dir");
+      return;
+    }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const k = e.key;
     const cmd = KEYS[k];
@@ -374,6 +415,13 @@
               style:height="{ROW_HEIGHT}px"
               style:padding-left="{8 + r.depth * 14}px"
               style:--rc={n.kind === "repo" ? colorOfRepo(app.space, n.repo) : undefined}
+              draggable={n.kind !== "repo" && n.id !== EDIT_ID}
+              ondragstart={(e) => dragStart(e, n)}
+              ondragover={(e) => dragOver(e, n)}
+              ondragleave={() => (dropId === n.id ? (dropId = "") : null)}
+              ondrop={(e) => drop(e, n)}
+              ondragend={() => ((dragged = null), (dropId = ""))}
+              class:drop={dropId === n.id}
               onclick={() => clickRow(r)}
               ondblclick={() => dblRow(r)}
               oncontextmenu={(e) => rowMenu(e, r)}
@@ -556,6 +604,10 @@
   }
   .row:hover {
     background: var(--hover);
+  }
+  .row.drop {
+    background: color-mix(in srgb, var(--space) 24%, transparent);
+    outline: 1px dashed var(--space);
   }
   .row.cur {
     background: var(--hover);

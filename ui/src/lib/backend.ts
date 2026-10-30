@@ -555,6 +555,8 @@ export interface Backend {
   /** Create a folder. Git only lists it once it holds a file. */
   createDir(spaceId: string, repo: string, path: string): Promise<void>;
   renamePath(spaceId: string, repo: string, from: string, to: string): Promise<void>;
+  /** Copy a file or folder inside a repo; the target must not exist. */
+  copyPath(spaceId: string, repo: string, from: string, to: string): Promise<void>;
   /**
    * Delete a file or folder: system trash first. When there is no trash it fails with a
    * `no_trash` error and nothing is deleted; call again with `permanent` to remove for good.
@@ -2119,6 +2121,22 @@ export class MockBackend implements Backend {
     this.emit(spaceId);
   }
 
+  async copyPath(spaceId: string, repo: string, from: string, to: string): Promise<void> {
+    const s = this.sp(spaceId);
+    this.guard(s, repo, from);
+    this.guard(s, repo, to);
+    if (this.exists(s, repo, to) || this.isDir(s, repo, to)) throw new BackendError("invalid_input", `${to} already exists`);
+    if (to.startsWith(`${from}/`)) throw new BackendError("invalid_input", "cannot copy a folder into itself");
+    for (const old of this.filesUnder(s, repo, from)) {
+      const next = to + old.slice(from.length);
+      const src = this.file(s, repo, old);
+      s.files.push({ repo, path: next, firstLine: src.firstLine, lines: src.lines.slice(), mine: new Set() });
+      s.removed.delete(fileKey(repo, next));
+      s.fileStage.set(fileKey(repo, next), { staged: null, unstaged: "untracked" });
+    }
+    this.emit(spaceId);
+  }
+
   async renamePath(spaceId: string, repo: string, from: string, to: string): Promise<void> {
     const s = this.sp(spaceId);
     this.guard(s, repo, from);
@@ -2829,6 +2847,9 @@ export class TauriBackend implements Backend {
   }
   renamePath(spaceId: string, repo: string, from: string, to: string) {
     return call<void>("rename_path", { spaceId, repo, from, to });
+  }
+  copyPath(spaceId: string, repo: string, from: string, to: string) {
+    return call<void>("copy_path", { spaceId, repo, from, to });
   }
   deletePath(spaceId: string, repo: string, path: string, permanent = false) {
     return call<"trashed" | "deleted">("delete_path", { spaceId, repo, path, permanent });

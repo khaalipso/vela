@@ -69,6 +69,10 @@ describe("file menu", () => {
     expect(labels(m)).toEqual([
       "Open",
       "Open pinned",
+      "Open in split view",
+      "-",
+      "Cut",
+      "Copy",
       "-",
       "Unstage",
       "Discard changes…",
@@ -178,6 +182,9 @@ describe("folder and repo menus", () => {
     expect(labels(m)).toEqual([
       "New file",
       "New folder",
+      "-",
+      "Cut",
+      "Copy",
       "-",
       "Rename…",
       "Delete…",

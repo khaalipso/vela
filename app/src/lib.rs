@@ -225,6 +225,7 @@ pub fn run() {
             m::create_file,
             m::create_dir,
             m::rename_path,
+            m::copy_path,
             m::delete_path,
             m::discard_file,
             m::reveal_path,

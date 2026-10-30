@@ -129,6 +129,56 @@ pub fn rename_path(vela: &Vela, id: &str, repo: &str, from: &str, to: &str) -> A
     fs::rename(&src, &dst).map_err(io)
 }
 
+fn copy_tree(src: &Path, dst: &Path) -> AppResult<()> {
+    let meta = fs::symlink_metadata(src).map_err(io)?;
+    if meta.is_dir() {
+        fs::create_dir_all(dst).map_err(io)?;
+        for entry in fs::read_dir(src).map_err(io)? {
+            let entry = entry.map_err(io)?;
+            if entry.file_name() == ".git" {
+                continue;
+            }
+            copy_tree(&entry.path(), &dst.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else if meta.file_type().is_symlink() {
+        let target = fs::read_link(src).map_err(io)?;
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, dst).map_err(io)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = target;
+            fs::copy(src, dst).map(|_| ()).map_err(io)
+        }
+    } else {
+        fs::copy(src, dst).map(|_| ()).map_err(io)
+    }
+}
+
+/// Copy a file or folder inside the worktree. The target must not exist.
+pub fn copy_path(vela: &Vela, id: &str, repo: &str, from: &str, to: &str) -> AppResult<()> {
+    let _inv = crate::commands::Invalidate(id);
+    let space = load(vela, id)?;
+    check_name(to)?;
+    let src = resolve_path(&space, repo, from)?;
+    let dst = resolve_path(&space, repo, to)?;
+    if fs::symlink_metadata(&src).is_err() {
+        return Err(AppError::invalid(format!("{from} does not exist")));
+    }
+    if fs::symlink_metadata(&dst).is_ok() {
+        return Err(AppError::invalid(format!("{to} already exists")));
+    }
+    if dst.starts_with(&src) {
+        return Err(AppError::invalid("cannot copy a folder into itself"));
+    }
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent).map_err(io)?;
+    }
+    copy_tree(&src, &dst)
+}
+
 fn remove_for_good(p: &Path) -> AppResult<()> {
     let meta = fs::symlink_metadata(p).map_err(io)?;
     if meta.is_dir() {

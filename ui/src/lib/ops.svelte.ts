@@ -361,6 +361,70 @@ class Ops {
     await this.reload();
   }
 
+  // -- copy, cut, paste, drag ------------------------------------------------------
+
+  /** What Copy or Cut took in the tree, waiting for a Paste. */
+  clip = $state<{ mode: "copy" | "cut"; repo: string; path: string; isDir: boolean } | null>(null);
+
+  copyEntry(repo: string, path: string, isDir: boolean) {
+    this.clip = { mode: "copy", repo, path, isDir };
+    app.toast(`Copied ${basename(path)}: paste it in a folder`);
+  }
+
+  cutEntry(repo: string, path: string, isDir: boolean) {
+    this.clip = { mode: "cut", repo, path, isDir };
+    app.toast(`Cut ${basename(path)}: paste it in a folder`);
+  }
+
+  /** Paste the copied or cut entry into `dir` of `repo`. */
+  async paste(repo: string, dir: string) {
+    const c = this.clip;
+    if (!c) return;
+    if (c.repo !== repo) return app.toast("Files move and copy inside one repo only");
+    if (c.mode === "cut") {
+      if (await this.moveTo(c.repo, c.path, c.isDir, dir)) this.clip = null;
+      return;
+    }
+    const sid = this.sid;
+    const name = basename(c.path);
+    const dot = name.lastIndexOf(".");
+    const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+    for (let n = 0; n < 50; n++) {
+      const label = n === 0 ? name : `${stem} copy${n > 1 ? ` ${n}` : ""}${ext}`;
+      const to = join(dir, label);
+      if (to === c.path) continue;
+      try {
+        await app.backend.copyPath(sid, repo, c.path, to);
+      } catch (e) {
+        if (/already exists/.test(msg(e))) continue;
+        return app.toast(msg(e));
+      }
+      await this.reload();
+      files.expand(sid, revealIds(buildTree(files.prepare(sid)?.repos ?? []), repo, to));
+      files.cursor = c.isDir ? dirId(repo, to) : fileId(repo, to);
+      return;
+    }
+  }
+
+  /** Move an entry into another folder (drag and drop, or paste after Cut). True when it moved. */
+  async moveTo(repo: string, path: string, isDir: boolean, dir: string): Promise<boolean> {
+    const to = join(dir, basename(path));
+    if (to === path) return false;
+    if (isDir && (dir === path || dir.startsWith(`${path}/`))) {
+      app.toast("A folder cannot go into itself");
+      return false;
+    }
+    try {
+      await app.backend.renamePath(this.sid, repo, path, to);
+    } catch (e) {
+      app.toast(msg(e));
+      return false;
+    }
+    this.afterRename(repo, path, to, isDir);
+    await this.reload();
+    return true;
+  }
+
   private afterRename(repo: string, from: string, to: string, isDir: boolean) {
     const a = fileKey(repo, from);
     const b = fileKey(repo, to);

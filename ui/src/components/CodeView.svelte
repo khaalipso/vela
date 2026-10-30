@@ -6,6 +6,7 @@
   const markdownView = () => import("./MarkdownView.svelte");
   import { EditorView } from "@codemirror/view";
   import { onDestroy, onMount, tick } from "svelte";
+  import { oldestToDrop, tabLabels } from "../lib/tabs";
   import { app } from "../lib/app.svelte";
   import type { FileContent } from "../lib/backend";
   import { menu, openAtEvent, isKeyboardEvent } from "../lib/contextmenu.svelte";
@@ -51,6 +52,30 @@
   const rev = $derived(app.contentRev[app.space.id] ?? 0);
   /** A Markdown file shows rendered unless V asked for its source. */
   const preview = $derived(!!current && isMarkdown(current) && !app.mdSource[`${app.space.id}:${current}`]);
+  const labels = $derived(tabLabels(tabs.map((t) => t.key)));
+  // The tabs wrap onto a second line; if two lines are not enough, the oldest tab goes.
+  let tabsEl: HTMLDivElement | undefined = $state();
+  let tabsW = $state(0);
+  $effect(() => {
+    if (!tabsEl) return;
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => (tabsW = tabsEl?.clientWidth ?? 0));
+    ro.observe(tabsEl);
+    return () => ro.disconnect();
+  });
+  $effect(() => {
+    void tabsW;
+    void labels;
+    const list = tabs;
+    const cur = current;
+    void tick().then(() => {
+      if (!tabsEl || list.length < 2 || list !== app.cui.tabs) return;
+      const one = tabsEl.querySelector<HTMLElement>(".tab")?.offsetHeight ?? 30;
+      if (tabsEl.scrollHeight <= one * 2 + 4 + 16 + 2) return;
+      const old = oldestToDrop(list, cur);
+      if (old) app.closeTab(old);
+    });
+  });
   const tint = (key: string) => colorOfRepo(app.space, key.slice(0, key.indexOf("/")));
 
   function split(key: string): [string, string] {
@@ -322,11 +347,11 @@
     </div>
   </div>
 {:else}
-<div class="tabs" role="tablist">
+<div class="tabs" role="tablist" bind:this={tabsEl}>
   {#each tabs as t (t.key)}
     {@const k = t.key}
-    <div class="tab" class:preview={!t.pinned} style:--rc={tint(k)} role="tab" aria-selected={k === current} tabindex="0" onclick={() => (app.cui.file = k)} ondblclick={() => app.openFile(app.active, k, true)} oncontextmenu={(e) => openAtEvent(e, tabMenu(k), "Tab")} onkeydown={(e) => e.key === "Enter" && (app.cui.file = k)}>
-      <span class="rdot"></span><span class="rp">{k.slice(0, k.indexOf("/"))}</span><span class="mono">{k.slice(k.indexOf("/") + 1)}</span>
+    <div class="tab" class:preview={!t.pinned} style:--rc={tint(k)} role="tab" title={k} aria-selected={k === current} tabindex="0" onclick={() => (app.cui.file = k)} ondblclick={() => app.openFile(app.active, k, true)} oncontextmenu={(e) => openAtEvent(e, tabMenu(k), "Tab")} onkeydown={(e) => e.key === "Enter" && (app.cui.file = k)}>
+      <span class="mono">{labels.get(k) ?? k}</span>
       <button class="close" aria-label="Close tab" onclick={(e) => { e.stopPropagation(); app.closeTab(k); }}>×</button>
     </div>
   {/each}
@@ -463,7 +488,12 @@
     top: 0;
     background: var(--panel);
     z-index: 2;
-    overflow-x: auto;
+    flex-wrap: wrap;
+  }
+  .tab .mono {
+    max-width: 28ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .tab {
     display: flex;
@@ -485,13 +515,13 @@
     padding: 0 2px;
   }
   .tab {
-    background: color-mix(in srgb, var(--rc) 7%, transparent);
+    background: color-mix(in srgb, var(--rc) 16%, transparent);
   }
   .tab:hover {
-    background: color-mix(in srgb, var(--rc) 14%, var(--hover));
+    background: color-mix(in srgb, var(--rc) 26%, var(--hover));
   }
   .tab[aria-selected="true"] {
-    background: color-mix(in srgb, var(--rc) 20%, var(--hover));
+    background: color-mix(in srgb, var(--rc) 36%, var(--hover));
     color: var(--fg);
     box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--rc) 75%, transparent);
   }

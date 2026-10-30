@@ -78,3 +78,29 @@ export function saveRecent(spaceId: string, list: string[]) {
     /* private window or blocked storage: recents just are not kept */
   }
 }
+
+/**
+ * The short label of each tab: the file name alone, with its parent folder in front only when
+ * two open files share the name (and the next folder up while they still do).
+ */
+export function tabLabels(keys: string[]): Map<string, string> {
+  const parts = (k: string) => k.slice(k.indexOf("/") + 1).split("/");
+  const depth = new Map(keys.map((k) => [k, 1]));
+  const label = (k: string) => parts(k).slice(-depth.get(k)!).join("/");
+  for (let guard = 0; guard < 8; guard++) {
+    const by = new Map<string, string[]>();
+    for (const k of keys) by.set(label(k), [...(by.get(label(k)) ?? []), k]);
+    let grew = false;
+    for (const same of by.values()) {
+      if (same.length < 2) continue;
+      for (const k of same) if (depth.get(k)! < parts(k).length) (depth.set(k, depth.get(k)! + 1), (grew = true));
+    }
+    if (!grew) break;
+  }
+  return new Map(keys.map((k) => [k, label(k)]));
+}
+
+/** The tab to give up when the tabs do not fit on two lines: the oldest one that is not shown. */
+export function oldestToDrop(tabs: Tab[], current: string): string | null {
+  return tabs.find((t) => t.key !== current)?.key ?? null;
+}

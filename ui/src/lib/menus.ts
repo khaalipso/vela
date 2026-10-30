@@ -45,6 +45,11 @@ function fileMenu(e: FileEntry): MenuEntry[] {
   return tidy([
     it("Open", { shortcut: "Enter", icon: "open", run: () => ops.open(repo, path, false) }),
     it("Open pinned", { icon: "pin", run: () => ops.open(repo, path, true) }),
+    it("Open in split view", { run: () => { ops.open(repo, path, true); app.toggleSplit(fileKey(repo, path)); } }),
+    SEP,
+    it("Cut", { shortcut: "Ctrl X", run: () => ops.cutEntry(repo, path, false) }),
+    it("Copy", { shortcut: "Ctrl C", run: () => ops.copyEntry(repo, path, false) }),
+    ops.clip ? it("Paste next to it", { shortcut: "Ctrl V", run: () => void ops.paste(repo, dir) }) : null,
     SEP,
     fullyStaged
       ? null
@@ -85,6 +90,10 @@ function folderMenu(n: TNode): MenuEntry[] {
     it("New file", { icon: "newfile", run: () => ops.startNew("file", repo, path) }),
     it("New folder", { icon: "newfolder", run: () => ops.startNew("dir", repo, path) }),
     SEP,
+    it("Cut", { shortcut: "Ctrl X", run: () => ops.cutEntry(repo, path, true) }),
+    it("Copy", { shortcut: "Ctrl C", run: () => ops.copyEntry(repo, path, true) }),
+    ops.clip ? it("Paste here", { shortcut: "Ctrl V", run: () => void ops.paste(repo, path) }) : null,
+    SEP,
     it("Rename…", { shortcut: "F2", icon: "rename", run: () => ops.startRename(repo, path, true) }),
     it("Delete…", { shortcut: "Delete", icon: "trash", danger: true, run: () => void ops.askDelete(repo, path, true) }),
     SEP,
@@ -102,6 +111,8 @@ function folderMenu(n: TNode): MenuEntry[] {
 
 function repoNodeMenu(repo: string): MenuEntry[] {
   return tidy([
+    ops.clip ? it("Paste at the root", { shortcut: "Ctrl V", run: () => void ops.paste(repo, "") }) : null,
+    ops.clip ? SEP : null,
     it("Stage all", {
       icon: "stage",
       disabled: ops.entriesIn(repo).some((e) => e.unstaged) ? false : "Nothing to stage in this repo",

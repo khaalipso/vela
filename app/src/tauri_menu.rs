@@ -62,6 +62,21 @@ pub async fn create_dir(
 }
 
 #[tauri::command]
+pub async fn copy_path(
+    app: AppHandle,
+    vela: State<'_, Vela>,
+    space_id: String,
+    repo: String,
+    from: String,
+    to: String,
+) -> AppResult<()> {
+    let id = space_id.clone();
+    blocking(&vela, move |v| fileops::copy_path(v, &id, &repo, &from, &to)).await?;
+    notify(&app, &space_id, ChangeKind::State);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn rename_path(
     app: AppHandle,
     vela: State<'_, Vela>,
