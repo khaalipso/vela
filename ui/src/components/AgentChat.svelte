@@ -297,8 +297,18 @@
     if (stick) bottom();
   }
 
+  // Follow the end of the log, but never past the start of the latest answer: a long reply
+  // stays readable from its first line instead of scrolling its top out of view.
   function bottom() {
-    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+    if (!scroller) return;
+    const end = scroller.scrollHeight - scroller.clientHeight;
+    const card = scroller.querySelector<HTMLElement>(".agent-msg:not(.old)");
+    if (!card) {
+      scroller.scrollTop = end;
+      return;
+    }
+    const top = card.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 8;
+    scroller.scrollTop = Math.max(0, Math.min(end, top));
   }
 
   function onScroll() {
