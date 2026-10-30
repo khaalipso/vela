@@ -142,27 +142,25 @@ export interface NextStep {
   role: AgentRole;
   label: string;
   ask: string;
-  /** One sentence for the button: what the next agent will do with the answer. */
-  hint: string;
 }
 
 const NEXT: Partial<Record<AgentRole, NextStep[]>> = {
   planner: [
-    { role: "developer", label: "Implement", hint: "The developer carries out this plan in its own worktree.", ask: "Implement this plan. Follow it step by step; say where you had to depart from it." },
-    { role: "tester", label: "Write the tests", hint: "The tester writes the tests the plan calls for, before the code exists.", ask: "Write the tests this plan calls for, before it is implemented." },
+    { role: "developer", label: "Implement", ask: "Implement this plan. Follow it step by step; say where you had to depart from it." },
+    { role: "tester", label: "Write the tests", ask: "Write the tests this plan calls for, before it is implemented." },
   ],
   product: [
-    { role: "planner", label: "Plan it", hint: "The planner turns this into steps for this code base, without changing files.", ask: "Turn this into an implementation plan for this code base." },
-    { role: "developer", label: "Implement", hint: "The developer builds this in its own worktree.", ask: "Implement this." },
+    { role: "planner", label: "Plan it", ask: "Turn this into an implementation plan for this code base." },
+    { role: "developer", label: "Implement", ask: "Implement this." },
   ],
   developer: [
-    { role: "reviewer", label: "Review", hint: "A read only reviewer checks these changes and reports findings.", ask: "Review the changes described below, and the uncommitted changes of the space." },
-    { role: "tester", label: "Test it", hint: "The tester writes or completes the tests for these changes.", ask: "Write or complete the tests for the changes described below." },
+    { role: "reviewer", label: "Review", ask: "Review the changes described below, and the uncommitted changes of the space." },
+    { role: "tester", label: "Test it", ask: "Write or complete the tests for the changes described below." },
   ],
-  tester: [{ role: "reviewer", label: "Review", hint: "A read only reviewer checks these tests and what they cover.", ask: "Review these tests and the changes they cover." }],
-  debugger: [{ role: "developer", label: "Fix it", hint: "The developer fixes the diagnosed bug and adds a test for it.", ask: "Fix the bug as diagnosed below. Add a test that fails without the fix." }],
-  reviewer: [{ role: "developer", label: "Fix these", hint: "The developer fixes the findings, most severe first, and nothing else.", ask: "Fix the findings below, most severe first. Change only what they ask for." }],
-  security: [{ role: "developer", label: "Fix these", hint: "The developer fixes the findings, most severe first, and nothing else.", ask: "Fix the findings below, most severe first. Change only what they ask for." }],
+  tester: [{ role: "reviewer", label: "Review", ask: "Review these tests and the changes they cover." }],
+  debugger: [{ role: "developer", label: "Fix it", ask: "Fix the bug as diagnosed below. Add a test that fails without the fix." }],
+  reviewer: [{ role: "developer", label: "Fix these", ask: "Fix the findings below, most severe first. Change only what they ask for." }],
+  security: [{ role: "developer", label: "Fix these", ask: "Fix the findings below, most severe first. Change only what they ask for." }],
 };
 
 /** The agents that can take over after `role`. */
@@ -206,11 +204,32 @@ export function chatItems(log: { ts: string; event: AgentEvent }[]): ChatItem[] 
   let lastAgent = "";
   /** The latest message, until we know whether tool calls follow it. */
   let pending: { text: string; ts: string } | null = null;
+  /** Did this run write an answer yet? */
+  let answered = false;
   const flush = () => {
     if (!pending) return;
     lastAgent = pending.text.trim();
     out.push({ kind: "agent", text: pending.text, ts: pending.ts });
     pending = null;
+    answered = true;
+  };
+  /**
+   * A run that ended with no answer: the harness wrote it, then thought or ran one more thing, so
+   * it went into the work as a remark. The last remark after the last call is the answer.
+   */
+  const rescue = () => {
+    for (let k = out.length - 1; k >= 0; k--) {
+      const it = out[k];
+      if (it.kind === "you") return;
+      if (it.kind !== "tools") continue;
+      const at = it.notes.findLastIndex((n) => n.kind === "said" && n.before >= it.calls.length);
+      if (at < 0) return;
+      const [note] = it.notes.splice(at, 1);
+      out.push({ kind: "agent", text: note.text, ts: it.ts });
+      lastAgent = note.text.trim();
+      answered = true;
+      return;
+    }
   };
   for (const { ts, event: e } of log) {
     switch (e.type) {
@@ -220,6 +239,7 @@ export function chatItems(log: { ts: string; event: AgentEvent }[]): ChatItem[] 
         // The answer to a permission goes into its card, which turns green or red.
         if (prev?.kind === "question" && isPermission(prev.options) && prev.answer === undefined) prev.answer = e.text;
         else out.push({ kind: "you", text: e.text, ts });
+        answered = false;
         break;
       }
       case "message":
@@ -262,6 +282,7 @@ export function chatItems(log: { ts: string; event: AgentEvent }[]): ChatItem[] 
         break;
       case "done": {
         flush();
+        if (!answered) rescue();
         const s = e.summary.trim();
         if (s && s !== lastAgent && !lastAgent.endsWith(s)) out.push({ kind: "agent", text: s, ts });
         out.push({ kind: "end", ok: true, text: "Finished", ts });

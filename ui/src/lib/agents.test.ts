@@ -197,3 +197,17 @@ describe("handoff", () => {
     expect(t).toContain("Answer of the planner:\n\n1. Do x");
   });
 });
+
+describe("an answer written before the last thought", () => {
+  const at = (event: AgentEvent) => ({ ts: "t", event });
+  it("is still the answer", () => {
+    const items = chatItems([
+      at({ type: "prompt", text: "réécris" }),
+      at({ type: "message", text: "Voici la réponse." }),
+      at({ type: "reasoning", text: "je relis" }),
+      at({ type: "done", summary: "" }),
+    ]);
+    expect(items.map((i) => i.kind)).toEqual(["you", "tools", "agent", "end"]);
+    expect(items.find((i) => i.kind === "agent")).toMatchObject({ text: "Voici la réponse." });
+  });
+});

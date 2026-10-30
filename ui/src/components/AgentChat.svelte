@@ -252,7 +252,7 @@
             {#each next as st (st.label)}
               <button class="btn" style:--rc={ROLE_COLORS[st.role]} title="Opens the composer for the {roleLabel(st.role)} with this answer in it; you edit before sending" onclick={() => app.handoff(agent, st, it.text)}>
                 <span class="dot" style:--c={ROLE_COLORS[st.role]}></span>
-                <span class="nb"><b>{st.label} <small>· {roleLabel(st.role)}</small></b><span>{st.hint}</span></span>
+                {st.label}<small>{roleLabel(st.role)}</small>
               </button>
             {/each}
           </div>
@@ -500,22 +500,6 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-  }
-  .nb {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    text-align: left;
-    line-height: 1.3;
-  }
-  .nb > span {
-    font-size: 11.5px;
-    color: var(--muted);
-  }
-  .next .btn {
-    height: auto;
-    padding-top: 6px;
-    padding-bottom: 6px;
   }
   .next .btn small {
     color: var(--faint);
