@@ -28,7 +28,24 @@
   let scroller: HTMLDivElement | undefined = $state();
   let input: HTMLTextAreaElement | undefined = $state();
   /** Open groups of work, by their place among the groups: new events do not close them. */
-  let openTools = $state<Record<number, boolean>>({});
+  let openTools = $state<Record<number, boolean>>(readMap(`vela.tools.${untrack(() => agent.id)}`));
+  function readMap(key: string): Record<number, boolean> {
+    try {
+      const v: unknown = JSON.parse(localStorage.getItem(key) ?? "{}");
+      return v && typeof v === "object" ? (v as Record<number, boolean>) : {};
+    } catch {
+      return {};
+    }
+  }
+  // Work and reasoning you opened stay open when you come back.
+  $effect(() => {
+    const json = JSON.stringify(openTools);
+    try {
+      localStorage.setItem(`vela.tools.${untrack(() => agentId)}`, json);
+    } catch {
+      /* private mode */
+    }
+  });
   /** Follow the bottom while new things arrive, unless you scrolled up. */
   let stick = true;
   let loadSeq = 0;
@@ -157,6 +174,27 @@
       /* private mode */
     }
   });
+  // The sections the last answer shows open by default are written down as open: a newer answer
+  // later must not close them, and coming back finds every block as you left it.
+  $effect(() => {
+    if (!log || lastAnswer < 0) return;
+    const a = answers[lastAnswer];
+    if (!a) return;
+    untrack(() => {
+      const fix: Record<string, boolean> = {};
+      a.sections.forEach((_, j) => {
+        const k = `${lastAnswer}:${j}`;
+        if (sectionOpen[k] === undefined && defaultOpen(lastAnswer, j, a.sections.length)) fix[k] = true;
+      });
+      if (!Object.keys(fix).length) return;
+      sectionOpen = { ...sectionOpen, ...fix };
+      try {
+        localStorage.setItem(sectionsKey(agentId), JSON.stringify(sectionOpen));
+      } catch {
+        /* private mode */
+      }
+    });
+  });
   const defaultOpen = (i: number, j: number, count: number) => i === lastAnswer && (j === 0 || j === count - 1);
 
   // Find in the conversation (Ctrl F): sections with a match open, matches are highlighted.
@@ -277,7 +315,7 @@
     untrack(() => {
       log = null;
       stick = true;
-      openTools = {};
+      openTools = readMap(`vela.tools.${id}`);
       sectionOpen = readSections(id);
       seenBefore = Number(localStorage.getItem(seenKey(id)) ?? 0) || 0;
       finding = false;
