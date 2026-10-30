@@ -20,6 +20,7 @@
   import Toast from "./components/Toast.svelte";
   import TopBar from "./components/TopBar.svelte";
   import { untrack } from "svelte";
+  import NavStrip from "./components/NavStrip.svelte";
   import FilePeek from "./components/FilePeek.svelte";
   import { app } from "./lib/app.svelte";
   import { isTyping, resolveKey } from "./lib/keymap";
@@ -92,7 +93,7 @@
   const surfaceKey = $derived(app.ready && app.spaces.length ? `${app.space.id}:${app.view}:${app.space.window ?? 1}` : "");
 </script>
 
-<svelte:window onmouseup={onMouse} onmousedown={onMouse} onauxclick={onMouse} onkeydown={onKeydown} onpaste={onPaste} oncontextmenu={onGlobalContextMenu} />
+<svelte:window onkeyup={(e) => (e.key === "Control" || e.key === "Shift" || e.key === "Meta") && app.hideNav()} onmouseup={onMouse} onmousedown={onMouse} onauxclick={onMouse} onkeydown={onKeydown} onpaste={onPaste} oncontextmenu={onGlobalContextMenu} />
 
 {#if !app.ready}
   {#if app.bootError}
@@ -183,6 +184,7 @@
   {#if app.overlay === "help"}<ShortcutsSheet />{/if}
   {#if app.overlay === "settings"}<AgentSettings />{/if}
   {#if app.overlay === "filepeek"}<FilePeek />{/if}
+  {#if app.navStrip}<NavStrip />{/if}
   {#if app.overlay === "sheet"}<SheetModal />{/if}
   <ContextMenu />
   <Toast />

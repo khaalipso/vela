@@ -56,7 +56,7 @@
           history(),
           drawSelection(),
           EditorView.lineWrapping,
-          keymap.of([{ key: "Escape", run: () => (app.editPage(false), true) }, ...defaultKeymap, ...historyKeymap]),
+          keymap.of([...defaultKeymap, ...historyKeymap]),
           lang.of([]),
           syntaxHighlighting(editorHighlight),
           editorTheme,
@@ -105,7 +105,7 @@
       <h2>Page</h2>
       <span class="sub">Notes and links of {app.space.name}. Kept by Vela, not in your repos.</span>
       <button class="btn" aria-pressed={app.pageEditing} onclick={() => app.editPage(!app.pageEditing)}>
-        {app.pageEditing ? "Done" : "Write"} <kbd>{app.pageEditing ? "Esc" : "E"}</kbd>
+        {app.pageEditing ? "Done" : "Write"} <kbd>Ctrl S</kbd>
       </button>
     </div>
     {#if detected.length}

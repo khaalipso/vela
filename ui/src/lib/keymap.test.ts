@@ -187,11 +187,14 @@ describe("overlays", () => {
     expect(resolveKey(key("t", { ctrlKey: true }), c)).toEqual({ type: "palette-toggle" });
   });
 
-  it("the space page: E or Enter writes in it", () => {
-    const c = ctx({ view: "space" });
-    expect(resolveKey(key("e"), c)).toEqual({ type: "page-edit" });
-    expect(resolveKey(key("Enter"), c)).toEqual({ type: "page-edit" });
-    expect(resolveKey(key("e"), ctx({ view: "space", typing: true }))).toBeNull();
+  it("the space page: Ctrl S opens or closes the document for writing, even while typing", () => {
+    expect(resolveKey(key("s", { ctrlKey: true }), ctx({ view: "space" }))).toEqual({ type: "page-edit" });
+    expect(resolveKey(key("s", { ctrlKey: true }), ctx({ view: "space", typing: true }))).toEqual({ type: "page-edit" });
+    expect(resolveKey(key("e"), ctx({ view: "space" }))).not.toEqual({ type: "page-edit" });
+  });
+
+  it("Esc in a terminal hides the terminals", () => {
+    expect(resolveKey(key("Escape"), ctx({ view: "code", typing: true, inTerm: true }))).toEqual({ type: "hide-terminals" });
   });
 
   it("composer: Tab cycles the role, Shift Tab the harness, Ctrl Up/Down the tier, Enter sends", () => {
@@ -332,7 +335,7 @@ describe("find and split", () => {
   });
   it("Ctrl \\ splits the code view", () => {
     expect(resolveKey({ key: "\\", ctrlKey: true }, code)).toEqual({ type: "split" });
-    expect(resolveKey({ key: "ArrowLeft", ctrlKey: true, shiftKey: true }, { ...code, typing: true })).toEqual({ type: "nav", delta: -1 });
-    expect(resolveKey({ key: "ArrowRight", ctrlKey: true, shiftKey: true }, code)).toEqual({ type: "nav", delta: 1 });
+    expect(resolveKey({ key: "ArrowRight", ctrlKey: true, shiftKey: true }, { ...code, typing: true })).toEqual({ type: "nav", delta: -1 });
+    expect(resolveKey({ key: "ArrowLeft", ctrlKey: true, shiftKey: true }, code)).toEqual({ type: "nav", delta: 1 });
   });
 });

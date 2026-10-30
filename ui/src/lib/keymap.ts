@@ -35,7 +35,8 @@ export type Action =
   | { type: "cc-conventional" } // conventional commits on / off
   | { type: "cc-repo"; delta: 1 | -1 } // commit the next / previous repo with staged changes
   | { type: "open-link"; id: string }
-  | { type: "page-edit" } // the space page: write in it
+  | { type: "page-edit" } // Ctrl S on the space page: open or close the document for writing
+  | { type: "hide-terminals" } // Esc in a terminal: every terminal panel goes away
   | { type: "composer-role"; delta: 1 | -1 }
   | { type: "composer-harness"; delta: 1 | -1 } // Shift Tab
   | { type: "composer-tier"; delta: 1 | -1 } // Ctrl Up raises, Ctrl Down lowers
@@ -73,7 +74,7 @@ export type Action =
   | { type: "context-menu" } // Menu key / Shift F10: the right-click menu of the focused item
   | { type: "find" } // Ctrl F: find in the open file
   | { type: "split" } // Ctrl \: split view of the code view
-  | { type: "nav"; delta: 1 | -1 } // Ctrl Shift Left / Right, mouse back / forward: through where you were
+  | { type: "nav"; delta: 1 | -1 } // Ctrl Shift Right = back (older), Left = forward (more recent); mouse back / forward
   | { type: "open-peek"; repo: string; path: string } // a path named in an answer: its changes in a mini page
   | { type: "toggle-terminal"; dock?: "top" } // Ctrl ` or T or Ctrl Down: the terminal panel; Ctrl Up: the one on top
   | { type: "new-terminal" } // Ctrl Shift `: one more terminal
@@ -181,9 +182,9 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
   if (ctrl && !alt && (k === "`" || e.code === "Backquote") && (!c.overlay || c.overlay === "palette")) {
     return shift ? { type: "new-terminal" } : { type: "toggle-terminal" };
   }
-  // Ctrl Shift Left / Right: back and forward through where you were, as in a browser.
+  // Ctrl Shift Right goes back in time (older), Left comes back to the more recent: the list of places runs recent to old, left to right.
   if (ctrl && !alt && shift && (k === "ArrowLeft" || k === "ArrowRight") && !c.inTerm && (!c.overlay || c.overlay === "filepeek")) {
-    return { type: "nav", delta: k === "ArrowRight" ? 1 : -1 };
+    return { type: "nav", delta: k === "ArrowRight" ? -1 : 1 };
   }
   // Ctrl Down shows or hides the terminal at the bottom, Ctrl Up the one on top, from a terminal
   // too; Ctrl Left / Right go through the views. In a text field or the editor these keys keep
@@ -200,6 +201,11 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
   if (ctrl && !alt && (k === "p" || k === "P") && !c.overlay?.match(/^(newspace|commit|composer|help)$/)) {
     return { type: "quick-open" };
   }
+
+  // Esc in a terminal hides the panels (the shells keep running).
+  if (k === "Escape" && c.inTerm && !c.overlay) return { type: "hide-terminals" };
+  // Ctrl S on the page: write, or save and read, even from inside the editor.
+  if (ctrl && !alt && !shift && (k === "s" || k === "S") && c.view === "space" && !c.overlay) return { type: "page-edit" };
 
   if (k === "Escape") {
     // Sheets with fields: the first Esc leaves the field, the next one closes the sheet.
@@ -295,7 +301,6 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
     if (r) return r;
   }
   if (c.view === "prs" && (k === "r" || k === "R")) return { type: "prs-refresh" };
-  if (c.view === "space" && (k === "e" || k === "E" || k === "Enter")) return { type: "page-edit" };
 
   switch (k) {
     case "/":

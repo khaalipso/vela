@@ -1380,12 +1380,26 @@ export class AppState {
     this.navHist[sid] = record(this.navHist[sid] ?? emptyHist(), p);
   }
 
+  /** The strip of places shown while you move through them: recent first, `at` is the current one. */
+  navStrip = $state<{ places: Place[]; at: number } | null>(null);
+  private navTimer: ReturnType<typeof setTimeout> | undefined;
+  private showNav(h: NavHist) {
+    this.navStrip = { places: [...h.stack].reverse(), at: h.stack.length - 1 - h.at };
+    clearTimeout(this.navTimer);
+    this.navTimer = setTimeout(() => this.hideNav(), 2500);
+  }
+  hideNav() {
+    clearTimeout(this.navTimer);
+    this.navStrip = null;
+  }
+
   /** Back (-1) or forward (+1), like a browser: Ctrl Shift arrows, mouse buttons. */
   navigate(delta: 1 | -1) {
     const sid = this.space.id;
     const r = navStep(this.navHist[sid] ?? emptyHist(), delta);
     if (!r) return this.toast(delta < 0 ? "Nothing to go back to" : "Nothing to go forward to");
     this.navHist[sid] = r.hist;
+    this.showNav(r.hist);
     const p = r.place;
     this.closeOverlay();
     if (p.agent && this.sd.agents.some((a) => a.id === p.agent)) this.selectAgent(p.agent);
@@ -2779,7 +2793,10 @@ export class AppState {
       case "open-link":
         return this.openLink(a.id);
       case "page-edit":
-        return this.editPage(true);
+        return this.editPage(!this.pageEditing);
+      case "hide-terminals":
+        for (const d of ["top", "bottom"] as const) if (this.isTermOpen(d)) this.setTermOpen(d, false);
+        return;
       case "cc-type":
         return this.ccType();
       case "cc-breaking":

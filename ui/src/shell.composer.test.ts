@@ -59,15 +59,15 @@ describe("the space page", () => {
     expect(backend.opened).toEqual(["https://docs.stripe.com/webhooks"]);
   });
 
-  it("E writes in it; Esc leaves and it is saved", async () => {
+  it("Ctrl S writes in it; Ctrl S again leaves and it is saved", async () => {
     press("0");
     await settle();
-    press("e");
+    press("s", { ctrlKey: true });
     await vi.waitFor(() => expect($(".page .cm-content")).toBeTruthy());
     const { EditorView } = await import("@codemirror/view");
     const v = EditorView.findFromDOM($(".page .cm-editor")!)!;
     v.dispatch({ changes: { from: v.state.doc.length, insert: "- [ ] ask ops for the webhook secret\n" } });
-    press("Escape", {}, $(".page .cm-content")!);
+    press("s", { ctrlKey: true }, $(".page .cm-content")!);
     await settle();
     expect(app.pageEditing).toBe(false);
     await vi.waitFor(async () => expect(await backend.spacePage("stripe")).toContain("ask ops for the webhook secret"));
