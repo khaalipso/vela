@@ -489,12 +489,12 @@
     justify-content: flex-end;
   }
   .bubble {
-    max-width: 80%;
+    max-width: 85%;
     background: color-mix(in srgb, var(--space) 16%, var(--panel));
     border-radius: 14px 14px 4px 14px;
-    padding: 8px 12px;
-    font-size: 13px;
-    line-height: 1.5;
+    padding: 10px 14px;
+    font-size: 14.5px;
+    line-height: 1.6;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
@@ -538,21 +538,23 @@
     white-space: nowrap;
   }
   .card {
-    max-width: 68ch;
+    width: 100%;
+    max-width: 110ch;
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: 14px;
+    border-radius: 16px;
     overflow: hidden;
-    font-size: 13.5px;
-    line-height: 1.6;
+    font-size: 15px;
+    line-height: 1.75;
+    letter-spacing: 0.005em;
     overflow-wrap: anywhere;
   }
   .card.old {
     opacity: 0.8;
   }
   .lead {
-    padding: 12px 14px;
-    font-size: 14px;
+    padding: 18px 22px;
+    font-size: 15px;
     border-left: 3px solid var(--space);
   }
   .sec {
@@ -563,8 +565,8 @@
     align-items: center;
     gap: 6px;
     width: 100%;
-    padding: 8px 14px;
-    font-size: 11.5px;
+    padding: 10px 22px;
+    font-size: 12px;
     letter-spacing: 0.04em;
     text-transform: uppercase;
     color: var(--muted);
@@ -598,11 +600,25 @@
     transform: rotate(90deg);
   }
   .sb {
-    padding: 0 14px 12px 28px;
+    padding: 2px 22px 18px 36px;
     color: var(--fg);
   }
   .md :global(p) {
-    margin: 0 0 8px;
+    margin: 0 0 12px;
+  }
+  .md :global(li) {
+    margin: 0 0 5px;
+  }
+  .md :global(li > p) {
+    margin: 0 0 5px;
+  }
+  .md :global(strong) {
+    font-weight: 650;
+  }
+  .md :global(hr) {
+    border: none;
+    border-top: 1px solid var(--line);
+    margin: 16px 0;
   }
   .md :global(p:last-child) {
     margin-bottom: 0;
@@ -610,25 +626,31 @@
   .md :global(h1),
   .md :global(h2),
   .md :global(h3) {
-    font-size: 14px;
-    margin: 12px 0 6px;
+    font-size: 15.5px;
+    font-weight: 650;
+    line-height: 1.4;
+    margin: 18px 0 8px;
+  }
+  .md > :global(:first-child) {
+    margin-top: 0;
   }
   .md :global(ul),
   .md :global(ol) {
-    margin: 4px 0 8px;
-    padding-left: 22px;
+    margin: 4px 0 12px;
+    padding-left: 24px;
   }
   .md :global(code) {
     font-family: var(--code);
-    font-size: 12px;
-    background: var(--panel);
-    border-radius: 4px;
-    padding: 1px 4px;
+    font-size: 13px;
+    background: color-mix(in srgb, var(--fg) 8%, transparent);
+    border-radius: 5px;
+    padding: 1px 5px;
   }
   .md :global(pre) {
-    background: var(--panel);
+    background: color-mix(in srgb, var(--fg) 6%, transparent);
     border-radius: 10px;
-    padding: 10px 12px;
+    padding: 12px 14px;
+    line-height: 1.55;
     overflow-x: auto;
   }
   .md :global(pre code) {
@@ -637,20 +659,22 @@
   }
   .md :global(table) {
     border-collapse: collapse;
-    font-size: 12.5px;
+    font-size: 13.5px;
+    line-height: 1.5;
+    margin: 0 0 12px;
   }
   .md :global(th),
   .md :global(td) {
     border: 1px solid var(--line);
-    padding: 4px 8px;
+    padding: 6px 10px;
   }
   .md :global(a) {
     color: var(--info);
   }
   .md :global(blockquote) {
-    margin: 0;
-    padding-left: 10px;
-    border-left: 2px solid var(--line);
+    margin: 0 0 12px;
+    padding-left: 14px;
+    border-left: 3px solid var(--line);
     color: var(--muted);
   }
   .tools {
