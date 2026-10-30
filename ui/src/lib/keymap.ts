@@ -64,7 +64,7 @@ export type Action =
   | { type: "toggle-window" }
   | { type: "open-composer" }
   | { type: "open-newspace" }
-  | { type: "open-newrepo" }
+  | { type: "browse-repos" }
   | { type: "open-addrepo" }
   | { type: "remove-repo"; repo: string }
   | { type: "move-repo-into-clone"; repo: string }

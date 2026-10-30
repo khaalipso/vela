@@ -22,26 +22,25 @@ describe("repo picker", () => {
   });
 });
 
-describe("new repo", () => {
-  it("creates a repo, selects it and names the space after it", async () => {
-    await app.init(new MockBackend());
+describe("browse for a folder", () => {
+  it("selects the picked folder and stays on the current branch", async () => {
+    const be = new MockBackend();
+    await app.init(be);
     app.newSp = { name: "", repos: [], missingName: false, branch: "", base: "", repoBranches: {}, ticket: "" };
-    await app.openNewRepo();
+    await app.browseRepos();
     expect(app.overlay).toBe("newspace");
-    expect(app.newRepo.parent).toBe("~/Work");
-    app.newRepo.name = "billing-svc";
-    await app.createRepo();
-    expect(app.repos[0]).toBe("~/Work/billing-svc");
-    expect(app.newSp.repos).toEqual(["~/Work/billing-svc"]);
-    expect(app.newSp.name).toBe("billing-svc");
-    expect(app.newRepo.open).toBe(false);
+    expect(app.repos[0]).toBe("~/Work/fresh-folder");
+    expect(app.newSp.repos).toEqual(["~/Work/fresh-folder"]);
+    expect(app.newSp.branch).toBe("");
   });
 
-  it("refuses an empty name", async () => {
-    await app.openNewRepo();
-    app.newRepo.name = " ";
-    await app.createRepo();
-    expect(app.newRepo.open).toBe(true);
+  it("does nothing when the dialog is cancelled", async () => {
+    const be = new MockBackend();
+    be.pickedFolder = null;
+    await app.init(be);
+    app.newSp = { name: "", repos: [], missingName: false, branch: "", base: "", repoBranches: {}, ticket: "" };
+    await app.browseRepos();
+    expect(app.newSp.repos).toEqual([]);
   });
 });
 

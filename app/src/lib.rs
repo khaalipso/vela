@@ -89,6 +89,7 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(vela)
         .manage(watchers)
         .manage(runner)
@@ -133,6 +134,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             c::list_repos,
             c::declare_repo,
+            c::pick_folder,
+            c::declare_folder,
             c::create_repo,
             c::add_repo_to_space,
             c::remove_repo_from_space,

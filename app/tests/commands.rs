@@ -597,3 +597,19 @@ fn creates_a_repo_and_a_space_on_it() {
     }
     assert!(commands::create_repo(&e.vela, parent.to_str().unwrap(), "fresh").is_err());
 }
+
+#[test]
+fn declare_folder_inits_an_empty_folder() {
+    let e = env();
+    let vela = Vela::new(e.root.join("home"));
+    let dir = e.root.join("elsewhere").join("brand-new");
+    fs::create_dir_all(&dir).unwrap();
+    // A typed path stays strict.
+    assert!(commands::declare_repo(&vela, dir.to_str().unwrap()).is_err());
+    // A folder from the file dialog becomes a repo on main with a first commit.
+    let list = commands::declare_repo_in(&vela, dir.to_str().unwrap(), true).unwrap();
+    let c = fs::canonicalize(&dir).unwrap().to_string_lossy().into_owned();
+    assert_eq!(list[0], c);
+    assert!(dir.join(".git").exists());
+    assert!(dir.join("README.md").exists());
+}

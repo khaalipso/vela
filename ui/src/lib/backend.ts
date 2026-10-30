@@ -395,6 +395,10 @@ export interface Backend {
   declareRepo(path: string): Promise<string[]>;
   /** Create `<parent>/<name>` as a new git repo with a first commit, and declare it. Returns its path. */
   createRepo(parent: string, name: string): Promise<string>;
+  /** System folder dialog (which can create a folder). Null when cancelled. */
+  pickFolder(start?: string | null): Promise<string | null>;
+  /** Like declareRepo for a folder from the dialog: one with no repo in it becomes a repo. */
+  declareFolder(path: string): Promise<string[]>;
   /** Folder where new repos go by default (the first repo root, ~/Work by default). */
   defaultRepoParent(): Promise<string>;
   listSpaces(): Promise<Space[]>;
@@ -952,6 +956,17 @@ export class MockBackend implements Backend {
 
   async defaultRepoParent(): Promise<string> {
     return "~/Work";
+  }
+
+  /** What the next pickFolder answers (tests). */
+  pickedFolder: string | null = "~/Work/fresh-folder";
+
+  async pickFolder(): Promise<string | null> {
+    return this.pickedFolder;
+  }
+
+  async declareFolder(path: string): Promise<string[]> {
+    return this.declareRepo(path);
   }
 
   async declareRepo(path: string): Promise<string[]> {
@@ -2573,6 +2588,12 @@ export class TauriBackend implements Backend {
   }
   defaultRepoParent() {
     return call<string>("default_repo_parent");
+  }
+  pickFolder(start?: string | null) {
+    return call<string | null>("pick_folder", { start: start ?? null });
+  }
+  declareFolder(path: string) {
+    return call<string[]>("declare_folder", { path });
   }
   listSpaces() {
     return call<Space[]>("list_spaces");

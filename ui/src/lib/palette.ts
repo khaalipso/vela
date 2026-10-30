@@ -39,7 +39,7 @@ export function buildPaletteItems(src: PaletteSource): PaletteItem[] {
     ["Commit and push", "C", { type: "open-commit" }],
     ["Page of this space: notes and links", "0", { type: "view", view: "space" }],
     ["New space", "", { type: "open-newspace" }],
-    ["New repo", "", { type: "open-newrepo" }],
+    ["Browse for a repo or a folder", "", { type: "browse-repos" }],
     ["Add a repo to this space", "", { type: "open-addrepo" }],
     ["Open this space in its own window", "W", { type: "toggle-window" }],
     ["Toggle files", "B", { type: "toggle-files" }],

@@ -89,6 +89,29 @@ pub fn default_repo_parent() -> String {
     commands::default_repo_parent()
 }
 
+/// Native folder picker (it can create a folder). `None` when cancelled.
+#[tauri::command]
+pub async fn pick_folder(app: tauri::AppHandle, start: Option<String>) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut dialog = app.dialog().file().set_title("Choose a repo, or a folder");
+    if let Some(dir) = start
+        .as_deref()
+        .map(commands::expand_home)
+        .filter(|d| d.is_dir())
+    {
+        dialog = dialog.set_directory(dir);
+    }
+    dialog.pick_folder(move |p| {
+        let _ = tx.send(p);
+    });
+    let picked = tauri::async_runtime::spawn_blocking(move || rx.recv().ok().flatten())
+        .await
+        .ok()
+        .flatten()?;
+    picked.into_path().ok().map(|p| p.to_string_lossy().into_owned())
+}
+
 #[tauri::command]
 pub async fn declare_repo(vela: State<'_, Vela>, path: String) -> AppResult<Vec<String>> {
     blocking(&vela, move |v| commands::declare_repo(v, &path)).await
@@ -1293,4 +1316,10 @@ pub fn set_vela_model(
     model: Option<String>,
 ) -> AppResult<commands::VelaModelSetting> {
     commands::set_vela_model(&agents, enabled, harness.as_deref(), model.as_deref())
+}
+
+/// Declares a folder picked in the file dialog: one that holds no repo yet becomes one.
+#[tauri::command]
+pub async fn declare_folder(vela: State<'_, Vela>, path: String) -> AppResult<Vec<String>> {
+    blocking(&vela, move |v| commands::declare_repo_in(v, &path, true)).await
 }

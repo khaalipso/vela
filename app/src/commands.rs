@@ -1321,15 +1321,7 @@ pub fn create_repo(vela: &Vela, parent: &str, name: &str) -> AppResult<String> {
         )));
     }
     fs::create_dir_all(&dir).map_err(|e| AppError::new("io", e.to_string()))?;
-    let run = || -> AppResult<()> {
-        git(&dir, &["init", "-q", "-b", "main"])?;
-        fs::write(dir.join("README.md"), format!("# {name}\n"))
-            .map_err(|e| AppError::new("io", e.to_string()))?;
-        git(&dir, &["add", "README.md"])?;
-        git(&dir, &["commit", "-q", "-m", "chore: initial commit"])?;
-        Ok(())
-    };
-    if let Err(e) = run() {
+    if let Err(e) = init_repo(&dir, name) {
         let _ = fs::remove_dir_all(&dir);
         return Err(e);
     }
@@ -1341,7 +1333,19 @@ pub fn create_repo(vela: &Vela, parent: &str, name: &str) -> AppResult<String> {
     Ok(path)
 }
 
-fn expand_home(raw: &str) -> PathBuf {
+/// `git init` on main with a README and a first commit, in a folder that exists.
+fn init_repo(dir: &Path, name: &str) -> AppResult<()> {
+    git(dir, &["init", "-q", "-b", "main"])?;
+    let readme = dir.join("README.md");
+    if !readme.exists() {
+        fs::write(&readme, format!("# {name}\n")).map_err(|e| AppError::new("io", e.to_string()))?;
+    }
+    git(dir, &["add", "README.md"])?;
+    git(dir, &["commit", "-q", "-m", "chore: initial commit"])?;
+    Ok(())
+}
+
+pub fn expand_home(raw: &str) -> PathBuf {
     match raw.strip_prefix('~') {
         Some(rest) => std::env::var_os("HOME")
             .map(PathBuf::from)
@@ -1353,6 +1357,11 @@ fn expand_home(raw: &str) -> PathBuf {
 
 /// Declares a repo by path (`~` expanded). It must be a git clone, not a Vela worktree.
 pub fn declare_repo(vela: &Vela, path: &str) -> AppResult<Vec<String>> {
+    declare_repo_in(vela, path, false)
+}
+
+/// Like [`declare_repo`]; with `init_empty`, a folder with no repo in it is `git init`ed.
+pub fn declare_repo_in(vela: &Vela, path: &str, init_empty: bool) -> AppResult<Vec<String>> {
     let raw = path.trim();
     let expanded = expand_home(raw);
     let dir = fs::canonicalize(&expanded)
@@ -1367,8 +1376,24 @@ pub fn declare_repo(vela: &Vela, path: &str) -> AppResult<Vec<String>> {
     let found = if dir.join(".git").exists() {
         vec![dir]
     } else {
-        space::repos_in(&dir)
-            .map_err(|_| AppError::invalid(format!("not a git repo, and no repo inside: {raw}")))?
+        match space::repos_in(&dir) {
+            Ok(found) => found,
+            // A folder picked from the file dialog (often just created there) that holds no
+            // repo yet becomes one.
+            Err(_) if init_empty => {
+                let name = dir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                init_repo(&dir, &name)?;
+                vec![dir]
+            }
+            Err(_) => {
+                return Err(AppError::invalid(format!(
+                    "not a git repo, and no repo inside: {raw}"
+                )))
+            }
+        }
     };
     let mut list = declared_repos(vela);
     for d in found.iter().rev() {

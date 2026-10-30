@@ -2557,36 +2557,23 @@ export class AppState {
     }
   }
 
-  /** The "new repo" form inside the new space sheet. */
-  newRepo = $state({ open: false, name: "", parent: "" });
-
-  async openNewRepo() {
+  /**
+   * Pick a folder in the system file dialog (it can create one) and select the repo(s) in it.
+   * A folder with no repo yet becomes one.
+   */
+  async browseRepos() {
     if (this.overlay !== "newspace") this.sheetMode = "new";
     this.overlay = "newspace";
-    this.newRepo.open = true;
-    if (!this.newRepo.parent) {
-      try {
-        this.newRepo.parent = await this.backend.defaultRepoParent();
-      } catch {
-        this.newRepo.parent = "~/Work";
-      }
-    }
-  }
-
-  /** Create the repo, add it to the list and select it for the new space. */
-  async createRepo() {
-    const name = this.newRepo.name.trim();
-    if (!name) {
-      this.toast("Give the repo a name");
-      return;
-    }
     try {
-      const path = await this.backend.createRepo(this.newRepo.parent, name);
-      this.repos = await this.backend.listRepos();
-      if (!this.newSp.repos.includes(path)) this.newSp.repos.push(path);
-      if (!this.newSp.name.trim()) this.newSp.name = name;
-      this.newRepo = { open: false, name: "", parent: this.newRepo.parent };
-      this.toast(`Created ${path}`);
+      const dir = await this.backend.pickFolder(this.repos[0]?.split("/").slice(0, -1).join("/") || null);
+      if (!dir) return;
+      this.repos = await this.backend.declareFolder(dir);
+      // The first entries are the ones just declared; a folder of repos declares each of them.
+      const tail = dir.replace(/\/+$/, "");
+      let added = this.repos.filter((r) => r === tail || r.startsWith(`${tail}/`));
+      if (!added.length && this.repos[0]) added = [this.repos[0]];
+      for (const r of added) if (!this.newSp.repos.includes(r)) this.newSp.repos.push(r);
+      this.toast(`Added ${added.map((r) => r.split("/").pop()).join(", ")}`);
     } catch (e) {
       this.fail(e);
     }
@@ -2891,8 +2878,8 @@ export class AppState {
         return this.moveRepoIntoClone(a.repo);
       case "remove-repo":
         return this.removeRepo(a.repo);
-      case "open-newrepo":
-        return this.openNewRepo();
+      case "browse-repos":
+        return this.browseRepos();
       case "open-help":
         this.overlay = "help";
         return;

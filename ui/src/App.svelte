@@ -170,9 +170,9 @@
     {#if !app.pinned}
       <div class="emptyacts">
         <button class="btn p" onclick={() => app.dispatch({ type: "open-newspace" })}>Open repos in a space</button>
-        <button class="btn" onclick={() => app.dispatch({ type: "open-newrepo" })}>Create a new repo</button>
+        <button class="btn" onclick={() => app.dispatch({ type: "browse-repos" })}>Browse for a folder</button>
       </div>
-      <p class="small">Your repos under ~/Work are listed. Paste any other folder path in the repo filter.</p>
+      <p class="small">Your repos under ~/Work are listed. Browse for any other folder, or paste its path in the repo filter.</p>
     {/if}
   </main>
   {#if app.overlay === "newspace"}<NewSpaceSheet />{/if}

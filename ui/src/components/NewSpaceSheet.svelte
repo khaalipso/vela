@@ -71,24 +71,8 @@
       <div class="grp">
         <div class="lblrow">
           <label class="lbl" for="ns-repo">Repos for this task</label>
-          <button type="button" class="link" onclick={() => void app.openNewRepo()} aria-expanded={app.newRepo.open}>+ New repo</button>
+          <button type="button" class="link" onclick={() => void app.browseRepos()}>Browse…</button>
         </div>
-        {#if app.newRepo.open}
-          <div class="newrepo">
-            <div class="nrf">
-              <label class="lbl" for="nr-name">Name</label>
-              <input class="field small" id="nr-name" autocomplete="off" spellcheck="false" placeholder="my-service" bind:value={app.newRepo.name}
-                onkeydown={(e) => { if (e.key === "Enter" && !e.ctrlKey) { e.preventDefault(); void app.createRepo(); } }} />
-            </div>
-            <div class="nrf grow">
-              <label class="lbl" for="nr-parent">In folder</label>
-              <input class="field small mono" id="nr-parent" autocomplete="off" spellcheck="false" bind:value={app.newRepo.parent}
-                onkeydown={(e) => { if (e.key === "Enter" && !e.ctrlKey) { e.preventDefault(); void app.createRepo(); } }} />
-            </div>
-            <button type="button" class="btn" onclick={() => void app.createRepo()}>Create repo</button>
-          </div>
-          <span class="hint">git init on main, a README and a first commit. The repo is then selected below.</span>
-        {/if}
         <input
           class="field small"
           id="ns-repo"
@@ -107,7 +91,7 @@
           {#each app.shownRepos as r (r)}
             <button type="button" class="rtog" aria-pressed={app.newSp.repos.includes(r)} title={r} onclick={() => app.toggleRepo(r)}>{r.split("/").pop()}</button>
           {:else}
-            <span class="none">{app.repoFilter.trim().startsWith("/") || app.repoFilter.trim().startsWith("~") ? "Press Enter to add this folder" : app.repos.length ? "No repo matches" : "No git repo found under ~/Work. Paste a folder path above to add one."}</span>
+            <span class="none">{app.repoFilter.trim().startsWith("/") || app.repoFilter.trim().startsWith("~") ? "Press Enter to add this folder" : app.repos.length ? "No repo matches" : "No git repo found under ~/Work. Browse for a folder, or paste its path above."}</span>
           {/each}
         </div>
       </div>
@@ -277,24 +261,6 @@
   }
   .link:hover {
     background: var(--hover);
-  }
-  .newrepo {
-    display: flex;
-    gap: 8px;
-    align-items: flex-end;
-    flex-wrap: wrap;
-    padding: 10px;
-    border-radius: 10px;
-    background: var(--raised);
-  }
-  .nrf {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    flex: 1 1 140px;
-  }
-  .nrf.grow {
-    flex: 2 1 220px;
   }
   .hint {
     font-size: 12px;

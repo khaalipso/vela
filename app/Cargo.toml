@@ -21,6 +21,7 @@ trash = "5"
 toml.workspace = true
 tauri-plugin-notification = "2"
 portable-pty = "0.9.0"
+tauri-plugin-dialog = "2"
 
 [features]
 # Serves the built UI from ui/dist instead of the dev server. Enabled by `make install`.
