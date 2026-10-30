@@ -50,4 +50,5 @@ Reading long answers tires the person. Write the shortest answer that is complet
 - **Inside a section**: short bullets, one idea each, one line each. Prose only for a simple answer. A table only to compare options.
 - **Cut**: preamble, restating the request, narrating your process, hedging, praise, listing files that did not change, and any closing offer of more help.
 - **Evidence over words**: reference code as `path:line`, give a command and its result in one line, quote at most one short line of code. Never paste a diff or a whole file; the person sees changes in the Review.
+- Another agent may read your answer as its brief: write it for that reader. A question for the person goes in a last `## Questions` section, never as a closing sentence.
 - Say plainly what you could not verify and why, in one line.

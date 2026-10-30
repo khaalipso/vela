@@ -12,14 +12,23 @@
   const readOnly = $derived(app.role === "reviewer" || app.role === "planner");
 </script>
 
-<div class="composer" role="dialog" aria-label="Ask an agent">
+{#if app.composerWide}
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="scrim" onclick={() => app.closeOverlay()}></div>
+{/if}
+<div
+  class="composer"
+  class:wide={app.composerWide}
+  role="dialog"
+  aria-label="Ask an agent"
+>
   <label for="cmp-in" class="psec"
     >Ask in {app.space.name} ·
     {#if readOnly}reads your worktree, changes nothing{:else}runs in a new worktree from your last commit; uncommitted changes are not copied{/if}</label
   >
   <textarea
     id="cmp-in"
-    rows="2"
+    rows={app.composerWide ? 14 : 2}
     placeholder="Handle charge.refunded in the webhook"
     bind:this={ta}
     bind:value={app.composerText}
@@ -68,6 +77,49 @@
 </div>
 
 <style>
+  .scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(3px);
+    animation: scrim-in 200ms ease-out;
+  }
+  @keyframes scrim-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes wide-in {
+    from {
+      opacity: 0;
+      transform: translate(-50%, calc(-50% + 14px)) scale(0.97);
+    }
+  }
+  .composer.wide {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    bottom: auto;
+    transform: translate(-50%, -50%);
+    width: min(880px, calc(100vw - 48px));
+    max-height: calc(100vh - 64px);
+    padding: 18px;
+    gap: 12px;
+    border-radius: 20px;
+    z-index: 7;
+    animation: wide-in 280ms var(--ease);
+  }
+  .composer.wide textarea {
+    flex: 1;
+    min-height: 260px;
+    max-height: calc(100vh - 260px);
+    overflow-y: auto;
+    resize: none;
+    font-size: 14.5px;
+    line-height: 1.55;
+    padding: 4px;
+  }
   .composer {
     position: absolute;
     left: 50%;

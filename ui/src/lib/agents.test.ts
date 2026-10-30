@@ -9,7 +9,9 @@ import {
   logLine,
   matchesAgent,
   nextSteps,
+  forNextAgent,
   handoffText,
+  isFrench,
   quietFor,
   shortDuration,
   totalUsage,
@@ -194,7 +196,7 @@ describe("handoff", () => {
     expect(nextSteps("planner").map((s) => s.role)).toEqual(["developer", "tester"]);
     expect(nextSteps("reviewer")[0].role).toBe("developer");
     const t = handoffText(nextSteps("planner")[0], "planner", " 1. Do x ");
-    expect(t).toContain("Answer of the planner:\n\n1. Do x");
+    expect(t).toContain("**Answer of the planner**\n\n1. Do x");
   });
 });
 
@@ -209,5 +211,23 @@ describe("an answer written before the last thought", () => {
     ]);
     expect(items.map((i) => i.kind)).toEqual(["you", "tools", "agent", "end"]);
     expect(items.find((i) => i.kind === "agent")).toMatchObject({ text: "Voici la réponse." });
+  });
+});
+
+describe("answer for the next agent", () => {
+  it("drops the closing question to the person", () => {
+    const a = "Appliquer la taxonomie aux 4 tables.\n\n## Étapes\n- a\n- b\n\nTu confirmes, ou tu veux tagger autre chose sur les 4 tables ?";
+    const t = handoffText(nextSteps("planner")[0], "planner", a);
+    expect(t).toContain("Implémente ce plan");
+    expect(t).toContain("- b");
+    expect(t).not.toContain("Tu confirmes");
+  });
+  it("drops a last Questions section, keeps a list ending with a question mark item", () => {
+    expect(forNextAgent("Plan.\n\n## Questions\nOK ?")).toBe("Plan.");
+    expect(forNextAgent("Plan.\n\n- why ?")).toBe("Plan.\n\n- why ?");
+  });
+  it("detects French", () => {
+    expect(isFrench("Le plan est dans une table pour les utilisateurs")).toBe(true);
+    expect(isFrench("The plan is in a table for the users")).toBe(false);
   });
 });

@@ -141,26 +141,73 @@ export function permissionLabel(option: string): string {
 export interface NextStep {
   role: AgentRole;
   label: string;
-  ask: string;
+  /** What the next agent is asked, in English and in French (the language of the answer picks one). */
+  ask: { en: string; fr: string };
 }
+
+const SAME_FIX = {
+  en: "Fix the findings below, most severe first. Change only what they ask for.",
+  fr: "Corrige les points ci-dessous, du plus grave au moins grave. Ne change que ce qu'ils demandent.",
+};
 
 const NEXT: Partial<Record<AgentRole, NextStep[]>> = {
   planner: [
-    { role: "developer", label: "Implement", ask: "Implement this plan. Follow it step by step; say where you had to depart from it." },
-    { role: "tester", label: "Write the tests", ask: "Write the tests this plan calls for, before it is implemented." },
+    {
+      role: "developer",
+      label: "Implement",
+      ask: {
+        en: "Implement this plan, step by step. Say where you had to depart from it.",
+        fr: "Implémente ce plan, étape par étape. Dis où tu as dû t'en écarter.",
+      },
+    },
+    {
+      role: "tester",
+      label: "Write the tests",
+      ask: { en: "Write the tests this plan calls for, before it is implemented.", fr: "Écris les tests que ce plan demande, avant son implémentation." },
+    },
   ],
   product: [
-    { role: "planner", label: "Plan it", ask: "Turn this into an implementation plan for this code base." },
-    { role: "developer", label: "Implement", ask: "Implement this." },
+    {
+      role: "planner",
+      label: "Plan it",
+      ask: { en: "Turn this into an implementation plan for this code base.", fr: "Transforme ceci en plan d'implémentation pour ce code." },
+    },
+    { role: "developer", label: "Implement", ask: { en: "Implement this.", fr: "Implémente ceci." } },
   ],
   developer: [
-    { role: "reviewer", label: "Review", ask: "Review the changes described below, and the uncommitted changes of the space." },
-    { role: "tester", label: "Test it", ask: "Write or complete the tests for the changes described below." },
+    {
+      role: "reviewer",
+      label: "Review",
+      ask: {
+        en: "Review the changes described below, and the uncommitted changes of the space.",
+        fr: "Relis les changements décrits ci-dessous, et les changements non commités de l'espace.",
+      },
+    },
+    {
+      role: "tester",
+      label: "Test it",
+      ask: { en: "Write or complete the tests for the changes described below.", fr: "Écris ou complète les tests des changements décrits ci-dessous." },
+    },
   ],
-  tester: [{ role: "reviewer", label: "Review", ask: "Review these tests and the changes they cover." }],
-  debugger: [{ role: "developer", label: "Fix it", ask: "Fix the bug as diagnosed below. Add a test that fails without the fix." }],
-  reviewer: [{ role: "developer", label: "Fix these", ask: "Fix the findings below, most severe first. Change only what they ask for." }],
-  security: [{ role: "developer", label: "Fix these", ask: "Fix the findings below, most severe first. Change only what they ask for." }],
+  tester: [
+    {
+      role: "reviewer",
+      label: "Review",
+      ask: { en: "Review these tests and the changes they cover.", fr: "Relis ces tests et les changements qu'ils couvrent." },
+    },
+  ],
+  debugger: [
+    {
+      role: "developer",
+      label: "Fix it",
+      ask: {
+        en: "Fix the bug as diagnosed below. Add a test that fails without the fix.",
+        fr: "Corrige le bug tel que diagnostiqué ci-dessous. Ajoute un test qui échoue sans le correctif.",
+      },
+    },
+  ],
+  reviewer: [{ role: "developer", label: "Fix these", ask: SAME_FIX }],
+  security: [{ role: "developer", label: "Fix these", ask: SAME_FIX }],
 };
 
 /** The agents that can take over after `role`. */
@@ -168,9 +215,49 @@ export function nextSteps(role: AgentRole): NextStep[] {
   return NEXT[role] ?? [];
 }
 
+/** Is this text French? Counts a few very common French words against English ones. */
+export function isFrench(text: string): boolean {
+  const words = text.toLowerCase().match(/[a-zàâçéèêëîïôûùüÿœ']+/g) ?? [];
+  const fr = new Set(["le", "la", "les", "des", "est", "une", "un", "du", "et", "que", "pour", "dans", "sur", "avec", "pas", "qui", "au", "aux", "ce", "cette", "il", "elle", "sont", "ou"]);
+  const en = new Set(["the", "is", "are", "and", "of", "to", "in", "for", "with", "that", "this", "it", "on", "be", "not", "or"]);
+  let f = 0;
+  let e = 0;
+  for (const w of words.slice(0, 400)) {
+    if (fr.has(w)) f++;
+    else if (en.has(w)) e++;
+  }
+  return f > e;
+}
+
+/**
+ * The text of an answer meant for another agent: without the closing question or invitation
+ * addressed to the person (a last paragraph that ends with "?", or a last "Questions" section).
+ */
+export function forNextAgent(answer: string): string {
+  let t = answer.trim();
+  for (let k = 0; k < 2; k++) {
+    const m = /\n\s*#{2,3}\s+(questions?|à confirmer|to confirm|open questions?)[^\n]*\n[\s\S]*$/i.exec(t);
+    if (m) {
+      t = t.slice(0, m.index).trim();
+      continue;
+    }
+    const paras = t.split(/\n\s*\n/);
+    const last = paras[paras.length - 1].trim();
+    if (paras.length > 1 && /[?？]\s*[*_)"»]*$/.test(last) && last.length < 400 && !/^([-*>]|\d+[.)]|#|```|\|)/.test(last)) {
+      t = paras.slice(0, -1).join("\n\n").trim();
+      continue;
+    }
+    break;
+  }
+  return t;
+}
+
 /** The request to give the next agent: what to do, then the answer it starts from. */
 export function handoffText(step: NextStep, from: AgentRole, answer: string): string {
-  return `${step.ask}\nAnswer in the language of the text below.\n\n---\nAnswer of the ${from}:\n\n${answer.trim()}`;
+  const fr = isFrench(answer);
+  const ask = fr ? step.ask.fr : step.ask.en;
+  const head = fr ? `Réponse du ${from}` : `Answer of the ${from}`;
+  return `${ask}\n\n**${head}**\n\n${forNextAgent(answer)}`;
 }
 
 // -- chat ---------------------------------------------------------------------

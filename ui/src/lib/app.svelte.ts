@@ -217,6 +217,8 @@ export class AppState {
   /** The role and harness of the last request stay picked for the next one. */
   role = $state<AgentRole>(readRole());
   composerText = $state("");
+  /** The composer opens as a large window: from the agents page, and with a text to read (a handoff, a rerun). */
+  composerWide = $state(false);
   /** Harnesses Vela knows about and whether they are installed. */
   harnesses = $state.raw<Harness[]>([]);
   /** What each role gets by default, per space (the config can change it). */
@@ -1847,6 +1849,7 @@ export class AppState {
   }
 
   openComposer() {
+    this.composerWide = this.view === "agents";
     this.overlay = "composer";
     // The list is cached by the backend; refresh it behind the open composer.
     void this.loadHarnesses();
@@ -2039,6 +2042,7 @@ export class AppState {
     this.tier = null;
     this.composerText = handoffText(step, a.role, answer);
     this.openComposer();
+    this.composerWide = true;
   }
 
   /** Open the composer with the request of an agent, to edit it and run it again. */
@@ -2048,6 +2052,7 @@ export class AppState {
     this.tier = a.tier ?? null;
     this.composerText = a.prompt ?? "";
     this.openComposer();
+    this.composerWide = (a.prompt ?? "").length > 160 || this.view === "agents";
   }
 
   async cancelAgent(agentId: string) {

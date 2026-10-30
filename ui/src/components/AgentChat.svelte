@@ -481,6 +481,9 @@
     flex-direction: column;
     gap: 12px;
   }
+  .scroll > * {
+    flex-shrink: 0;
+  }
   .you {
     display: flex;
     justify-content: flex-end;
