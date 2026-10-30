@@ -244,8 +244,9 @@ impl ClaudeParser {
     fn result(&self, v: &Value, out: &mut Vec<AgentEvent>) {
         let usage = &v["usage"];
         let n = |k: &str| usage[k].as_u64().unwrap_or(0);
-        let input =
-            n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens");
+        // Cache reads are left out: each tool round re-reads the whole context, so they add up to
+        // hundreds of thousands over a few messages and say nothing about what was spent.
+        let input = n("input_tokens") + n("cache_creation_input_tokens");
         let output = n("output_tokens");
         if input > 0 || output > 0 || v["total_cost_usd"].is_number() {
             out.push(AgentEvent::Usage {

@@ -90,11 +90,11 @@ fn claude_dev_run() {
         }
     );
     assert_eq!(ev[7], msg("Added the refund branch to the webhook."));
-    // Usage counts cache tokens as input.
+    // Usage counts fresh and cache-written tokens as input, not cache reads.
     assert_eq!(
         ev[8],
         AgentEvent::Usage {
-            input_tokens: 2000,
+            input_tokens: 1500,
             output_tokens: 340,
             cost_usd: Some(0.0421),
             model: "claude-sonnet-4-5".into()
