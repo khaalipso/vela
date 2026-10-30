@@ -6,6 +6,7 @@
 import { app } from "./app.svelte";
 import { contextMenuAt, isItem, openAtEvent, SEP, tidy, type MenuAction, type MenuEntry } from "./contextmenu.svelte";
 import { files } from "./files.svelte";
+import { isHtml } from "./htmlpreview";
 import type { FileEntry, TNode } from "./filetree";
 import { fileKey } from "./format";
 import { shortcutFor, type Action, type View } from "./keymap";
@@ -46,6 +47,7 @@ function fileMenu(e: FileEntry): MenuEntry[] {
     it("Open", { shortcut: "Enter", icon: "open", run: () => ops.open(repo, path, false) }),
     it("Open pinned", { icon: "pin", run: () => ops.open(repo, path, true) }),
     it("Open in split view", { run: () => { ops.open(repo, path, true); app.toggleSplit(fileKey(repo, path)); } }),
+    isHtml(path) ? it("Preview", { run: () => app.previewFile(repo, path) }) : null,
     SEP,
     it("Cut", { shortcut: "Ctrl X", run: () => ops.cutEntry(repo, path, false) }),
     it("Copy", { shortcut: "Ctrl C", run: () => ops.copyEntry(repo, path, false) }),
@@ -225,6 +227,7 @@ export function tabMenu(key: string): MenuEntry[] {
     it("Close all", { run: () => ops.closeAllTabs() }),
     SEP,
     it(tab?.pinned === false ? "Pin" : "Unpin", { icon: "pin", run: () => ops.togglePin(key) }),
+    isHtml(path) ? it("Preview", { run: () => app.previewFile(repo, path) }) : null,
     it(app.cui.split === key ? "Close split" : "Open in split view", { run: () => (app.cui.split === key ? app.closeSplit() : app.toggleSplit(key)) }),
     SEP,
     it("Copy path", { icon: "copy", run: () => void ops.copyAbsolute(repo, path) }),

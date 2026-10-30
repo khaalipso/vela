@@ -72,6 +72,7 @@ import type {
   StackItem,
   Tier,
 } from "./types";
+import { isHtml } from "./htmlpreview";
 import { repoBranch, spaceBranches } from "./types";
 import { computeUpNext, readyToCommit, waitingCount, type UpNextInput, type UpNextView } from "./upnext";
 
@@ -437,6 +438,8 @@ export class AppState {
 
   /** Markdown files shown as source instead of the preview (key `space:repo/path`). */
   mdSource = $state<Record<string, true>>({});
+  /** HTML files shown rendered instead of as source (key `space:repo/path`). */
+  htmlRendered = $state<Record<string, true>>({});
   /** Bumped by Ctrl F so the code view opens its find bar. */
   findSeq = $state(0);
   /** The pane of the code view that has the focus: Ctrl F and the change keys go to it. */
@@ -1480,6 +1483,20 @@ export class AppState {
   }
 
   /** Split view: show a file beside the open one (the open file again when none is given); a second call closes it. */
+  /** Shows an HTML file rendered (or back as source). */
+  setRendered(key: string, on: boolean) {
+    const k = `${this.space.id}:${key}`;
+    if (on) this.htmlRendered[k] = true;
+    else delete this.htmlRendered[k];
+  }
+
+  /** Opens an HTML file already rendered. */
+  previewFile(repo: string, path: string) {
+    const key = fileKey(repo, path);
+    this.openFile(this.active, key, true);
+    this.setRendered(key, true);
+  }
+
   toggleSplit(key?: string) {
     const u = this.cui;
     if (u.split && !key) return this.closeSplit();
@@ -2799,7 +2816,8 @@ export class AppState {
         return this.newTerminal();
       case "toggle-preview": {
         const f = this.cui.file;
-        if (!f || !isMarkdown(f)) return this.toast("Preview is for Markdown files");
+        if (f && isHtml(f)) return this.setRendered(f, !this.htmlRendered[`${this.space.id}:${f}`]);
+        if (!f || !isMarkdown(f)) return this.toast("Preview is for Markdown and HTML files");
         const k = `${this.space.id}:${f}`;
         if (this.mdSource[k]) delete this.mdSource[k];
         else this.mdSource[k] = true;
@@ -2959,6 +2977,8 @@ export interface TermTab {
   exited: boolean;
   dock: TermDock;
 }
+
+export { isHtml };
 
 export function isMarkdown(key: string): boolean {
   return /\.(md|markdown|mdx)$/i.test(key);

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { selectAll } from "@codemirror/commands";
-    import { isMarkdown } from "../lib/app.svelte";
+    import { isHtml, isMarkdown } from "../lib/app.svelte";
+    import { inlineAssets } from "../lib/htmlpreview";
   import { colorOfRepo } from "../lib/colors";
   // The Markdown renderer is loaded with the first preview.
   const markdownView = () => import("./MarkdownView.svelte");
@@ -52,6 +53,24 @@
   const rev = $derived(app.contentRev[app.space.id] ?? 0);
   /** A Markdown file shows rendered unless V asked for its source. */
   const preview = $derived(!!current && isMarkdown(current) && !app.mdSource[`${app.space.id}:${current}`]);
+  /** An HTML file shows as the page it is once asked to (the bar's button, or Preview in a menu). */
+  const rendered = $derived(!!current && isHtml(current) && !!app.htmlRendered[`${app.space.id}:${current}`]);
+  let page = $state("");
+  // The page with its local CSS and JS inlined; read again when the file changes.
+  $effect(() => {
+    if (!rendered) return;
+    const sid = app.space.id;
+    const [repo, path] = split(current);
+    void rev;
+    const src = text;
+    let stale = false;
+    void inlineAssets(src, path, (p) =>
+      app.backend.readFile(sid, repo, p).then((f) => f.content, () => null),
+    ).then((h) => {
+      if (!stale) page = h;
+    });
+    return () => (stale = true);
+  });
   const labels = $derived(tabLabels(tabs.map((t) => t.key)));
   // The tabs wrap onto a second line; if two lines are not enough, the oldest tab goes.
   let tabsEl: HTMLDivElement | undefined = $state();
@@ -389,6 +408,15 @@
     <button class="btn" onclick={() => app.dispatch({ type: "toggle-preview" })}>{preview ? "Show source" : "Show preview"} <kbd>V</kbd></button>
   </div>
 {/if}
+{#if current && isHtml(current)}
+  <div class="mdbar">
+    <span>{rendered ? "Preview" : "Source"}</span>
+    <button class="btn" onclick={() => app.dispatch({ type: "toggle-preview" })}>{rendered ? "Show source" : "Show preview"} <kbd>V</kbd></button>
+  </div>
+{/if}
+{#if rendered}
+  <iframe class="page" title="Preview of {current}" sandbox="allow-scripts allow-forms allow-popups" srcdoc={page}></iframe>
+{/if}
 {#if preview}
   <div class="mdscroll">
   {#await markdownView() then { default: MarkdownView }}
@@ -413,7 +441,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="code"
-  class:hidden={!current || preview}
+  class:hidden={!current || preview || rendered}
   bind:this={host}
   oncontextmenu={editorContext}
   onkeydowncapture={(e) => {
@@ -436,6 +464,13 @@
     overflow: hidden;
   }
   /* The pane does not scroll (the editor has its own scroller): the preview needs one. */
+  .page {
+    flex: 1 1 0;
+    min-height: 0;
+    width: 100%;
+    border: 0;
+    background: #fff;
+  }
   .mdscroll {
     flex: 1 1 0;
     min-height: 0;
