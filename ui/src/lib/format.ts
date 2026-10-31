@@ -15,6 +15,7 @@ const TOOLS: Record<string, string> = {
   claude: "Claude Code",
   codex: "Codex",
   opencode: "opencode",
+  droid: "Droid",
   crush: "Crush",
 };
 

@@ -4,6 +4,7 @@ use std::path::Path;
 
 use vela_agents::claude::{self, ClaudeParser};
 use vela_agents::codex::{self, CodexParser};
+use vela_agents::droid::{self, DroidParser};
 use vela_agents::opencode::{self, OpencodeParser};
 use vela_agents::{AgentEvent, Overrides, RunSpec, parse_stream, resolve, resolve_pair};
 use vela_core::config::{AgentsConfig, RoleConfig, TierModels};
@@ -580,4 +581,75 @@ fn reasoning_of_codex_and_opencode() {
     assert!(ev.contains(&AgentEvent::Reasoning {
         text: "Which file?".into()
     }));
+}
+
+// -- droid --------------------------------------------------------------------
+
+const DROID_RUN: &str = r#"{"type":"system","subtype":"init","session_id":"d-1","model":"gpt-5.5"}
+{"type":"message","role":"user","text":"do it","session_id":"d-1"}
+{"type":"message","role":"assistant","text":"Adding the file.","session_id":"d-1"}
+{"type":"tool_call","toolName":"Create","parameters":{"file_path":"/w/api/a.txt","content":"hi"},"session_id":"d-1"}
+{"type":"tool_call","toolName":"Execute","parameters":{"command":"ls"},"session_id":"d-1"}
+{"type":"tool_call","toolName":"ApplyPatch","parameters":{"input":"*** Begin Patch\n*** Update File: src/b.rs\n@@\n*** End Patch"},"session_id":"d-1"}
+{"type":"completion","finalText":"Done.","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":999,"cache_creation_input_tokens":2},"session_id":"d-1"}
+"#;
+
+#[test]
+fn droid_run() {
+    let mut p = DroidParser::new(Path::new("/w/api"), None);
+    let ev = parse_stream(&mut p, DROID_RUN);
+    assert_eq!(
+        ev[0],
+        AgentEvent::SessionStarted {
+            session: "d-1".into()
+        }
+    );
+    assert_eq!(ev[1], msg("Adding the file."));
+    assert!(ev.contains(&AgentEvent::FileChanged {
+        path: "a.txt".into()
+    }));
+    assert!(ev.contains(&AgentEvent::FileChanged {
+        path: "src/b.rs".into()
+    }));
+    assert!(ev.contains(&AgentEvent::Usage {
+        input_tokens: 12,
+        output_tokens: 5,
+        cost_usd: None,
+        model: "gpt-5.5".into(),
+    }));
+    assert_eq!(
+        ev.last(),
+        Some(&AgentEvent::Done {
+            summary: "Done.".into()
+        })
+    );
+}
+
+#[test]
+fn droid_error() {
+    let mut p = DroidParser::new(Path::new("/w"), None);
+    let ev = parse_stream(
+        &mut p,
+        r#"{"type":"error","source":"cli","message":"402 no plan"}"#,
+    );
+    assert_eq!(
+        ev,
+        vec![AgentEvent::Failed {
+            error: "402 no plan".into()
+        }]
+    );
+}
+
+#[test]
+fn droid_args() {
+    let mut s = spec("droid");
+    s.model = Some("gpt-5.5".into());
+    s.effort = Some("high".into());
+    s.session = Some("d-1".into());
+    let a = droid::args(&s);
+    assert_eq!(a.last().unwrap(), "do it");
+    assert!(a.windows(2).any(|w| w == ["--auto", "medium"]));
+    assert!(a.windows(2).any(|w| w == ["--session-id", "d-1"]));
+    s.read_only = true;
+    assert!(!droid::args(&s).contains(&"--auto".to_string()));
 }

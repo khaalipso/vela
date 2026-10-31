@@ -242,7 +242,9 @@ pub fn apply_event(entry: &mut Entry, ev: &AgentEvent, ts: &str) {
             a.usage.input_tokens += input_tokens;
             a.usage.output_tokens += output_tokens;
             a.usage.cost_usd += cost_usd.unwrap_or(0.0);
-            if a.model.is_none() && !matches!(model.as_str(), "claude" | "codex" | "opencode") {
+            if a.model.is_none()
+                && !matches!(model.as_str(), "claude" | "codex" | "opencode" | "droid")
+            {
                 a.model = Some(model.clone());
             }
         }

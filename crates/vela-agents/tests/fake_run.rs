@@ -381,7 +381,7 @@ fn detect_reports_installed_harnesses_with_versions() {
     script(&e.bin, "claude", FAKE_CLAUDE);
     script(&e.bin, "codex", "echo 'codex-cli 0.0.1'\n");
     let found = detect(Some(e.bin.as_os_str()));
-    assert_eq!(found.len(), 3);
+    assert_eq!(found.len(), 4);
     let by = |n: &str| found.iter().find(|h| h.name == n).unwrap();
     assert!(by("claude").available);
     assert_eq!(by("claude").version.as_deref(), Some("9.9.9 (Fake Claude)"));

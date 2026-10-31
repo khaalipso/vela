@@ -14,6 +14,7 @@ One `AgentDriver` per harness, all producing the same normalized event stream.
 | Codex | ACP adapter (`codex-acp`) | `codex exec --json`, `codex exec resume` |
 | opencode | `opencode acp`, or `opencode serve` HTTP + SSE | `opencode run` |
 | Gemini CLI | ACP (`--experimental-acp`) | none |
+| Droid (Factory) | `droid exec --output-format stream-json`, `--session-id <session>` | none |
 | Crush | `crush run` non interactive | none |
 | Any API model | direct provider API, for Vela's own small tasks | none |
 

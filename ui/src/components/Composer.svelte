@@ -60,7 +60,7 @@
   </div>
   <div class="row" aria-label="Harness and tier">
     {#if app.installedHarnesses.length === 0}
-      <span class="none">No agent CLI found on this machine (claude, codex or opencode).</span>
+      <span class="none">No agent CLI found on this machine (claude, codex, opencode or droid).</span>
     {/if}
     {#each app.installedHarnesses as h (h.name)}
       <button

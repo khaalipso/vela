@@ -1536,13 +1536,15 @@ export class MockBackend implements Backend {
       claude: ["low", "medium", "high", "xhigh", "max"],
       codex: ["minimal", "low", "medium", "high", "xhigh"],
       opencode: ["minimal", "low", "medium", "high", "max"],
+      droid: ["low", "medium", "high", "xhigh", "max"],
     };
     const models: Record<string, string[]> = {
       claude: ["opus", "sonnet", "haiku"],
       codex: [],
       opencode: ["opencode/big-pickle", "openrouter/deepseek/deepseek-v4.1-flash"],
+      droid: ["claude-opus-5-5", "claude-sonnet-5", "gpt-5.5"],
     };
-    return (["claude", "codex", "opencode"] as const).map((h) => ({
+    return (["claude", "codex", "opencode", "droid"] as const).map((h) => ({
       harness: h,
       label: toolLabel(h),
       available: true,

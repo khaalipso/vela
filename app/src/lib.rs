@@ -111,6 +111,7 @@ pub fn run() {
             std::thread::spawn(move || {
                 agents.harnesses();
                 commands::agent_models(&agents, "opencode");
+                commands::agent_models(&agents, "droid");
             });
             Ok(())
         })

@@ -18,7 +18,7 @@ use crate::event::AgentEvent;
 /// Everything a driver needs to start one run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunSpec {
-    /// "claude", "codex" or "opencode".
+    /// "claude", "codex", "opencode" or "droid".
     pub harness: String,
     /// None: the harness picks its default model.
     pub model: Option<String>,

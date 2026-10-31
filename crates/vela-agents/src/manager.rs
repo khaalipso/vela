@@ -15,6 +15,7 @@ use crate::claude::ClaudeDriver;
 use crate::codex::CodexDriver;
 use crate::detect::{HarnessInfo, detect};
 use crate::driver::{AgentDriver, Canceller, Replier, RunHandle, RunSpec};
+use crate::droid::DroidDriver;
 use crate::event::AgentEvent;
 use crate::opencode::OpencodeDriver;
 use crate::registry::{self, Entry, LogEntry};
@@ -91,6 +92,7 @@ impl Drivers {
             "claude" => Box::new(ClaudeDriver::with_path(p)),
             "codex" => Box::new(CodexDriver::with_path(p)),
             "opencode" => Box::new(OpencodeDriver::with_path(p)),
+            "droid" => Box::new(DroidDriver::with_path(p)),
             _ => return None,
         })
     }

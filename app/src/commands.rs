@@ -1015,7 +1015,14 @@ pub fn git_commit(vela: &Vela, id: &str, repo: &str, hash: &str) -> AppResult<St
         .ok_or_else(|| AppError::invalid(format!("no repo {repo}")))?;
     let mut out = vela_core::git::git(
         std::path::Path::new(&r.worktree),
-        &["show", "--format=", "--no-color", "-M", "--no-ext-diff", hash],
+        &[
+            "show",
+            "--format=",
+            "--no-color",
+            "-M",
+            "--no-ext-diff",
+            hash,
+        ],
     )?;
     if out.len() > 600_000 {
         let mut cut = 600_000;
@@ -1338,7 +1345,8 @@ fn init_repo(dir: &Path, name: &str) -> AppResult<()> {
     git(dir, &["init", "-q", "-b", "main"])?;
     let readme = dir.join("README.md");
     if !readme.exists() {
-        fs::write(&readme, format!("# {name}\n")).map_err(|e| AppError::new("io", e.to_string()))?;
+        fs::write(&readme, format!("# {name}\n"))
+            .map_err(|e| AppError::new("io", e.to_string()))?;
     }
     git(dir, &["add", "README.md"])?;
     git(dir, &["commit", "-q", "-m", "chore: initial commit"])?;
@@ -1391,7 +1399,7 @@ pub fn declare_repo_in(vela: &Vela, path: &str, init_empty: bool) -> AppResult<V
             Err(_) => {
                 return Err(AppError::invalid(format!(
                     "not a git repo, and no repo inside: {raw}"
-                )))
+                )));
             }
         }
     };
@@ -1444,6 +1452,7 @@ pub fn efforts_of(harness: &str) -> Vec<String> {
         "claude" => &["low", "medium", "high", "xhigh", "max"],
         "codex" => &["minimal", "low", "medium", "high", "xhigh"],
         "opencode" => &["minimal", "low", "medium", "high", "max"],
+        "droid" => &["low", "medium", "high", "xhigh", "max"],
         _ => &[],
     };
     v.iter().map(|s| s.to_string()).collect()
@@ -1502,6 +1511,26 @@ fn models_of(harness: &str, bin: Option<&str>) -> Vec<String> {
                     .collect()
             })
             .unwrap_or_default(),
+        // `droid exec --help` ends with the "Available Models" table: `<id>   <name>` lines.
+        "droid" => bin
+            .and_then(|b| {
+                std::process::Command::new(b)
+                    .args(["exec", "--help"])
+                    .stdin(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .output()
+                    .ok()
+            })
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .skip_while(|l| !l.starts_with("Available Models:"))
+                    .skip(1)
+                    .take_while(|l| !l.trim().is_empty())
+                    .filter_map(|l| l.split_whitespace().next().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
         _ => Vec::new(),
     }
 }
@@ -1529,8 +1558,8 @@ pub fn agent_tiers(agents: &AgentManager) -> Vec<HarnessTiers> {
                         effort: efforts.and_then(|m| m.get(t)).map(str::to_string),
                     })
                     .collect(),
-                // Cheap ones now; opencode's list comes from `agent_models`.
-                models: if *h == "opencode" {
+                // Cheap ones now; the lists of opencode and droid come from `agent_models`.
+                models: if matches!(*h, "opencode" | "droid") {
                     Vec::new()
                 } else {
                     models_of(h, None)
@@ -1935,7 +1964,9 @@ pub fn rename_branch(vela: &Vela, id: &str, branch: &str, repo: Option<&str>) ->
     if before != after {
         for e in vela_agents::registry::load(vela, id).unwrap_or_default() {
             if e.agent.branch == before {
-                let _ = vela_agents::registry::update(vela, id, &e.agent.id, |x| x.agent.branch = after.clone());
+                let _ = vela_agents::registry::update(vela, id, &e.agent.id, |x| {
+                    x.agent.branch = after.clone()
+                });
             }
         }
     }
@@ -1943,7 +1974,11 @@ pub fn rename_branch(vela: &Vela, id: &str, branch: &str, repo: Option<&str>) ->
 }
 
 /// The branches of one repo of the space, to jump from one to another.
-pub fn list_branches(vela: &Vela, id: &str, repo: &str) -> AppResult<Vec<vela_core::branches::BranchInfo>> {
+pub fn list_branches(
+    vela: &Vela,
+    id: &str,
+    repo: &str,
+) -> AppResult<Vec<vela_core::branches::BranchInfo>> {
     let space = load(vela, id)?;
     let r = space
         .repo(repo)
@@ -1958,7 +1993,9 @@ pub fn switch_branch(vela: &Vela, id: &str, branch: &str, repo: Option<&str>) ->
     let _inv = Invalidate(id);
     let branch = branch.trim();
     if !vela_core::branches::is_valid(branch) {
-        return Err(AppError::invalid(format!("{branch} is not a valid branch name")));
+        return Err(AppError::invalid(format!(
+            "{branch} is not a valid branch name"
+        )));
     }
     let space = load(vela, id)?;
     if let Some(name) = repo
@@ -1966,7 +2003,11 @@ pub fn switch_branch(vela: &Vela, id: &str, branch: &str, repo: Option<&str>) ->
     {
         return Err(AppError::invalid(format!("no repo {name} in this space")));
     }
-    let targets: Vec<_> = space.repos.iter().filter(|r| repo.is_none_or(|n| r.name == n)).collect();
+    let targets: Vec<_> = space
+        .repos
+        .iter()
+        .filter(|r| repo.is_none_or(|n| r.name == n))
+        .collect();
     for r in &targets {
         vela_core::space::refuse_if_checked_out_elsewhere(Path::new(&r.worktree), &r.name, branch)?;
     }
@@ -1974,7 +2015,11 @@ pub fn switch_branch(vela: &Vela, id: &str, branch: &str, repo: Option<&str>) ->
     for r in &targets {
         let wt = Path::new(&r.worktree);
         let previous = vela_core::git::head_branch(wt).unwrap_or_else(|| r.branch.clone());
-        let base = if r.base.is_empty() { previous.clone() } else { r.base.clone() };
+        let base = if r.base.is_empty() {
+            previous.clone()
+        } else {
+            r.base.clone()
+        };
         if let Err(e) = vela_core::space::switch_to(wt, branch, &base) {
             // Back to where the repos were, so the space is not half moved.
             for (path, prev) in switched.iter().rev() {

@@ -69,7 +69,7 @@ once, before you commit.
 - macOS: the Xcode command line tools (`xcode-select --install`).
 - Linux: WebKitGTK 4.1 development files. `make install` names the packages for Arch,
   Debian/Ubuntu and Fedora when they are missing.
-- At least one agent CLI on the `PATH` for the agent features: `claude`, `codex` or `opencode`.
+- At least one agent CLI on the `PATH` for the agent features: `claude`, `codex`, `opencode` or `droid`.
 
 ## Installation
 

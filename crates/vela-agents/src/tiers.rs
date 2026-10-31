@@ -20,13 +20,14 @@ use vela_core::config::AgentsConfig;
 use vela_core::model::{AgentRole, Tier};
 
 /// The harnesses Vela can drive, in the order it falls back to them.
-pub const HARNESSES: [&str; 3] = ["claude", "codex", "opencode"];
+pub const HARNESSES: [&str; 4] = ["claude", "codex", "opencode", "droid"];
 
 pub fn harness_label(name: &str) -> &str {
     match name {
         "claude" => "Claude Code",
         "codex" => "Codex",
         "opencode" => "opencode",
+        "droid" => "Droid",
         other => other,
     }
 }
