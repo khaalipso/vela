@@ -39,7 +39,7 @@
     {#each app.space.repos as r (r.name)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <span class="chip" class:old={r.worktree !== r.source} style:--rc={colorOfRepo(app.space, r.name)} oncontextmenu={(e) => openAtEvent(e, repoChipMenu(r.name), r.name)}>
-        <button class="chipb" title={`${r.worktree}, on ${repoBranch(app.space, r.name)}${r.worktree !== r.source ? `\nStill in a Vela worktree: right click, "Work in my clone"` : ""}`} onclick={() => { if (!app.filesOpen) app.dispatch({ type: "toggle-files" }); }}><b>{r.name}</b>{#if split}<span class="rb mono">{repoBranch(app.space, r.name)}</span>{/if}</button>
+        <button class="chipb" title={`${r.name === app.defaultRepo ? "Default repo (terminal, git…)" : "Click to make it the default repo (terminal, git…)"}\n${r.worktree}, on ${repoBranch(app.space, r.name)}${r.worktree !== r.source ? `\nStill in a Vela worktree: right click, "Work in my clone"` : ""}`} onclick={() => app.setDefaultRepo(r.name)}>{#if r.name === app.defaultRepo}<span class="crown" aria-hidden="true">👑</span>{/if}<b>{r.name}</b>{#if split}<span class="rb mono">{repoBranch(app.space, r.name)}</span>{/if}</button>
         {#if app.space.repos.length > 1}
           <button class="rm" aria-label={`Remove ${r.name} from this space`} title="Remove from this space (the repo itself is not touched)" onclick={() => app.dispatch({ type: "remove-repo", repo: r.name })}>×</button>
         {/if}
@@ -72,6 +72,10 @@
     width: 10px;
     height: 10px;
     background: var(--space);
+  }
+  .crown {
+    margin-right: 4px;
+    font-size: 11px;
   }
   .chipb {
     display: flex;

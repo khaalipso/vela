@@ -532,7 +532,7 @@ class Ops {
   /** A list of the branches to jump to: type to filter, or to name a new one. */
   async askSwitchBranch(repo?: string) {
     const space = app.space;
-    const name = repo ?? space.repos[0]?.name;
+    const name = repo ?? app.defaultRepo;
     if (!name) return;
     let list: Awaited<ReturnType<typeof app.backend.listBranches>> = [];
     try {

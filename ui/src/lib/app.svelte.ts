@@ -734,8 +734,13 @@ export class AppState {
     return this.checkLogs[this.space.id]?.[checkKey(repo, id)] ?? [];
   }
   /** The gate rows: real check results first, then whatever the backend gate says. */
+  /** The checks that gate the commit: the ones of the repo being committed, not of the others. */
+  private get gateChecks() {
+    const repo = this.cc?.repo;
+    return repo ? this.sd.checks.filter((r) => r.repo === repo) : this.sd.checks;
+  }
   get gateRows() {
-    return [...gateFromChecks(this.sd.checks), ...(this.gate?.checks ?? [])];
+    return [...gateFromChecks(this.gateChecks), ...(this.gate?.checks ?? [])];
   }
 
   private setRv(patch: Partial<RvState>) {
@@ -1121,10 +1126,26 @@ export class AppState {
     };
   }
 
+  /** Default repo picked per space id, on top of what localStorage remembers. */
+  private defaultRepos_: Record<string, string> = $state({});
+
   // -- derived --------------------------------------------------------------
 
   get space(): Space {
     return this.spaces[this.active];
+  }
+  /** The repo the terminal, git and the like use when none is named: the one picked in the top bar
+   *  (remembered per space), else the first of the space. */
+  get defaultRepo(): string {
+    const names = this.space.repos.map((r) => r.name);
+    const id = this.space.id;
+    const picked = this.defaultRepos_[id] ?? readStr(`vela.defaultRepo.${id}`);
+    return picked && names.includes(picked) ? picked : names[0];
+  }
+  setDefaultRepo(name: string) {
+    const id = this.space.id;
+    this.defaultRepos_[id] = name;
+    writeStr(`vela.defaultRepo.${id}`, name);
   }
   get sd(): SpaceData {
     return this.data[this.space.id];
@@ -1268,7 +1289,7 @@ export class AppState {
 
   get gateOk(): boolean {
     const g = this.gate;
-    if (!g || !g.done || !gateSettled(this.sd.checks)) return false;
+    if (!g || !g.done || !gateSettled(this.gateChecks)) return false;
     return this.gateRows.every((c) => c.pass) || g.reason.trim().length > 3;
   }
 
@@ -1786,9 +1807,10 @@ export class AppState {
     const sid = this.space.id;
     if (!this.isTermOpen(dock)) this.setTermOpen(dock, true);
     try {
+      repo ??= this.defaultRepo;
       const id = await this.backend.termOpen(sid, repo, cols, rows);
       const n = this.terms.filter((t) => t.spaceId === sid).length + 1;
-      const name = repo ?? this.spaces.find((x) => x.id === sid)?.repos[0]?.name ?? "shell";
+      const name = repo ?? this.defaultRepo;
       this.terms.push({ id, spaceId: sid, title: n > 1 ? `${name} ${n}` : name, exited: false, dock });
       this.focusTerm(dock, id);
     } catch (e) {
@@ -2301,7 +2323,7 @@ export class AppState {
   private commitRepoFor(repos: string[]): string {
     const here = this.view === "code" && this.cui.file ? this.cui.file.split("/")[0] : undefined;
     if (here && repos.includes(here)) return here;
-    return this.space.repos.map((r) => r.name).find((r) => repos.includes(r)) ?? repos[0];
+    return repos.includes(this.defaultRepo) ? this.defaultRepo : repos[0];
   }
 
   /** The repos with staged changes, in the order of the space. */
