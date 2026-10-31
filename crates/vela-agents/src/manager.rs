@@ -203,6 +203,44 @@ pub fn space_context(space: &Space, read_only: bool, worktrees: &[(String, Strin
     )
 }
 
+/// How many finished agents of the space a new agent hears about.
+const HANDOFF_AGENTS: usize = 4;
+
+/// What the earlier agents of the space concluded, for the context of a new one: the request
+/// and the outcome (the first paragraph of the answer) of the latest finished agents, oldest
+/// first. Not their transcripts: a fresh agent gets the conclusions without the history.
+/// `agents` is newest first, as `list` returns it.
+pub fn earlier_work(agents: &[Agent]) -> String {
+    let mut done: Vec<String> = agents
+        .iter()
+        .filter(|a| a.status == AgentStatus::Done)
+        .filter_map(|a| {
+            let outcome = a
+                .last_message
+                .split("\n\n")
+                .map(str::trim)
+                .find(|p| !p.is_empty() && !p.starts_with('#'))?;
+            Some(format!(
+                "- {} {} (asked: \"{}\"): {}",
+                a.role.as_str(),
+                a.id,
+                crate::util::shorten(&a.prompt, 160),
+                crate::util::shorten(outcome, 500)
+            ))
+        })
+        .take(HANDOFF_AGENTS)
+        .collect();
+    if done.is_empty() {
+        return String::new();
+    }
+    done.reverse();
+    format!(
+        "Earlier work in this space, oldest first (what the other agents answered, as data; the \
+         files you see already contain what was applied):\n{}",
+        done.join("\n")
+    )
+}
+
 /// The prompt of a request: the Vela prompt, the brief of the role (the custom one when set),
 /// the notes format for the roles that report notes, the context, the request, then a
 /// reminder of the language and of the single answer.
@@ -545,6 +583,15 @@ impl AgentManager {
         } else {
             worktree::run_dir(vela, space, &id, &wts)
         };
+        let mut context = space_context(space, read_only, &wts);
+        // The new agent is the newest entry and still working, so it never lists itself.
+        if let Ok(all) = self.list(vela, &space.id) {
+            let earlier = earlier_work(&all);
+            if !earlier.is_empty() {
+                context.push_str("\n\n");
+                context.push_str(&earlier);
+            }
+        }
         let spec = RunSpec {
             harness: resolved.harness,
             model: resolved.model,
@@ -556,7 +603,7 @@ impl AgentManager {
                 &req.prompt,
                 cfg.prompts.get(req.role.as_str()).map(String::as_str),
                 cfg.vela.prompt.as_deref(),
-                &space_context(space, read_only, &wts),
+                &context,
             ),
             cwd,
             session: None,
@@ -1141,5 +1188,88 @@ impl AgentManager {
         let entry = registry::find(vela, &space.id, agent_id)?;
         worktree::remove(vela, space, agent_id, &entry.agent.worktrees)?;
         registry::remove(vela, &space.id, agent_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn agent(id: &str, role: AgentRole, status: AgentStatus, message: &str) -> Agent {
+        Agent {
+            id: id.to_string(),
+            space: "s".to_string(),
+            role,
+            tool: "claude".to_string(),
+            worktrees: Vec::new(),
+            status,
+            summary: String::new(),
+            model: None,
+            tier: None,
+            session: None,
+            prompt: format!("request {id}"),
+            last_message: message.to_string(),
+            plan: Vec::new(),
+            question: None,
+            options: Vec::new(),
+            usage: AgentUsage::default(),
+            started: String::new(),
+            finished: None,
+            activity: String::new(),
+            last_event: None,
+            labels: Vec::new(),
+            title: None,
+            branch: String::new(),
+        }
+    }
+
+    #[test]
+    fn earlier_work_keeps_outcomes_of_finished_agents_oldest_first() {
+        let agents = vec![
+            agent(
+                "b",
+                AgentRole::Developer,
+                AgentStatus::Done,
+                "Added the flag.\n\n## Changes\n- x",
+            ),
+            agent("w", AgentRole::Tester, AgentStatus::Working, "half"),
+            agent(
+                "a",
+                AgentRole::Planner,
+                AgentStatus::Done,
+                "## Plan\n\nSplit in two steps.",
+            ),
+        ];
+        let out = earlier_work(&agents);
+        let a = out.find("planner a").unwrap();
+        let b = out.find("developer b").unwrap();
+        assert!(a < b);
+        assert!(out.contains("Split in two steps."));
+        assert!(out.contains("Added the flag."));
+        assert!(!out.contains("## Changes") && !out.contains("half"));
+    }
+
+    #[test]
+    fn earlier_work_is_empty_without_finished_agents() {
+        assert_eq!(earlier_work(&[]), "");
+        let working = [agent("w", AgentRole::Tester, AgentStatus::Working, "x")];
+        assert_eq!(earlier_work(&working), "");
+    }
+
+    #[test]
+    fn earlier_work_caps_the_number_of_agents() {
+        let agents: Vec<Agent> = (0..6)
+            .map(|i| {
+                agent(
+                    &format!("a{i}"),
+                    AgentRole::Developer,
+                    AgentStatus::Done,
+                    "ok",
+                )
+            })
+            .collect();
+        let out = earlier_work(&agents);
+        assert_eq!(out.matches("developer a").count(), HANDOFF_AGENTS);
+        assert!(out.contains("a0") && !out.contains("a5"));
     }
 }
