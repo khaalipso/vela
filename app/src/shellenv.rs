@@ -1,7 +1,9 @@
 //! An app started from the Dock, Finder or a desktop launcher gets a short `PATH`
 //! (`/usr/bin:/bin:...` on macOS), so the harnesses, `pnpm`, `mise` and the like are not
 //! found. Before anything else runs, Vela asks the user's login shell for its `PATH` and puts
-//! it in front of the one it was given.
+//! it in front of the one it was given. The other variables of that shell (API keys exported
+//! in `.bashrc`, which custom models of the harnesses refer to) are imported too, unless the
+//! process already has them.
 
 use std::io::IsTerminal;
 use std::process::{Command, Stdio};
@@ -28,7 +30,17 @@ pub fn merge(first: &str, rest: &str) -> String {
     seen.join(":")
 }
 
-fn login_path(timeout: Duration) -> Option<String> {
+/// The `NAME=value` pairs of the NUL separated `env -0` output.
+pub fn parse_env(out: &str) -> Vec<(String, String)> {
+    out.split('\0')
+        .filter_map(|kv| kv.split_once('='))
+        .filter(|(k, _)| !k.is_empty() && !k.contains(['\n', ' ']))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+/// The environment of the user's login shell, as printed between the markers.
+fn login_env(timeout: Duration) -> Option<String> {
     let shell = std::env::var("SHELL")
         .ok()
         .filter(|s| !s.is_empty())
@@ -44,7 +56,7 @@ fn login_path(timeout: Duration) -> Option<String> {
             "-l",
             "-i",
             "-c",
-            &format!("printf '{MARK}%s{MARK}' \"$PATH\""),
+            &format!("printf '{MARK}'; env -0; printf '{MARK}'"),
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -73,12 +85,21 @@ pub fn import_login_path() {
     if std::io::stdin().is_terminal() || std::env::var_os("VELA_KEEP_PATH").is_some() {
         return;
     }
-    let Some(login) = login_path(Duration::from_secs(3)) else {
+    let Some(raw) = login_env(Duration::from_secs(3)) else {
         return;
     };
-    let current = std::env::var("PATH").unwrap_or_default();
-    // SAFETY: called at the start of main, before any other thread exists.
-    unsafe { std::env::set_var("PATH", merge(&login, &current)) };
+    for (k, v) in parse_env(&raw) {
+        if k == "PATH" {
+            let current = std::env::var("PATH").unwrap_or_default();
+            // SAFETY: called at the start of main, before any other thread exists.
+            unsafe { std::env::set_var("PATH", merge(&v, &current)) };
+        } else if std::env::var_os(&k).is_none()
+            && !matches!(k.as_str(), "_" | "SHLVL" | "PWD" | "OLDPWD")
+        {
+            // SAFETY: as above.
+            unsafe { std::env::set_var(&k, &v) };
+        }
+    }
 }
 
 #[cfg(test)]
@@ -90,6 +111,10 @@ mod tests {
         let out = format!("motd line\n{MARK}/opt/homebrew/bin:/usr/bin{MARK}\n");
         assert_eq!(extract(&out).as_deref(), Some("/opt/homebrew/bin:/usr/bin"));
         assert_eq!(extract("nothing"), None);
+        assert_eq!(
+            parse_env("A=1\0B=x=y\0junk\0"),
+            vec![("A".into(), "1".into()), ("B".into(), "x=y".into())]
+        );
         assert_eq!(
             merge("/a:/usr/bin", "/usr/bin:/bin::/a"),
             "/a:/usr/bin:/bin"
