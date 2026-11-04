@@ -267,7 +267,7 @@ const changeGutter = gutter({
   },
 });
 
-// -- changed text: a discreet green highlight where text was added or modified ----
+// -- changed text: a discreet green highlight where text was modified inside a line ----
 
 /** A stretch of text of one line (1-based document line, offsets inside the line). */
 export interface ChangeSpan {
@@ -296,7 +296,8 @@ export function changeSpans(
       } else if (l.kind === "add" && l.new !== null) {
         const line = l.new - firstLine + 1;
         const old = prev === "add" || prev === "del" ? dels.shift() : undefined;
-        if (line >= 1 && line <= docLines) {
+        // A line that is new as a whole is not highlighted: its green bar says it.
+        if (line >= 1 && line <= docLines && old !== undefined) {
           let from = l.text.length - l.text.trimStart().length;
           let to = l.text.trimEnd().length;
           if (old !== undefined && old !== l.text) {
@@ -430,7 +431,8 @@ export const editorTheme = EditorView.theme({
   ".cm-change-gutter .cm-gutterElement": { width: "6px", cursor: "pointer", position: "relative" },
   ".cm-chg": { position: "absolute", left: "1px", top: "1px", bottom: "1px", width: "4px", borderRadius: "2px" },
   ".cm-chg:hover": { width: "6px", left: "0" },
-  ".cm-chg-unstaged.cm-chg-add, .cm-chg-unstaged.cm-chg-mod": { background: "var(--warn)" },
+  ".cm-chg-unstaged.cm-chg-mod": { background: "var(--warn)" },
+  ".cm-chg-unstaged.cm-chg-add": { background: "var(--add)" },
   ".cm-chg-staged.cm-chg-add, .cm-chg-staged.cm-chg-mod": { background: "var(--add)" },
   ".cm-chg-staged.cm-chg-mod": { backgroundImage: "repeating-linear-gradient(180deg, transparent 0 3px, rgba(0,0,0,0.25) 3px 4px)" },
   ".cm-chg-unstaged.cm-chg-mod": { backgroundImage: "repeating-linear-gradient(180deg, transparent 0 3px, rgba(0,0,0,0.25) 3px 4px)" },
