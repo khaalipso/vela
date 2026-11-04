@@ -31,6 +31,7 @@ import type {
   RepoChecks,
   RepoFiles,
   RoleDefault,
+  CustomAgent,
   Space,
   StackItem,
   Tier,
@@ -322,6 +323,18 @@ export interface AskOptions {
   /** A harness name ("claude", "codex", "opencode"); null keeps the role's. */
   harness?: string | null;
   tier?: Tier | null;
+  /** The id of a custom agent to ask as. */
+  custom?: string | null;
+}
+
+/** What the settings send to make or change a custom agent (`id` empty: a new one). */
+export interface CustomAgentInput {
+  id?: string | null;
+  name: string;
+  role: AgentRole;
+  prompt: string;
+  harness?: string | null;
+  tier?: Tier | null;
 }
 
 /** `vela://agent`: one event of one agent. */
@@ -509,6 +522,11 @@ export interface Backend {
   setVelaModel(enabled: boolean, harness: string | null, model: string | null): Promise<VelaModelSetting>;
   /** The brief of every role. */
   agentPrompts(): Promise<RolePrompt[]>;
+  /** A file outside the spaces in a small window of its own; no path asks for one. False: none picked. */
+  openFileWindow(path: string | null): Promise<boolean>;
+  customAgents(spaceId: string): Promise<CustomAgent[]>;
+  saveCustomAgent(spaceId: string, input: CustomAgentInput): Promise<void>;
+  deleteCustomAgent(spaceId: string, id: string): Promise<void>;
   /** Set the brief of a role; null or blank goes back to the built in one. */
   setAgentPrompt(role: AgentRole, text: string | null): Promise<void>;
   velaPrompt(): Promise<VelaPrompt>;
@@ -1422,6 +1440,8 @@ export class MockBackend implements Backend {
 
   async askAgent(spaceId: string, role: AgentRole, prompt: string, opts?: AskOptions): Promise<Agent> {
     const s = this.sp(spaceId);
+    const custom = opts?.custom ? (this.customs.get(spaceId) ?? []).find((c) => c.id === opts.custom) : undefined;
+    if (custom) role = custom.role;
     const tool = opts?.harness ?? toolForRole(role);
     const wt = `wt/${repoBranch(s.space, s.space.repos[0].name).split("/").pop()}-${role}`;
     const now = new Date().toISOString();
@@ -1436,6 +1456,7 @@ export class MockBackend implements Backend {
       summary: prompt,
       prompt,
       tier: opts?.tier ?? null,
+      custom: custom?.name ?? null,
       session: `5e55${n.toString(16).padStart(4, "0")}-7a1c-4c2e-9f0d-${spaceId.length.toString(16).padStart(4, "0")}b1e2c3d4`,
       started: now,
       lastEvent: now,
@@ -1588,6 +1609,22 @@ export class MockBackend implements Backend {
       notes: role === "reviewer" || role === "security",
     }));
   }
+  async openFileWindow(): Promise<boolean> {
+    return false;
+  }
+  private customs = new Map<string, CustomAgent[]>();
+  async customAgents(spaceId: string): Promise<CustomAgent[]> {
+    return this.customs.get(spaceId) ?? [];
+  }
+  async saveCustomAgent(spaceId: string, input: CustomAgentInput): Promise<void> {
+    const id = input.id || input.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const rest = (this.customs.get(spaceId) ?? []).filter((c) => c.id !== id);
+    this.customs.set(spaceId, [...rest, { id, name: input.name.trim(), role: input.role, prompt: input.prompt.trim(), harness: input.harness ?? null, tier: input.tier ?? null }]);
+  }
+  async deleteCustomAgent(spaceId: string, id: string): Promise<void> {
+    this.customs.set(spaceId, (this.customs.get(spaceId) ?? []).filter((c) => c.id !== id));
+  }
+
   async setAgentPrompt(role: AgentRole, text: string | null): Promise<void> {
     const t = text?.trim();
     if (t) this.prompts[role] = t;
@@ -2726,7 +2763,28 @@ export class TauriBackend implements Backend {
       prompt,
       harness: opts?.harness ?? null,
       tier: opts?.tier ?? null,
+      custom: opts?.custom ?? null,
     });
+  }
+  customAgents(spaceId: string) {
+    return call<CustomAgent[]>("custom_agents", { spaceId });
+  }
+  openFileWindow(path: string | null) {
+    return call<boolean>("open_file_window", { path });
+  }
+  async saveCustomAgent(spaceId: string, input: CustomAgentInput) {
+    await call("save_custom_agent", {
+      spaceId,
+      key: input.id ?? null,
+      name: input.name,
+      role: input.role,
+      prompt: input.prompt,
+      harness: input.harness ?? null,
+      tier: input.tier ?? null,
+    });
+  }
+  async deleteCustomAgent(spaceId: string, id: string) {
+    await call("delete_custom_agent", { spaceId, key: id });
   }
   question(spaceId: string) {
     return call<AgentQuestion | null>("question", { spaceId });

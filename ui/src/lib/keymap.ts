@@ -81,6 +81,7 @@ export type Action =
   | { type: "toggle-preview" } // V in the code view: Markdown preview
   | { type: "open-settings" } // agent tiers: model and effort per harness
   | { type: "open-prompts" } // the brief of each agent role
+  | { type: "open-loose-file" } // one file outside the spaces, in a small window
   | { type: "open-branch-settings" } // how new branches are named
   | { type: "agent-move"; delta: 1 | -1 } // J / K in the agents view
   | { type: "change-move"; delta: 1 | -1 } // Ctrl Alt Down / Up in the code view: next, previous change of yours

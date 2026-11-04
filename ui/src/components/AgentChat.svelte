@@ -284,8 +284,11 @@
     app.openPeek(a.dataset.repo ?? "", a.dataset.path);
   }
 
-  async function load(id: string) {
+  /** Read the log. `follow` (opening an agent) goes to the end; a live event (a tool, a message)
+   *  never moves you: you stay where you read, whatever grows around it. */
+  async function load(id: string, follow = false) {
     const seq = ++loadSeq;
+    const kept = scroller?.scrollTop;
     try {
       const l = await app.backend.agentLog(app.space.id, id);
       if (seq !== loadSeq) return;
@@ -294,7 +297,9 @@
       if (seq === loadSeq) log = [];
     }
     await tick();
-    if (stick) bottom();
+    if (follow) {
+      if (stick) bottom();
+    } else if (scroller && kept !== undefined) scroller.scrollTop = kept;
   }
 
   // Follow the end of the log, but never past the start of the latest answer: a long reply
@@ -329,7 +334,7 @@
       sectionOpen = readSections(id);
       seenBefore = Number(localStorage.getItem(seenKey(id)) ?? 0) || 0;
       finding = false;
-      void load(id);
+      void load(id, true);
     });
   });
 
@@ -431,7 +436,7 @@
 <section class="chat" aria-label="Conversation with {agent.id}" style:--rc={ROLE_COLORS[agent.role]}>
   <header class="ch">
     <span class="dot" class:pulse={running} style:--c={agentStatusColor(agent.status)}></span>
-    <b>{agentName(agent.id)}</b><span class="role">{roleLabel(agent.role)}</span>
+    <b>{agentName(agent.id)}</b><span class="role">{agent.custom || roleLabel(agent.role)}</span>
     {#if agent.title}<h2 class="title" title={agent.title}>{agent.title}</h2>{/if}
     <span class="tags">
       <span class="tag">{toolLabel(agent.tool)}</span>

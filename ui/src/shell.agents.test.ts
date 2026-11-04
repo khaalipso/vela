@@ -103,7 +103,7 @@ describe("composer pickers", () => {
     await settle();
     press("Enter", {}, ta);
     await settle();
-    expect(ask).toHaveBeenCalledWith(expect.any(String), "developer", "Handle charge.refunded", { harness: "codex", tier: "high" });
+    expect(ask).toHaveBeenCalledWith(expect.any(String), "developer", "Handle charge.refunded", { harness: "codex", tier: "high", custom: null });
     // The harness stays picked for the next requests (and is remembered); the tier is for one request.
     expect(app.harness).toBe("codex");
     expect(localStorage.getItem("vela.harness")).toBe("codex");

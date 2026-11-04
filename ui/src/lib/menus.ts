@@ -13,7 +13,7 @@ import { shortcutFor, type Action, type View } from "./keymap";
 import type { PaletteItem } from "./palette";
 import { ops, readClipboard, SPACE_COLORS, splitKey, writeClipboard, basename, dirname } from "./ops.svelte";
 import type { FileRow } from "./review";
-import type { Hunk, Link, Space } from "./types";
+import type { Agent, Hunk, Link, Space } from "./types";
 import { repoBranch, spaceBranches } from "./types";
 
 type Part = Omit<MenuAction, "id"> & { id?: string };
@@ -108,6 +108,16 @@ function folderMenu(n: TNode): MenuEntry[] {
     it("Reveal in file manager", { icon: "reveal", run: () => void ops.reveal(repo, path) }),
     it("Open terminal here", { icon: "terminal", run: () => void ops.terminal(repo, path) }),
     it("Filter to this folder", { icon: "filter", run: () => ops.filterToFolder(repo, path) }),
+  ]);
+}
+
+/** Menu of the empty part of the tree: create at the root of the repo the tree is working on. */
+export function emptyTreeMenu(repo: string): MenuEntry[] {
+  return tidy([
+    it("New file", { icon: "newfile", run: () => ops.startNew("file", repo, "") }),
+    it("New folder", { icon: "newfolder", run: () => ops.startNew("dir", repo, "") }),
+    ops.clip ? SEP : null,
+    ops.clip ? it("Paste at the root", { shortcut: "Ctrl V", run: () => void ops.paste(repo, "") }) : null,
   ]);
 }
 
@@ -338,6 +348,18 @@ export function spaceMenu(index: number): MenuEntry[] {
       run: () => void ops.archive(s),
     }),
     it("Remove space…", { icon: "trash", danger: true, run: () => ops.askRemoveSpace(s) }),
+  ]);
+}
+
+/** Menu of an agent in the list: pin it, or send it to the archive (or bring it back). */
+export function agentMenu(a: Agent): MenuEntry[] {
+  const archived = app.isArchivedAgent(a);
+  const busy = a.status === "working" || a.status === "waiting";
+  return tidy([
+    archived
+      ? it("Restore", { icon: "restore", run: () => app.restoreAgent(a) })
+      : it("Archive", { icon: "archive", disabled: busy ? "It is at work or waits for you" : false, run: () => app.archiveAgent(a) }),
+    it(app.agentPinned(a) ? "Unpin" : "Pin", { icon: "pin", run: () => app.togglePinAgent(a) }),
   ]);
 }
 

@@ -22,8 +22,8 @@ import type {
   TermEvent,
   Unsubscribe,
 } from "./backend";
-import type { FileReview, RepoHistory } from "./backend";
-import { handoffText, matchesAgent, type NextStep } from "./agents";
+import type { CustomAgentInput, FileReview, RepoHistory } from "./backend";
+import { emptyArchive, handoffText, isArchived, lastActivity, matchesAgent, type ArchiveState, type NextStep } from "./agents";
 import { findConflicts } from "./conflicts";
 import type { Pane } from "./mergeview";
 import { composeMessage, cycleType, mergeAll, moveHunk, splitHunk } from "./commitplan";
@@ -61,6 +61,7 @@ import type {
   CheckEntry,
   CommitGroup,
   CommitRules,
+  CustomAgent,
   FileChange,
   Harness,
   Hunk,
@@ -237,6 +238,9 @@ export class AppState {
   harnesses = $state.raw<Harness[]>([]);
   /** What each role gets by default, per space (the config can change it). */
   roleDefaults = $state.raw<Record<string, RoleDefault[]>>({});
+  /** The custom agents of each space, and the one the composer asks as (null: a built in role). */
+  customAgents = $state.raw<Record<string, CustomAgent[]>>({});
+  customPick = $state<string | null>(null);
   /** The harness picked in the composer (kept across requests and restarts); null: the role's default. */
   harness = $state<string | null>(readStr("vela.harness"));
   /** The tier picked in the composer; null keeps the role's default. */
@@ -468,7 +472,7 @@ export class AppState {
   /** Tier settings of every harness (overlay "settings"). */
   tierSettings = $state.raw<HarnessTiers[]>([]);
   /** The tab of the settings sheet. */
-  settingsTab = $state<"tiers" | "prompts" | "branches">("tiers");
+  settingsTab = $state<"tiers" | "prompts" | "agents" | "branches">("tiers");
   /** The settings were fetched at least once (the sheet shows the cached ones meanwhile). */
   settingsLoaded = $state(false);
   /** Model names per harness, loaded after the sheet is open. */
@@ -2025,6 +2029,7 @@ export class AppState {
     // The list is cached by the backend; refresh it behind the open composer.
     void this.loadHarnesses();
     void this.loadRoleDefaults(this.space.id);
+    void this.loadCustomAgents(this.space.id);
   }
 
   async loadHarnesses() {
@@ -2033,6 +2038,42 @@ export class AppState {
     } catch {
       this.harnesses = [];
     }
+  }
+
+  async loadCustomAgents(id: string) {
+    try {
+      this.customAgents = { ...this.customAgents, [id]: await this.backend.customAgents(id) };
+    } catch {
+      this.customAgents = { ...this.customAgents, [id]: [] };
+    }
+    if (this.customPick && !this.customAgents[id]?.some((c) => c.id === this.customPick)) this.customPick = null;
+  }
+  /** The composer asks as this custom agent (null: the built in role again). */
+  pickCustom(c: CustomAgent | null) {
+    this.customPick = c?.id ?? null;
+    if (c) {
+      this.role = c.role;
+      if (c.harness) this.harness = c.harness;
+      this.tier = c.tier ?? null;
+    }
+  }
+  async saveCustomAgent(input: CustomAgentInput) {
+    try {
+      await this.backend.saveCustomAgent(this.space.id, input);
+      this.toast(`${input.name.trim()} saved`);
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.loadCustomAgents(this.space.id);
+  }
+  async deleteCustomAgent(c: CustomAgent) {
+    try {
+      await this.backend.deleteCustomAgent(this.space.id, c.id);
+      this.toast(`${c.name} deleted`);
+    } catch (e) {
+      this.fail(e);
+    }
+    await this.loadCustomAgents(this.space.id);
   }
 
   async loadRoleDefaults(id: string) {
@@ -2089,9 +2130,64 @@ export class AppState {
   get branchAgents(): Agent[] {
     return this.allBranches ? this.sd.agents : this.sd.agents.filter((a) => this.onThisBranch(a));
   }
-  /** The agents of the space the search keeps, at work first. */
+  /** Archive choices per space id, on top of what localStorage remembers. */
+  private archives_: Record<string, ArchiveState> = $state({});
+  /** The clock the archive reads, so the list moves on by itself. */
+  agentClock = $state(Date.now());
+  /** What was chosen for this space. Reading never writes (it runs in deriveds): the first change stores it. */
+  get agentArchive(): ArchiveState {
+    const id = this.space.id;
+    const known = this.archives_[id];
+    if (known) return known;
+    try {
+      return { ...emptyArchive(), ...JSON.parse(readStr(`vela.agentArchive.${id}`) ?? "{}") };
+    } catch {
+      return emptyArchive();
+    }
+  }
+  private editArchive(f: (st: ArchiveState) => void) {
+    const st = structuredClone($state.snapshot(this.agentArchive)) as ArchiveState;
+    f(st);
+    this.archives_[this.space.id] = st;
+    writeStr(`vela.agentArchive.${this.space.id}`, JSON.stringify(st));
+  }
+  isArchivedAgent(a: Agent): boolean {
+    return isArchived(a, this.agentArchive, this.agentClock);
+  }
+  agentPinned(a: Agent): boolean {
+    return this.agentArchive.pinned.includes(a.id);
+  }
+  archiveAgent(a: Agent) {
+    this.editArchive((st) => {
+      st.pinned = st.pinned.filter((x) => x !== a.id);
+      if (!st.archived.includes(a.id)) st.archived.push(a.id);
+    });
+  }
+  /** Back to the active list, with a fresh day before the clock takes it again. */
+  restoreAgent(a: Agent) {
+    this.editArchive((st) => {
+      st.archived = st.archived.filter((x) => x !== a.id);
+      st.restored[a.id] = Date.now();
+    });
+  }
+  togglePinAgent(a: Agent) {
+    this.editArchive((st) => {
+      if (st.pinned.includes(a.id)) st.pinned = st.pinned.filter((x) => x !== a.id);
+      else {
+        st.pinned.push(a.id);
+        st.archived = st.archived.filter((x) => x !== a.id);
+      }
+    });
+  }
+  /** The agents of the archive the search keeps, newest first. */
+  get archivedAgents(): Agent[] {
+    return this.branchAgents
+      .filter((a) => this.isArchivedAgent(a) && matchesAgent(a, this.agentQuery))
+      .sort((x, y) => lastActivity(y) - lastActivity(x));
+  }
+  /** The active agents the search keeps, at work first (the archive is apart). */
   get agentList(): Agent[] {
-    const list = this.branchAgents.filter((a) => matchesAgent(a, this.agentQuery));
+    const list = this.branchAgents.filter((a) => !this.isArchivedAgent(a) && matchesAgent(a, this.agentQuery));
     return [
       ...list.filter((x) => x.status === "working" || x.status === "waiting"),
       ...list.filter((x) => x.status !== "working" && x.status !== "waiting"),
@@ -2111,6 +2207,7 @@ export class AppState {
       list.find((a) => a.id === id) ??
       list.find((a) => a.status === "waiting") ??
       list.find((a) => a.status === "working") ??
+      list.find((a) => !this.isArchivedAgent(a)) ??
       list[0] ??
       null
     );
@@ -2128,6 +2225,7 @@ export class AppState {
 
   /** Reload the agents, their question and the reasons of the proposals. */
   async loadAgents(id: string, notice?: AgentNotice) {
+    this.agentClock = Date.now();
     const b = this.backend;
     try {
       const [agents, question, reasons, comments] = await Promise.all([
@@ -2247,13 +2345,13 @@ export class AppState {
     const s = this.space;
     try {
       const harness = this.effectiveHarness;
-      const a = await this.backend.askAgent(s.id, this.role, text, { harness, tier: this.tier });
+      const a = await this.backend.askAgent(s.id, this.role, text, { harness, tier: this.tier, custom: this.customPick });
       this.agentSel[s.id] = a.id;
       this.harness = harness;
       writeStr("vela.harness", harness);
       writeStr("vela.role", this.role);
       const wt = a.worktrees[0] ? `${a.worktrees[0][0]} · ${a.worktrees[0][1]}` : "read only";
-      this.toast(`${roleLabel(this.role)} started in ${wt}`);
+      this.toast(`${a.custom || roleLabel(this.role)} started in ${wt}`);
     } catch (e) {
       this.fail(e);
     }
@@ -2836,6 +2934,8 @@ export class AppState {
         return this.openSettings("tiers");
       case "open-prompts":
         return this.openSettings("prompts");
+      case "open-loose-file":
+        return void this.backend.openFileWindow(null).catch((e) => this.fail(e));
       case "open-branch-settings":
         void this.loadBranchChoices(null);
         return this.openSettings("branches");

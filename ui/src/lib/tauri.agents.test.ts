@@ -55,8 +55,8 @@ describe("TauriBackend agents", () => {
     await b.askAgent("s", "developer", "do it");
     await b.askAgent("s", "tester", "test it", { harness: "codex", tier: "high" });
     expect(invoke.mock.calls).toEqual([
-      ["ask_agent", { spaceId: "s", role: "developer", prompt: "do it", harness: null, tier: null }],
-      ["ask_agent", { spaceId: "s", role: "tester", prompt: "test it", harness: "codex", tier: "high" }],
+      ["ask_agent", { spaceId: "s", role: "developer", prompt: "do it", harness: null, tier: null, custom: null }],
+      ["ask_agent", { spaceId: "s", role: "tester", prompt: "test it", harness: "codex", tier: "high", custom: null }],
     ]);
   });
 

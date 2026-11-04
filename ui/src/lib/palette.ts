@@ -56,6 +56,7 @@ export function buildPaletteItems(src: PaletteSource): PaletteItem[] {
     ["Markdown preview or source", "V", { type: "toggle-preview" }],
     ["Agent tiers: model and effort per tool", "", { type: "open-settings" }],
     ["Agent prompts: edit the brief of each role", "", { type: "open-prompts" }],
+    ["Open a file in a small window…", "", { type: "open-loose-file" }],
     ["Branch naming of new spaces", "", { type: "open-branch-settings" }],
     ["All shortcuts", "?", { type: "open-help" }],
   ];

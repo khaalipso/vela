@@ -49,11 +49,23 @@
     {#each ROLES as r (r)}
       <button
         class="role"
-        aria-pressed={app.role === r}
+        aria-pressed={app.role === r && !app.customPick}
         onclick={() => {
           app.role = r;
+          app.customPick = null;
           ta?.focus();
         }}>{roleLabel(r)}</button
+      >
+    {/each}
+    {#each app.customAgents[app.space.id] ?? [] as c (c.id)}
+      <button
+        class="role"
+        aria-pressed={app.customPick === c.id}
+        title="{c.name}: works like the {roleLabel(c.role)} with your own brief"
+        onclick={() => {
+          app.pickCustom(c);
+          ta?.focus();
+        }}>{c.name}</button
       >
     {/each}
     <span class="hint"><Kbd k="Tab" /> role · <Kbd k="Enter" /> send · <Kbd k="Esc" /> close</span>

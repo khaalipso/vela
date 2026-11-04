@@ -67,6 +67,37 @@ export function isRunning(a: Agent): boolean {
   return a.status === "working";
 }
 
+// -- archive ---------------------------------------------------------------------
+
+/** An agent nobody wrote to for this long goes to the archive (like an Arc tab). */
+export const ARCHIVE_AFTER_MS = 24 * 60 * 60_000;
+
+/** What the user decided about the agents of a space, remembered on this machine. */
+export interface ArchiveState {
+  /** Sent to the archive by hand. */
+  archived: string[];
+  /** Never archived by the clock. */
+  pinned: string[];
+  /** Id → time (ms) it was brought back: the clock restarts from there. */
+  restored: Record<string, number>;
+}
+
+export const emptyArchive = (): ArchiveState => ({ archived: [], pinned: [], restored: {} });
+
+/** When the agent last had a message (ms): the latest of its events, its end and its start. */
+export function lastActivity(a: Agent, restored = 0): number {
+  const times = [a.lastEvent, a.finished, a.started].map((t) => (t ? Date.parse(t) : NaN)).filter((t) => !Number.isNaN(t));
+  return Math.max(restored, ...times, 0);
+}
+
+/** In the archive: by hand, or quiet for a day. An agent at work or waiting for you, and a pinned one, never. */
+export function isArchived(a: Agent, st: ArchiveState, now: number): boolean {
+  if (a.status === "working" || a.status === "waiting" || st.pinned.includes(a.id)) return false;
+  if (st.archived.includes(a.id)) return true;
+  const last = lastActivity(a, st.restored[a.id]);
+  return last > 0 && now - last >= ARCHIVE_AFTER_MS;
+}
+
 // -- activity -------------------------------------------------------------------
 
 /** An agent at work with no event for this long is shown as maybe stuck. */

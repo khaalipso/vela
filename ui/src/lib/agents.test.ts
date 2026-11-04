@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   chatItems,
+  emptyArchive,
+  isArchived,
   currentActivity,
   formatCost,
   formatTokens,
@@ -229,5 +231,28 @@ describe("answer for the next agent", () => {
   it("detects French", () => {
     expect(isFrench("Le plan est dans une table pour les utilisateurs")).toBe(true);
     expect(isFrench("The plan is in a table for the users")).toBe(false);
+  });
+});
+
+describe("archive", () => {
+  const H = 60 * 60_000;
+  const now = Date.parse("2026-11-04T12:00:00Z");
+  const ag = (o: Partial<Agent>): Agent => ({ id: "a1", space: "s", role: "developer", tool: "claude", worktrees: [], status: "done", summary: "", ...o });
+  const old = new Date(now - 25 * H).toISOString();
+  it("archives a quiet agent after a day, from its last message", () => {
+    expect(isArchived(ag({ finished: old }), emptyArchive(), now)).toBe(true);
+    expect(isArchived(ag({ finished: old, lastEvent: new Date(now - H).toISOString() }), emptyArchive(), now)).toBe(false);
+  });
+  it("never archives an agent at work, waiting or pinned", () => {
+    expect(isArchived(ag({ status: "working", started: old }), emptyArchive(), now)).toBe(false);
+    expect(isArchived(ag({ status: "waiting", started: old }), emptyArchive(), now)).toBe(false);
+    expect(isArchived(ag({ finished: old }), { ...emptyArchive(), pinned: ["a1"] }, now)).toBe(false);
+  });
+  it("restarts the clock when restored", () => {
+    const st = { ...emptyArchive(), restored: { a1: now - H } };
+    expect(isArchived(ag({ finished: old }), st, now)).toBe(false);
+  });
+  it("archives by hand", () => {
+    expect(isArchived(ag({ finished: new Date(now - H).toISOString() }), { ...emptyArchive(), archived: ["a1"] }, now)).toBe(true);
   });
 });

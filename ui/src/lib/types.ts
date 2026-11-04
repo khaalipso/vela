@@ -153,6 +153,20 @@ export interface Agent {
   title?: string | null;
   /** The branch it was asked on: it shows only while the space is on it (empty: always). */
   branch?: string;
+  /** Name of the custom agent it was asked as (its role is the one that agent behaves like). */
+  custom?: string | null;
+}
+
+/** An agent the user made: a brief of its own on top of a built in role. */
+export interface CustomAgent {
+  /** The key in the config. */
+  id: string;
+  name: string;
+  /** The built in role it behaves like (read only or not, its worktree). */
+  role: AgentRole;
+  prompt: string;
+  harness?: string | null;
+  tier?: Tier | null;
 }
 
 /** A harness Vela can drive, and whether it is installed. */

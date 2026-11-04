@@ -28,7 +28,7 @@
     type Row,
   } from "../lib/filetree";
   import { menu, openAtEvent } from "../lib/contextmenu.svelte";
-  import { treeMenu } from "../lib/menus";
+  import { emptyTreeMenu, treeMenu } from "../lib/menus";
   import { basename, dirname, ops } from "../lib/ops.svelte";
   import Kbd from "./Kbd.svelte";
 
@@ -213,6 +213,14 @@
     openAtEvent(e, treeMenu(r.node), r.node.name || "Files");
   }
 
+  /** Right click below the rows: new file or folder at the root of the cursor's repo, else the default one. */
+  function emptyMenu(e: MouseEvent) {
+    if ((e.target as HTMLElement).closest(".row")) return;
+    const repo = (cursorNode()?.repo || app.defaultRepo) as string;
+    if (!repo) return;
+    openAtEvent(e, emptyTreeMenu(repo), "Files");
+  }
+
   /** The ⋯ button of a row opens the same menu under itself. */
   function moreMenu(e: MouseEvent, r: Row) {
     e.stopPropagation();
@@ -390,6 +398,7 @@
     aria-activedescendant={files.cursor ? `fr-${files.cursor}` : undefined}
     bind:this={tree}
     onkeydown={onTreeKey}
+    oncontextmenu={emptyMenu}
   >
     <div class="scroll" bind:this={scroller} onscroll={(e) => (scrollTop = e.currentTarget.scrollTop)}>
       {#if !prep}

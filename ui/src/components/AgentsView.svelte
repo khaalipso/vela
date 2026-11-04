@@ -8,6 +8,8 @@
   import type { Agent } from "../lib/types";
   import AgentChat from "./AgentChat.svelte";
   import Kbd from "./Kbd.svelte";
+  import { agentMenu } from "../lib/menus";
+  import { openAtEvent } from "../lib/contextmenu.svelte";
 
   const agents = $derived(app.branchAgents);
   const elsewhere = $derived(app.sd.agents.filter((a) => !app.onThisBranch(a)).length);
@@ -16,7 +18,14 @@
   const active = $derived(shown.filter((a) => a.status === "working" || a.status === "waiting"));
   const finished = $derived(shown.filter((a) => a.status !== "working" && a.status !== "waiting"));
   const sel = $derived(app.selectedAgent);
+  const archived = $derived(app.archivedAgents);
+  let showArchive = $state(false);
   let shownDone = $state(12);
+  // The archive reads the clock: keep it moving while the view is open.
+  $effect(() => {
+    const t = setInterval(() => (app.agentClock = Date.now()), 60_000);
+    return () => clearInterval(t);
+  });
   let search: HTMLInputElement | undefined = $state();
   /** The labels of the space, most used first: one click filters the list. */
   const labels = $derived.by(() => {
@@ -144,6 +153,12 @@
         {#if finished.length > shownDone}
           <button class="btn ghost more" onclick={() => (shownDone += 20)}>Show more</button>
         {/if}
+        {#if archived.length}
+          <button class="btn ghost more" aria-expanded={showArchive} onclick={() => (showArchive = !showArchive)} title="Quiet for a day, or archived by hand">
+            {showArchive ? "Hide" : "Show"} archive ({archived.length})
+          </button>
+          {#if showArchive}{#each archived as a (a.id)}{@render item(a)}{/each}{/if}
+        {/if}
       </nav>
       {#if sel}
         {#key sel.id}<AgentChat agent={sel} />{/key}
@@ -155,11 +170,11 @@
 {#snippet item(a: Agent)}
   {@const w = when(a)}
   {@const m = mark(a)}
-  <button class="item" class:on={sel?.id === a.id} aria-current={sel?.id === a.id} data-agent={a.id} style:--rc={ROLE_COLORS[a.role]} onclick={() => app.selectAgent(a.id)}>
+  <button class="item" class:on={sel?.id === a.id} aria-current={sel?.id === a.id} data-agent={a.id} style:--rc={ROLE_COLORS[a.role]} onclick={() => app.selectAgent(a.id)} oncontextmenu={(e) => openAtEvent(e, agentMenu(a), agentName(a.id))}>
     <span class="mk">{#if m}<span class="dot" class:pulse={m.pulse} style:--c={m.color} title={m.title}></span>{/if}</span>
     <span class="body">
       <span class="top"
-        ><b>{agentName(a.id)}</b><span class="role">{roleLabel(a.role)}</span><span class="tool">{toolLabel(a.tool)}</span>{#if a.tier}<span class="tier" data-tier={a.tier}>{a.tier}</span>{/if}<span class="when" class:warn={w.warn} title={w.warn ? "No event for a while: it may be stuck" : undefined}
+        ><b>{#if app.agentPinned(a)}📌 {/if}{agentName(a.id)}</b><span class="role">{a.custom || roleLabel(a.role)}</span><span class="tool">{toolLabel(a.tool)}</span>{#if a.tier}<span class="tier" data-tier={a.tier}>{a.tier}</span>{/if}<span class="when" class:warn={w.warn} title={w.warn ? "No event for a while: it may be stuck" : undefined}
           >{w.text}</span
         ></span
       >

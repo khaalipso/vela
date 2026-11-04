@@ -7,10 +7,14 @@ import "@fontsource/geist-mono/500.css";
 import "./app.css";
 import { mount } from "svelte";
 import App from "./App.svelte";
+import LooseFile from "./components/LooseFile.svelte";
 import { app } from "./lib/app.svelte";
 import { createBackend, pinnedSpace } from "./lib/backend";
 
 // A window opened with W carries `#space-<id>` and shows only that space.
-void app.init(createBackend(), pinnedSpace(window.location.hash));
+// A window opened for one loose file carries `#file=<path>` and shows only that file.
+const loose = /^#file=(.+)$/.exec(window.location.hash);
+if (!loose) void app.init(createBackend(), pinnedSpace(window.location.hash));
 
-export default mount(App, { target: document.getElementById("root")! });
+const target = document.getElementById("root")!;
+export default loose ? mount(LooseFile, { target, props: { path: decodeURIComponent(loose[1]) } }) : mount(App, { target });

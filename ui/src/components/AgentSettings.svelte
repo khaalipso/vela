@@ -8,7 +8,36 @@
   import { app } from "../lib/app.svelte";
   import { renderBranch, type HarnessTiers, type TierSetting } from "../lib/backend";
   import { ROLE_COLORS, roleLabel, ROLES } from "../lib/format";
-  import type { AgentRole, Tier } from "../lib/types";
+  import type { AgentRole, CustomAgent, Tier } from "../lib/types";
+
+  // -- your agents --
+  const mine = $derived(app.customAgents[app.space.id] ?? []);
+  let editing = $state<CustomAgent | "new" | null>(null);
+  let fName = $state("");
+  let fRole = $state<AgentRole>("reviewer");
+  let fHarness = $state("");
+  let fTier = $state<Tier | "">("");
+  let fPrompt = $state("");
+  function edit(c: CustomAgent | "new") {
+    editing = c;
+    fName = c === "new" ? "" : c.name;
+    fRole = c === "new" ? "reviewer" : c.role;
+    fHarness = c === "new" ? "" : (c.harness ?? "");
+    fTier = c === "new" ? "" : (c.tier ?? "");
+    fPrompt = c === "new" ? "" : c.prompt;
+  }
+  async function saveMine() {
+    if (!editing || !fName.trim() || !fPrompt.trim()) return;
+    await app.saveCustomAgent({
+      id: editing === "new" ? null : editing.id,
+      name: fName,
+      role: fRole,
+      prompt: fPrompt,
+      harness: fHarness || null,
+      tier: fTier || null,
+    });
+    editing = null;
+  }
 
   const TIER_HINT: Record<Tier, string> = {
     high: "Planning, review, security, hard bugs",
@@ -89,6 +118,14 @@
         <button role="tab" aria-selected={app.settingsTab === "prompts"} onclick={() => (app.settingsTab = "prompts")}>Prompts</button>
         <button
           role="tab"
+          aria-selected={app.settingsTab === "agents"}
+          onclick={() => {
+            app.settingsTab = "agents";
+            void app.loadCustomAgents(app.space.id);
+          }}>Your agents</button
+        >
+        <button
+          role="tab"
           aria-selected={app.settingsTab === "branches"}
           onclick={() => {
             app.settingsTab = "branches";
@@ -99,6 +136,8 @@
       <span class="sub">
         {app.settingsTab === "branches"
           ? "How the branch of a new space is named. You can still type any branch, or pick an existing one, when you create a space."
+          : app.settingsTab === "agents"
+          ? "Agents of your own for this space: a brief of yours on top of a built in role, which decides what they may touch. They show next to the roles in the composer."
           : app.settingsTab === "tiers"
           ? "Which model and how much reasoning each tier gets, per tool. Empty keeps the tool's default."
           : "The brief each role gets before your request. Vela always puts its ground rules first (investigate before answering, cite files and lines, never commit) and the space context after."}
@@ -134,6 +173,52 @@
           <span class="hint">The branch of an existing space: click it in the top bar to rename it.</span>
           <button class="btn p" disabled={tplDraft === null || tplDraft === app.branchTemplate} onclick={saveTpl}>Save</button>
         </div>
+      </div>
+    {:else if app.settingsTab === "agents"}
+      <div class="list mine" aria-label="Your agents">
+        {#if editing}
+          <label><span>Name</span><input bind:value={fName} aria-label="Agent name" placeholder="Rust reviewer" spellcheck="false" /></label>
+          <label>
+            <span>Works like</span>
+            <select bind:value={fRole} aria-label="Base role">
+              {#each ROLES as r (r)}<option value={r}>{roleLabel(r)}</option>{/each}
+            </select>
+          </label>
+          <label>
+            <span>Tool</span>
+            <select bind:value={fHarness} aria-label="Tool">
+              <option value="">The role's default</option>
+              {#each app.installedHarnesses as h (h.name)}<option value={h.name}>{h.label}</option>{/each}
+            </select>
+          </label>
+          <label>
+            <span>Tier</span>
+            <select bind:value={fTier} aria-label="Tier">
+              <option value="">The role's default</option>
+              {#each ["high", "medium", "low"] as t (t)}<option value={t}>{t}</option>{/each}
+            </select>
+          </label>
+          <textarea bind:value={fPrompt} aria-label="Brief" spellcheck="false" placeholder="What this agent is for and how it works"></textarea>
+          <div class="acts">
+            <span class="hint">Saved in the app's own files for this space's repo, never in the repo.</span>
+            <button class="btn" onclick={() => (editing = null)}>Cancel</button>
+            <button class="btn p" disabled={!fName.trim() || !fPrompt.trim()} onclick={saveMine}>Save</button>
+          </div>
+        {:else}
+          {#each mine as c (c.id)}
+            <div class="mrow">
+              <span class="dot" style:--c={ROLE_COLORS[c.role]}></span>
+              <b>{c.name}</b>
+              <small>{roleLabel(c.role)}{c.harness ? ` · ${c.harness}` : ""}{c.tier ? ` · ${c.tier}` : ""}</small>
+              <span class="sp"></span>
+              <button class="btn" onclick={() => edit(c)}>Edit</button>
+              <button class="btn" onclick={() => void app.deleteCustomAgent(c)}>Delete</button>
+            </div>
+          {:else}
+            <p class="hint">No agent of your own yet.</p>
+          {/each}
+          <div class="acts"><span class="hint"></span><button class="btn p" onclick={() => edit("new")}>New agent</button></div>
+        {/if}
       </div>
     {:else if app.settingsTab === "tiers"}
       <div class="list" aria-label="Agent tiers">
@@ -280,6 +365,42 @@
 <style>
   .wide {
     max-width: 820px;
+  }
+  .mine {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 16px;
+  }
+  .mine label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .mine label span {
+    width: 80px;
+    flex: none;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .mine input,
+  .mine select {
+    flex: 1;
+  }
+  .mine textarea {
+    min-height: 180px;
+    resize: vertical;
+  }
+  .mrow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .mrow .sp {
+    flex: 1;
+  }
+  .mrow small {
+    color: var(--faint);
   }
   .sh {
     display: flex;
