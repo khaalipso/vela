@@ -613,3 +613,19 @@ fn declare_folder_inits_an_empty_folder() {
     assert!(dir.join(".git").exists());
     assert!(dir.join("README.md").exists());
 }
+
+#[test]
+fn a_loose_file_is_read_and_saved_but_never_created() {
+    let dir = tempfile::tempdir().unwrap();
+    let f = dir.path().join("a.json");
+    let p = f.to_string_lossy().into_owned();
+    std::fs::write(&f, "{}").unwrap();
+    assert_eq!(commands::read_loose_file(&p).unwrap(), "{}");
+    commands::write_loose_file(&p, "{\"a\":1}").unwrap();
+    assert_eq!(std::fs::read_to_string(&f).unwrap(), "{\"a\":1}");
+    let missing = dir.path().join("none.txt").to_string_lossy().into_owned();
+    assert!(commands::write_loose_file(&missing, "x").is_err());
+    std::fs::write(&f, [0xff, 0xfe, 0x00]).unwrap();
+    assert!(commands::read_loose_file(&p).is_err());
+    assert!(commands::read_loose_file(&dir.path().to_string_lossy()).is_err());
+}

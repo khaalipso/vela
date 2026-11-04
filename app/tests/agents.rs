@@ -105,6 +105,7 @@ fn run_developer(e: &Env) {
         "raise ten",
         None,
         Some("low"),
+        None,
         &e.emit,
     )
     .unwrap();
@@ -183,7 +184,7 @@ fn answering_resumes_the_agent_and_clears_the_question() {
     assert_eq!(usage.input_tokens, 6);
     // Unknown roles and tiers are typed errors.
     let bad = commands::ask_agent(
-        &e.vela, &e.mgr, "refunds", "wizard", "x", None, None, &e.emit,
+        &e.vela, &e.mgr, "refunds", "wizard", "x", None, None, None, &e.emit,
     )
     .unwrap_err();
     assert_eq!(bad.kind, "invalid_input");
@@ -195,6 +196,7 @@ fn answering_resumes_the_agent_and_clears_the_question() {
         "x",
         None,
         Some("max"),
+        None,
         &e.emit,
     )
     .unwrap_err();
@@ -270,5 +272,50 @@ fn recorded_events_reach_the_sink_in_order() {
         [
             "prompt", "session", "message", "tool", "file", "question", "usage", "applied", "done"
         ]
+    );
+}
+
+#[test]
+fn a_custom_agent_is_saved_listed_asked_and_deleted() {
+    let e = env();
+    commands::save_custom_agent(
+        &e.vela,
+        "refunds",
+        None,
+        "Rust Reviewer",
+        "reviewer",
+        "Only look at unsafe blocks.",
+        None,
+        Some("high"),
+    )
+    .unwrap();
+    let list = commands::custom_agents(&e.vela, &e.mgr, "refunds").unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].id, "rust-reviewer");
+    assert_eq!(list[0].name, "Rust Reviewer");
+    assert_eq!(list[0].prompt, "Only look at unsafe blocks.");
+
+    let a = commands::ask_agent(
+        &e.vela,
+        &e.mgr,
+        "refunds",
+        "developer",
+        "look",
+        None,
+        None,
+        Some("rust-reviewer"),
+        &e.emit,
+    )
+    .unwrap();
+    // Behaves like its base role (read only: no worktree), under its own name.
+    assert_eq!(a.role, vela_core::model::AgentRole::Reviewer);
+    assert_eq!(a.custom.as_deref(), Some("Rust Reviewer"));
+    assert!(a.worktrees.is_empty());
+
+    commands::delete_custom_agent(&e.vela, "refunds", "rust-reviewer").unwrap();
+    assert!(commands::custom_agents(&e.vela, &e.mgr, "refunds").unwrap().is_empty());
+    assert!(
+        commands::save_custom_agent(&e.vela, "refunds", None, "x", "wizard", "p", None, None)
+            .is_err()
     );
 }

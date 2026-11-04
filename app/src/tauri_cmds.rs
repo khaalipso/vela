@@ -109,7 +109,10 @@ pub async fn pick_folder(app: tauri::AppHandle, start: Option<String>) -> Option
         .await
         .ok()
         .flatten()?;
-    picked.into_path().ok().map(|p| p.to_string_lossy().into_owned())
+    picked
+        .into_path()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -437,7 +440,10 @@ pub async fn switch_branch(
     repo: Option<String>,
 ) -> AppResult<Space> {
     let id = space_id.clone();
-    let space = blocking(&vela, move |v| commands::switch_branch(v, &id, &branch, repo.as_deref())).await?;
+    let space = blocking(&vela, move |v| {
+        commands::switch_branch(v, &id, &branch, repo.as_deref())
+    })
+    .await?;
     notify_state(&app, &space_id);
     Ok(space)
 }
@@ -450,7 +456,10 @@ pub async fn git_commit(
     repo: String,
     hash: String,
 ) -> AppResult<String> {
-    blocking(&vela, move |v| commands::git_commit(v, &space_id, &repo, &hash)).await
+    blocking(&vela, move |v| {
+        commands::git_commit(v, &space_id, &repo, &hash)
+    })
+    .await
 }
 
 /// The commit graph and branch state of each repo (Git view).
@@ -563,6 +572,77 @@ pub async fn write_file(
         commands::write_file(v, &space_id, &repo, &path, &content)
     })
     .await
+}
+
+// -- loose files: one file outside the spaces, in a small window ------------
+
+#[tauri::command]
+pub async fn read_loose_file(path: String) -> AppResult<String> {
+    tauri::async_runtime::spawn_blocking(move || commands::read_loose_file(&path))
+        .await
+        .map_err(|e| AppError::new("internal", e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn write_loose_file(path: String, content: String) -> AppResult<()> {
+    tauri::async_runtime::spawn_blocking(move || commands::write_loose_file(&path, &content))
+        .await
+        .map_err(|e| AppError::new("internal", e.to_string()))?
+}
+
+/// Open one file in a small window of its own (label `file-<hash>`, the path in the URL hash).
+/// No path: ask for one with the system dialog. Returns whether a window opened.
+#[tauri::command]
+pub async fn open_file_window(app: AppHandle, path: Option<String>) -> AppResult<bool> {
+    use std::hash::{Hash, Hasher};
+    use tauri_plugin_dialog::DialogExt;
+    let path = match path {
+        Some(p) => commands::expand_home(&p),
+        None => {
+            let dialog = app.clone();
+            let picked = tauri::async_runtime::spawn_blocking(move || {
+                dialog.dialog().file().blocking_pick_file()
+            })
+            .await
+            .map_err(|e| AppError::new("internal", e.to_string()))?;
+            match picked.and_then(|p| p.into_path().ok()) {
+                Some(p) => p,
+                None => return Ok(false),
+            }
+        }
+    };
+    let path = path.to_string_lossy().into_owned();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut h);
+    let label = format!("file-{:x}", h.finish());
+    if let Some(w) = app.get_webview_window(&label) {
+        let _ = w.set_focus();
+        return Ok(true);
+    }
+    let name = std::path::Path::new(&path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.clone());
+    let hash = format!("#file={}", urlencode(&path));
+    WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(format!("index.html{hash}").into()))
+        .title(name)
+        .inner_size(760.0, 560.0)
+        .decorations(true)
+        .build()
+        .map_err(|e| AppError::new("window", e.to_string()))?;
+    Ok(true)
+}
+
+/// Percent-encode a path for a URL hash.
+fn urlencode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 // -- commit -----------------------------------------------------------------
@@ -826,6 +906,7 @@ pub async fn ask_agent(
     prompt: String,
     harness: Option<String>,
     tier: Option<String>,
+    custom: Option<String>,
 ) -> AppResult<Agent> {
     let agents = agents.inner().clone();
     let emit = agent_emitter(&app);
@@ -838,8 +919,63 @@ pub async fn ask_agent(
             &prompt,
             harness.as_deref(),
             tier.as_deref(),
+            custom.as_deref(),
             &emit,
         )
+    })
+    .await
+}
+
+/// The custom agents of a space.
+#[tauri::command]
+pub async fn custom_agents(
+    vela: State<'_, Vela>,
+    agents: State<'_, Arc<AgentManager>>,
+    space_id: String,
+) -> AppResult<Vec<commands::CustomAgentView>> {
+    let agents = agents.inner().clone();
+    blocking(&vela, move |v| {
+        commands::custom_agents(v, &agents, &space_id)
+    })
+    .await
+}
+
+/// Create (`key` None) or change a custom agent.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn save_custom_agent(
+    vela: State<'_, Vela>,
+    space_id: String,
+    key: Option<String>,
+    name: String,
+    role: String,
+    prompt: String,
+    harness: Option<String>,
+    tier: Option<String>,
+) -> AppResult<()> {
+    blocking(&vela, move |v| {
+        commands::save_custom_agent(
+            v,
+            &space_id,
+            key.as_deref(),
+            &name,
+            &role,
+            &prompt,
+            harness.as_deref(),
+            tier.as_deref(),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn delete_custom_agent(
+    vela: State<'_, Vela>,
+    space_id: String,
+    key: String,
+) -> AppResult<()> {
+    blocking(&vela, move |v| {
+        commands::delete_custom_agent(v, &space_id, &key)
     })
     .await
 }

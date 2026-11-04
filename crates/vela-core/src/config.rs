@@ -147,6 +147,19 @@ pub struct VelaModelConfig {
     pub prompt: Option<String>,
 }
 
+/// `[agents.custom.<id>]`: an agent of the user. It works like its base `role` (same access to the
+/// code) with its own brief, and optionally its own harness and tier.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CustomAgent {
+    pub name: String,
+    /// The built in role it behaves like: `developer`, `reviewer`...
+    pub role: String,
+    pub prompt: String,
+    pub harness: Option<String>,
+    pub tier: Option<Tier>,
+}
+
 /// `[agents]`: tiers and roles. See `docs/HARNESS.md`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -160,6 +173,8 @@ pub struct AgentsConfig {
     /// `[agents.prompts] <role> = "..."`: replaces the built in brief of the role.
     pub prompts: BTreeMap<String, String>,
     pub roles: BTreeMap<String, RoleConfig>,
+    /// `[agents.custom.<id>]`: agents the user made (in the app's own files, per repo).
+    pub custom: BTreeMap<String, CustomAgent>,
     pub vela: VelaModelConfig,
 }
 
@@ -257,6 +272,12 @@ fn is_known(path: &str) -> bool {
             | ["agents", "roles", _, "tier" | "harness"]
             | ["agents", "transport", _]
             | ["agents", "prompts", _]
+            | [
+                "agents",
+                "custom",
+                _,
+                "name" | "role" | "prompt" | "harness" | "tier"
+            ]
             | ["agents", "vela", "enabled" | "harness" | "model" | "prompt"]
             | ["spaces", "branch"]
     )
@@ -506,6 +527,11 @@ impl LoadedConfig {
 /// Other keys, known or not, are kept (comments are not).
 pub fn set_local_value(vela: &Vela, repo_name: &str, path: &[&str], value: Value) -> Result<()> {
     set_value_in(&local_file(vela, repo_name), path, Some(value))
+}
+
+/// Remove one value (and the tables it leaves empty) from the repo local layer.
+pub fn remove_local_value(vela: &Vela, repo_name: &str, path: &[&str]) -> Result<()> {
+    set_value_in(&local_file(vela, repo_name), path, None)
 }
 
 /// Set (`Some`) or remove (`None`) one value in the global layer of `dir`

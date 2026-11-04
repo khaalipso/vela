@@ -487,10 +487,39 @@ impl AgentManager {
         req: AskRequest,
         emit: &Emit,
     ) -> Result<Agent> {
+        self.ask_with(vela, space, req, None, emit)
+    }
+
+    /// Like [`ask`](Self::ask), as the custom agent `custom` (its id in `[agents.custom]`): its
+    /// brief replaces the one of the role, and its harness and tier apply unless the request names
+    /// its own. The role of the request should be the base role of that agent.
+    pub fn ask_with(
+        self: &Arc<Self>,
+        vela: &Vela,
+        space: &Space,
+        mut req: AskRequest,
+        custom: Option<&str>,
+        emit: &Emit,
+    ) -> Result<Agent> {
         if req.prompt.trim().is_empty() {
             return Err(Error::Invalid("tell the agent what to do".to_string()));
         }
         let cfg = self.agents_config(vela, space);
+        let custom = match custom {
+            Some(id) => Some(
+                cfg.custom
+                    .get(id)
+                    .cloned()
+                    .ok_or_else(|| Error::Invalid(format!("unknown agent: {id}")))?,
+            ),
+            None => None,
+        };
+        if let Some(c) = &custom {
+            req.role = AgentRole::parse(&c.role)
+                .ok_or_else(|| Error::Invalid(format!("unknown role: {}", c.role)))?;
+            req.harness = req.harness.or_else(|| c.harness.clone());
+            req.tier = req.tier.or(c.tier);
+        }
         let installed = self.installed();
         let resolved = resolve(
             &cfg,
@@ -551,6 +580,7 @@ impl AgentManager {
                     labels: crate::labels::known(space.ticket.as_deref(), &req.prompt),
                     title: None,
                     branch: space.branch_key(),
+                    custom: custom.as_ref().map(|c| c.name.clone()),
                 },
                 bases: Vec::new(),
                 read_only,
@@ -601,7 +631,10 @@ impl AgentManager {
             prompt: compose_prompt(
                 req.role,
                 &req.prompt,
-                cfg.prompts.get(req.role.as_str()).map(String::as_str),
+                custom
+                    .as_ref()
+                    .map(|c| c.prompt.as_str())
+                    .or_else(|| cfg.prompts.get(req.role.as_str()).map(String::as_str)),
                 cfg.vela.prompt.as_deref(),
                 &context,
             ),
@@ -1220,6 +1253,7 @@ mod tests {
             labels: Vec::new(),
             title: None,
             branch: String::new(),
+            custom: None,
         }
     }
 

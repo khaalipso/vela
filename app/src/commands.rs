@@ -576,6 +576,33 @@ pub fn write_file(vela: &Vela, id: &str, repo: &str, path: &str, content: &str) 
     Ok(())
 }
 
+/// The biggest loose file the small window opens.
+const LOOSE_MAX: u64 = 5 * 1024 * 1024;
+
+/// A text file anywhere on the machine, for the small window (`~` allowed).
+pub fn read_loose_file(path: &str) -> AppResult<String> {
+    let full = expand_home(path);
+    let meta = fs::metadata(&full)?;
+    if !meta.is_file() {
+        return Err(AppError::invalid(format!("not a file: {path}")));
+    }
+    if meta.len() > LOOSE_MAX {
+        return Err(AppError::new("too_big", format!("too big to open here: {path}")));
+    }
+    String::from_utf8(fs::read(&full)?)
+        .map_err(|_| AppError::new("binary", format!("not a text file: {path}")))
+}
+
+/// Save a loose file. It must exist already: this never creates one.
+pub fn write_loose_file(path: &str, content: &str) -> AppResult<()> {
+    let full = expand_home(path);
+    if !full.is_file() {
+        return Err(AppError::invalid(format!("not a file: {path}")));
+    }
+    fs::write(&full, content)?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Commit and up next
 // ---------------------------------------------------------------------------
@@ -839,6 +866,7 @@ pub fn ask_agent(
     prompt: &str,
     harness: Option<&str>,
     tier: Option<&str>,
+    custom: Option<&str>,
     emit: &EmitAgent,
 ) -> AppResult<Agent> {
     let space = load(vela, id)?;
@@ -859,7 +887,117 @@ pub fn ask_agent(
         harness: harness.map(str::to_string),
         tier,
     };
-    Ok(agents.ask(vela, &space, req, emit)?)
+    Ok(agents.ask_with(vela, &space, req, custom, emit)?)
+}
+
+/// An agent the user made, as the composer and the settings show it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomAgentView {
+    pub id: String,
+    pub name: String,
+    /// The built in role it behaves like.
+    pub role: AgentRole,
+    pub prompt: String,
+    pub harness: Option<String>,
+    pub tier: Option<Tier>,
+}
+
+/// The custom agents a space can ask: the ones of the layers of its first repo.
+pub fn custom_agents(
+    vela: &Vela,
+    agents: &AgentManager,
+    id: &str,
+) -> AppResult<Vec<CustomAgentView>> {
+    let space = load(vela, id)?;
+    let cfg = agents.agents_config(vela, &space);
+    Ok(cfg
+        .custom
+        .into_iter()
+        .filter_map(|(id, c)| {
+            Some(CustomAgentView {
+                role: AgentRole::parse(&c.role)?,
+                id,
+                name: c.name,
+                prompt: c.prompt,
+                harness: c.harness,
+                tier: c.tier,
+            })
+        })
+        .collect())
+}
+
+/// `my-reviewer` from "My reviewer!": the key of the agent in the config.
+fn custom_slug(name: &str) -> String {
+    let s: String = name
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    s.split('-')
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// Create or change a custom agent in the local layer of the first repo of the space (the app's
+/// own files, never committed). `id` None makes a new one from the name.
+#[allow(clippy::too_many_arguments)]
+pub fn save_custom_agent(
+    vela: &Vela,
+    id: &str,
+    key: Option<&str>,
+    name: &str,
+    role: &str,
+    prompt: &str,
+    harness: Option<&str>,
+    tier: Option<&str>,
+) -> AppResult<()> {
+    let space = load(vela, id)?;
+    let repo = space
+        .repos
+        .first()
+        .ok_or_else(|| AppError::invalid("the space has no repo"))?;
+    let name = name.trim();
+    if name.is_empty() || prompt.trim().is_empty() {
+        return Err(AppError::invalid("an agent needs a name and a brief"));
+    }
+    AgentRole::parse(role).ok_or_else(|| AppError::invalid(format!("unknown role: {role}")))?;
+    let key = match key {
+        Some(k) => k.to_string(),
+        None => custom_slug(name),
+    };
+    if key.is_empty() {
+        return Err(AppError::invalid("give the agent a name with letters"));
+    }
+    let at = |f: &str| ["agents", "custom", key.as_str(), f].map(str::to_string);
+    let set = |f: &str, v: Option<String>| -> AppResult<()> {
+        let path = at(f);
+        let path: Vec<&str> = path.iter().map(String::as_str).collect();
+        match v.filter(|v| !v.trim().is_empty()) {
+            Some(v) => config::set_local_value(vela, &repo.name, &path, toml::Value::String(v))?,
+            None => config::remove_local_value(vela, &repo.name, &path)?,
+        }
+        Ok(())
+    };
+    set("name", Some(name.to_string()))?;
+    set("role", Some(role.to_string()))?;
+    set("prompt", Some(prompt.trim().to_string()))?;
+    set("harness", harness.map(str::to_string))?;
+    set("tier", tier.map(str::to_string))?;
+    Ok(())
+}
+
+/// Delete a custom agent made in the local layer of the first repo of the space.
+pub fn delete_custom_agent(vela: &Vela, id: &str, key: &str) -> AppResult<()> {
+    let space = load(vela, id)?;
+    let repo = space
+        .repos
+        .first()
+        .ok_or_else(|| AppError::invalid("the space has no repo"))?;
+    config::remove_local_value(vela, &repo.name, &["agents", "custom", key])?;
+    Ok(())
 }
 
 /// Answer the question of an agent (a resumed run).

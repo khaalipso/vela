@@ -57,7 +57,11 @@ impl Space {
     pub fn branch_key(&self) -> String {
         let mut out: Vec<&str> = Vec::new();
         for r in &self.repos {
-            let b = if r.branch.is_empty() { &self.branch } else { &r.branch };
+            let b = if r.branch.is_empty() {
+                &self.branch
+            } else {
+                &r.branch
+            };
             if !out.contains(&b.as_str()) {
                 out.push(b);
             }
@@ -344,6 +348,9 @@ pub struct Agent {
     /// Empty for agents from before, which show on every branch.
     #[serde(default)]
     pub branch: String,
+    /// Name of the custom agent it was asked as (its role is the base role of that agent).
+    #[serde(default)]
+    pub custom: Option<String>,
 }
 
 /// One tool or service of the space stack.
