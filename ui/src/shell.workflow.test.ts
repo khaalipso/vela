@@ -60,7 +60,7 @@ describe("code view", () => {
     expect(tab.style.getPropertyValue("--rc")).toBe(colorOfRepo(app.space, repo));
   });
 
-  it("a Markdown file opens as a preview, V shows the source, Ctrl F finds in the preview", async () => {
+  it("a Markdown file opens as a preview, Ctrl S shows the source, Ctrl F finds in the preview", async () => {
     const repo = app.space.repos[0].name;
     app.openFile(app.active, `${repo}/README.md`, true);
     await vi.waitFor(() => expect($("article.md h1")).toBeTruthy());
@@ -76,12 +76,12 @@ describe("code view", () => {
     press("Escape", {}, input);
     await settle();
     expect($$("mark.find").length).toBe(0);
-    press("v");
+    press("s", { ctrlKey: true });
     await settle();
     expect($("article.md")).toBeNull();
     expect($(".code")?.classList.contains("hidden")).toBe(false);
     expect(EditorView.findFromDOM($(".cm-editor")!)!.state.doc.toString()).toContain("# README");
-    press("v");
+    press("s", { ctrlKey: true });
     await settle();
     expect($("article.md")).toBeTruthy();
   });

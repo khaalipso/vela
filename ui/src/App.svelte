@@ -113,6 +113,7 @@
       overlay: app.overlay,
       stackOpen: app.stackOpen,
       view: app.view,
+      previewable: app.canPreview,
       hasQuestion: app.spaces.length > 0 && !!app.sd.question,
       filesOpen: app.filesOpen && app.view === "code",
       inFiles: !!(e.target as HTMLElement | null)?.closest?.("[data-files]"),

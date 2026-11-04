@@ -53,7 +53,7 @@ export function buildPaletteItems(src: PaletteSource): PaletteItem[] {
     ["Split view: open file beside, or close it", "Ctrl \\", { type: "split" }],
     ["Back (agent, file, page, review, git)", "Ctrl Shift →", { type: "nav", delta: -1 }],
     ["Forward", "Ctrl Shift ←", { type: "nav", delta: 1 }],
-    ["Markdown preview or source", "V", { type: "toggle-preview" }],
+    ["Markdown preview or source", "Ctrl S", { type: "toggle-preview" }],
     ["Agent tiers: model and effort per tool", "", { type: "open-settings" }],
     ["Agent prompts: edit the brief of each role", "", { type: "open-prompts" }],
     ["Open a file in a small window…", "", { type: "open-loose-file" }],

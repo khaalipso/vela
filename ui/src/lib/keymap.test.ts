@@ -292,21 +292,25 @@ describe("find, terminal, preview, split, notes", () => {
     expect(resolveKey({ key: "ArrowDown", ctrlKey: true }, base)).toEqual({ type: "toggle-terminal" });
     expect(resolveKey({ key: "ArrowDown", metaKey: true }, { ...base, view: "review" })).toEqual({ type: "toggle-terminal" });
     expect(resolveKey({ key: "ArrowDown", ctrlKey: true }, { ...base, typing: true, inTerm: true })).toEqual({ type: "toggle-terminal" });
-    // Ctrl Up: the terminal on top, from a terminal too, never from the editor.
+    // Ctrl Up: the terminal on top, from a terminal or the editor.
     expect(resolveKey({ key: "ArrowUp", ctrlKey: true }, base)).toEqual({ type: "toggle-terminal", dock: "top" });
     expect(resolveKey({ key: "ArrowUp", ctrlKey: true }, { ...base, typing: true, inTerm: true })).toEqual({ type: "toggle-terminal", dock: "top" });
-    expect(resolveKey({ key: "ArrowUp", ctrlKey: true }, { ...base, typing: true })).toBeNull();
+    expect(resolveKey({ key: "ArrowUp", ctrlKey: true }, { ...base, typing: true })).toEqual({ type: "toggle-terminal", dock: "top" });
     expect(resolveKey({ key: "ArrowRight", ctrlKey: true }, base)).toEqual({ type: "view-step", delta: 1 });
     expect(resolveKey({ key: "ArrowLeft", metaKey: true }, base)).toEqual({ type: "view-step", delta: -1 });
-    // In a text field, the editor or a shell they still move the caret by word.
-    expect(resolveKey({ key: "ArrowDown", ctrlKey: true }, { ...base, typing: true })).toBeNull();
-    expect(resolveKey({ key: "ArrowLeft", ctrlKey: true }, { ...base, typing: true, inTerm: true })).toBeNull();
+    // In a text field or the editor they work too; with Shift they keep selecting.
+    expect(resolveKey({ key: "ArrowDown", ctrlKey: true }, { ...base, typing: true })).toEqual({ type: "toggle-terminal" });
+    expect(resolveKey({ key: "ArrowLeft", ctrlKey: true }, { ...base, typing: true })).toEqual({ type: "view-step", delta: -1 });
+    expect(resolveKey({ key: "ArrowDown", ctrlKey: true, shiftKey: true }, { ...base, typing: true })).toBeNull();
     // The composer keeps Ctrl Down for the tier; Ctrl Alt Down stays the next change.
     expect(resolveKey({ key: "ArrowDown", ctrlKey: true }, { ...base, overlay: "composer" })).toEqual({ type: "composer-tier", delta: -1 });
     expect(resolveKey({ key: "ArrowDown", ctrlKey: true, altKey: true }, base)).toEqual({ type: "change-move", delta: 1 });
   });
-  it("V previews Markdown in the code view and splits the diff in the review", () => {
-    expect(resolveKey({ key: "v" }, base)).toEqual({ type: "toggle-preview" });
+  it("Ctrl S previews a Markdown or HTML file, V no longer does; V splits the diff in the review", () => {
+    expect(resolveKey({ key: "s", ctrlKey: true }, { ...base, previewable: true })).toEqual({ type: "toggle-preview" });
+    expect(resolveKey({ key: "s", ctrlKey: true }, { ...base, previewable: true, typing: true })).toEqual({ type: "toggle-preview" });
+    expect(resolveKey({ key: "s", ctrlKey: true }, base)).toBeNull();
+    expect(resolveKey({ key: "v" }, base)).toBeNull();
     expect(resolveKey({ key: "v" }, { ...base, view: "review" })).toEqual({ type: "rv-split" });
   });
   it("Shift Y resolves a note in the review, Y still accepts", () => {

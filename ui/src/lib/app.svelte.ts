@@ -2179,6 +2179,11 @@ export class AppState {
       }
     });
   }
+  /** The open file has a preview to switch (Markdown, HTML). */
+  get canPreview(): boolean {
+    const f = this.spaces.length ? this.cui.file : null;
+    return !!f && (isMarkdown(f) || isHtml(f));
+  }
   /** The agents of the archive the search keeps, newest first. */
   get archivedAgents(): Agent[] {
     return this.branchAgents

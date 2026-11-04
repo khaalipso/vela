@@ -76,7 +76,7 @@
         ["Esc", "Leave the line, keys work again"],
         ["Ctrl F", "Find and replace in the file (Enter next, Shift Enter previous)"],
         ["Ctrl G", "Next match"],
-        ["V", "Markdown: preview or source"],
+        ["Ctrl S", "Markdown: preview or source"],
       ],
     ],
     [

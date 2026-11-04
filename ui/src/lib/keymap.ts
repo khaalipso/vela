@@ -78,7 +78,7 @@ export type Action =
   | { type: "open-peek"; repo: string; path: string } // a path named in an answer: its changes in a mini page
   | { type: "toggle-terminal"; dock?: "top" } // Ctrl ` or T or Ctrl Down: the terminal panel; Ctrl Up: the one on top
   | { type: "new-terminal" } // Ctrl Shift `: one more terminal
-  | { type: "toggle-preview" } // V in the code view: Markdown preview
+  | { type: "toggle-preview" } // Ctrl S in the code view: Markdown or HTML preview
   | { type: "open-settings" } // agent tiers: model and effort per harness
   | { type: "open-prompts" } // the brief of each agent role
   | { type: "open-loose-file" } // one file outside the spaces, in a small window
@@ -144,6 +144,8 @@ export interface KeyContext {
   filesOpen?: boolean;
   /** Focus is inside the file tree drawer, which handles its own keys. */
   inFiles?: boolean;
+  /** The open file has a preview (Markdown, HTML). */
+  previewable?: boolean;
   /** Focus is in a terminal, where Ctrl W deletes a word. */
   inTerm?: boolean;
 }
@@ -199,12 +201,16 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
     return { type: "nav", delta: k === "ArrowRight" ? -1 : 1 };
   }
   // Ctrl Down shows or hides the terminal at the bottom, Ctrl Up the one on top, from a terminal
-  // too; Ctrl Left / Right go through the views. In a text field or the editor these keys keep
-  // moving the caret.
+  // too; Ctrl Left / Right go through the views. They work in a text field or the editor as well;
+  // with Shift they keep selecting.
+  // Ctrl S on a Markdown or HTML file: preview or source (the files save as you type).
+  if (ctrl && !alt && !shift && (k === "s" || k === "S") && !c.overlay && c.view === "code" && c.previewable) {
+    return { type: "toggle-preview" };
+  }
   if (ctrl && !alt && !shift && (!c.overlay || c.overlay === "palette")) {
-    if (k === "ArrowDown" && (!c.typing || c.inTerm)) return { type: "toggle-terminal" };
-    if (k === "ArrowUp" && (!c.typing || c.inTerm)) return { type: "toggle-terminal", dock: "top" };
-    if ((k === "ArrowLeft" || k === "ArrowRight") && !c.typing) {
+    if (k === "ArrowDown") return { type: "toggle-terminal" };
+    if (k === "ArrowUp") return { type: "toggle-terminal", dock: "top" };
+    if (k === "ArrowLeft" || k === "ArrowRight") {
       return { type: "view-step", delta: k === "ArrowRight" ? 1 : -1 };
     }
   }
@@ -376,9 +382,6 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
     case "t":
     case "T":
       return { type: "toggle-terminal" };
-    case "v":
-    case "V":
-      return c.view === "code" ? { type: "toggle-preview" } : null;
     case "?":
       return { type: "open-help" };
     default:
