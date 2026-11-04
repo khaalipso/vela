@@ -413,7 +413,7 @@ pub fn remove(vela: &Vela, id: &str) -> Result<()> {
     for repo in &space.repos {
         let source = Path::new(&repo.source);
         // The agents' worktrees (under the space directory) and their branches
-        // `<branch>--<agent>`: their work only ever reached you as proposals.
+        // `vela/<space>/<agent>`: their work only ever reached you as proposals.
         if let Ok(list) = git(source, &["worktree", "list", "--porcelain"]) {
             for wt in list.lines().filter_map(|l| l.strip_prefix("worktree ")) {
                 if Path::new(wt).starts_with(&agents_dir) {

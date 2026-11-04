@@ -215,11 +215,15 @@ pub fn checked_out_in(repo: &Path, name: &str) -> Option<String> {
 /// The repo's own clone: the first worktree git lists.
 pub fn main_worktree(repo: &Path) -> Option<String> {
     let list = git(repo, &["worktree", "list", "--porcelain"]).ok()?;
-    list.lines().next()?.strip_prefix("worktree ").map(str::to_string)
+    list.lines()
+        .next()?
+        .strip_prefix("worktree ")
+        .map(str::to_string)
 }
 
 /// Rename the branch of one repo of a space (`repo`), or of every repo (None), with the
-/// branches of its agents (`<branch>--<agent>`). The worktrees stay where they are; an
+/// branches of its agents named the old way (`<branch>--<agent>`; `vela/<space>/<agent>` does
+/// not depend on the space branch). The worktrees stay where they are; an
 /// upstream stays set. Renaming every repo also changes the default branch of the space.
 pub fn rename(vela: &Vela, id: &str, new: &str, repo: Option<&str>) -> Result<crate::model::Space> {
     let new = new.trim();

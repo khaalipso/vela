@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../ui/dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "pnpm -C ../ui dev",
-    "beforeBuildCommand": "pnpm -C ../ui build"
+    "beforeDevCommand": "cd \"$(git rev-parse --show-toplevel)/ui\" && pnpm dev",
+    "beforeBuildCommand": "cd \"$(git rev-parse --show-toplevel)/ui\" && pnpm build"
   },
   "app": {
     "windows": [
