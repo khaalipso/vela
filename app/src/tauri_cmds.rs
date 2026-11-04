@@ -1275,7 +1275,7 @@ pub fn run_gate(_space_id: String) -> Vec<serde_json::Value> {
 
 // -- terminals ---------------------------------------------------------------
 
-/// Start a shell in the worktree of `repo` (or the first repo, or the space directory).
+/// Start a shell in the clone of `repo` (or the first repo, or the space directory).
 #[tauri::command]
 pub async fn term_open(
     app: AppHandle,
@@ -1291,7 +1291,8 @@ pub async fn term_open(
         .as_deref()
         .and_then(|r| space.repos.iter().find(|x| x.name == r))
         .or(space.repos.first())
-        .map(|r| std::path::PathBuf::from(&r.worktree))
+        // Your own clone, not a Vela worktree (older spaces still work in one).
+        .map(|r| std::path::PathBuf::from(&r.source))
         .filter(|p| p.is_dir())
         .unwrap_or_else(|| vela_core::paths::space_root(&vela.home, &space_id));
     let handle = app.clone();
