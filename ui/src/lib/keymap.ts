@@ -36,7 +36,7 @@ export type Action =
   | { type: "cc-repo"; delta: 1 | -1 } // commit the next / previous repo with staged changes
   | { type: "open-link"; id: string }
   | { type: "page-edit" } // Ctrl S on the space page: open or close the document for writing
-  | { type: "hide-terminals" } // Esc in a terminal: every terminal panel goes away
+  | { type: "hide-terminals" } // every terminal panel goes away (click outside)
   | { type: "composer-role"; delta: 1 | -1 }
   | { type: "composer-harness"; delta: 1 | -1 } // Shift Tab
   | { type: "composer-tier"; delta: 1 | -1 } // Ctrl Up raises, Ctrl Down lowers
@@ -78,6 +78,7 @@ export type Action =
   | { type: "open-peek"; repo: string; path: string } // a path named in an answer: its changes in a mini page
   | { type: "toggle-terminal"; dock?: "top" } // Ctrl ` or T or Ctrl Down: the terminal panel; Ctrl Up: the one on top
   | { type: "new-terminal" } // Ctrl Shift `: one more terminal
+  | { type: "copy-path" } // Ctrl Shift C in the code view: copy the absolute path of the open file
   | { type: "toggle-preview" } // Ctrl S in the code view: Markdown or HTML preview
   | { type: "open-settings" } // agent tiers: model and effort per harness
   | { type: "open-prompts" } // the brief of each agent role
@@ -122,12 +123,11 @@ export interface KeyLike {
 }
 
 /**
- * Keys a terminal must leave to the app: xterm.js answers every key it maps (Esc, Ctrl arrows)
- * and stops the event, so the window handler would never see it. Esc hides the panels, Ctrl Up /
- * Down show or hide the one on top / at the bottom.
+ * Keys a terminal must leave to the app: xterm.js answers every key it maps (Ctrl arrows)
+ * and stops the event, so the window handler would never see it. Ctrl Up / Down show or hide
+ * the panel on top / at the bottom. Esc stays with the shell (vim, fzf...).
  */
 export function appOwnsTermKey(e: KeyLike): boolean {
-  if (e.key === "Escape") return true;
   const ctrl = !!(e.ctrlKey || e.metaKey);
   return ctrl && !e.altKey && !e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown");
 }
@@ -203,6 +203,9 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
   // Ctrl Down shows or hides the terminal at the bottom, Ctrl Up the one on top, from a terminal
   // too; Ctrl Left / Right go through the views. They work in a text field or the editor as well;
   // with Shift they keep selecting.
+  if (ctrl && !alt && shift && (k === "c" || k === "C") && !c.overlay && c.view === "code" && !c.inTerm) {
+    return { type: "copy-path" };
+  }
   // Ctrl S on a Markdown or HTML file: preview or source (the files save as you type).
   if (ctrl && !alt && !shift && (k === "s" || k === "S") && !c.overlay && c.view === "code" && c.previewable) {
     return { type: "toggle-preview" };
@@ -220,8 +223,8 @@ export function resolveKey(e: KeyLike, c: KeyContext): Action | null {
     return { type: "quick-open" };
   }
 
-  // Esc in a terminal hides the panels (the shells keep running).
-  if (k === "Escape" && c.inTerm && !c.overlay) return { type: "hide-terminals" };
+  // Esc in a terminal belongs to the shell: it neither hides the panels nor leaves the terminal.
+  if (k === "Escape" && c.inTerm && !c.overlay) return null;
   // Ctrl S on the page: write, or save and read, even from inside the editor.
   if (ctrl && !alt && !shift && (k === "s" || k === "S") && c.view === "space" && !c.overlay) return { type: "page-edit" };
 

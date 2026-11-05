@@ -11,9 +11,9 @@ export interface Place {
   row: string;
 }
 
+/** Where you were, most recent first: the place you are in is always the first. */
 export interface NavHist {
   stack: Place[];
-  at: number;
 }
 
 export const placeKey = (p: Place): string => `${p.view}|${p.file}|${p.agent}|${p.row}`;
@@ -28,21 +28,22 @@ export function placeOf(view: string, file: string, agent: string, row: string):
   };
 }
 
-export const emptyHist = (): NavHist => ({ stack: [], at: -1 });
+export const emptyHist = (): NavHist => ({ stack: [] });
 
-/** A new place after the current one drops the forward part. Same place twice is one. */
+/** A place you reach goes to the front, wherever it was before (like the tabs of a browser or Alt Tab). */
 export function record(h: NavHist, p: Place, max = 100): NavHist {
-  if (h.at >= 0 && placeKey(h.stack[h.at]) === placeKey(p)) return h;
-  const stack = [...h.stack.slice(0, h.at + 1), p].slice(-max);
-  return { stack, at: stack.length - 1 };
+  if (h.stack.length && placeKey(h.stack[0]) === placeKey(p)) return h;
+  const k = placeKey(p);
+  return { stack: [p, ...h.stack.filter((x) => placeKey(x) !== k)].slice(0, max) };
 }
 
-export const canBack = (h: NavHist) => h.at > 0;
-export const canForward = (h: NavHist) => h.at >= 0 && h.at < h.stack.length - 1;
-
-/** Move by `delta` places; `null` when there is nowhere to go. */
+/**
+ * Go to an older place (-1: the one just behind the current one, so twice brings you back to
+ * where you started) or, with +1, bring the oldest one forward. The place reached goes to the
+ * front. `null` when there is nowhere to go.
+ */
 export function step(h: NavHist, delta: 1 | -1): { hist: NavHist; place: Place } | null {
-  const at = h.at + delta;
-  if (at < 0 || at >= h.stack.length) return null;
-  return { hist: { ...h, at }, place: h.stack[at] };
+  if (h.stack.length < 2) return null;
+  const place = delta < 0 ? h.stack[1] : h.stack[h.stack.length - 1];
+  return { hist: record(h, place), place };
 }

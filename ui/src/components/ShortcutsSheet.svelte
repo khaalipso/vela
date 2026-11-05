@@ -76,7 +76,8 @@
         ["Esc", "Leave the line, keys work again"],
         ["Ctrl F", "Find and replace in the file (Enter next, Shift Enter previous)"],
         ["Ctrl G", "Next match"],
-        ["Ctrl S", "Markdown: preview or source"],
+        ["Ctrl S", "Markdown, HTML, CSV, JSON, YAML: preview or source"],
+        ["Ctrl Shift C", "Copy the path of the open file"],
       ],
     ],
     [

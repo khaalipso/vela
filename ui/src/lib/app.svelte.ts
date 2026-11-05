@@ -74,6 +74,7 @@ import type {
   Tier,
 } from "./types";
 import { isHtml } from "./htmlpreview";
+import { dataKind } from "./datafile";
 import { repoBranch, spaceBranches } from "./types";
 import { computeUpNext, readyToCommit, waitingCount, type UpNextInput, type UpNextView } from "./upnext";
 
@@ -444,6 +445,8 @@ export class AppState {
   mdSource = $state<Record<string, true>>({});
   /** HTML files shown rendered instead of as source (key `space:repo/path`). */
   htmlRendered = $state<Record<string, true>>({});
+  /** CSV, JSON and YAML files: true shows the table or tree, false the source; absent means the default (CSV: table, the others: source). */
+  dataShown = $state<Record<string, boolean>>({});
   /** Bumped by Ctrl F so the code view opens its find bar. */
   findSeq = $state(0);
   /** The pane of the code view that has the focus: Ctrl F and the change keys go to it. */
@@ -1448,7 +1451,7 @@ export class AppState {
   navStrip = $state<{ places: Place[]; at: number } | null>(null);
   private navTimer: ReturnType<typeof setTimeout> | undefined;
   private showNav(h: NavHist) {
-    this.navStrip = { places: [...h.stack].reverse(), at: h.stack.length - 1 - h.at };
+    this.navStrip = { places: [...h.stack], at: 0 };
     clearTimeout(this.navTimer);
     this.navTimer = setTimeout(() => this.hideNav(), 2500);
   }
@@ -1457,11 +1460,11 @@ export class AppState {
     this.navStrip = null;
   }
 
-  /** Back (-1) or forward (+1), like a browser: Ctrl Shift arrows, mouse buttons. */
+  /** Older (-1) or the oldest brought forward (+1); the place reached becomes the first: Ctrl Shift arrows, mouse buttons. */
   navigate(delta: 1 | -1) {
     const sid = this.space.id;
     const r = navStep(this.navHist[sid] ?? emptyHist(), delta);
-    if (!r) return this.toast(delta < 0 ? "Nothing to go back to" : "Nothing to go forward to");
+    if (!r) return this.toast("No other place to go to");
     this.navHist[sid] = r.hist;
     this.showNav(r.hist);
     const p = r.place;
@@ -1513,6 +1516,13 @@ export class AppState {
     const k = `${this.space.id}:${key}`;
     if (on) this.htmlRendered[k] = true;
     else delete this.htmlRendered[k];
+  }
+
+  /** The open CSV / JSON / YAML file shows as a table or tree rather than as text. */
+  showsData(key: string): boolean {
+    const kind = dataKind(key);
+    if (!kind) return false;
+    return this.dataShown[`${this.space.id}:${key}`] ?? kind === "csv";
   }
 
   /** Opens an HTML file already rendered. */
@@ -2182,7 +2192,7 @@ export class AppState {
   /** The open file has a preview to switch (Markdown, HTML). */
   get canPreview(): boolean {
     const f = this.spaces.length ? this.cui.file : null;
-    return !!f && (isMarkdown(f) || isHtml(f));
+    return !!f && (isMarkdown(f) || isHtml(f) || !!dataKind(f));
   }
   /** The agents of the archive the search keeps, newest first. */
   get archivedAgents(): Agent[] {
@@ -2929,7 +2939,12 @@ export class AppState {
       case "toggle-preview": {
         const f = this.cui.file;
         if (f && isHtml(f)) return this.setRendered(f, !this.htmlRendered[`${this.space.id}:${f}`]);
-        if (!f || !isMarkdown(f)) return this.toast("Preview is for Markdown and HTML files");
+        if (f && dataKind(f)) {
+          const k = `${this.space.id}:${f}`;
+          this.dataShown[k] = !this.showsData(f);
+          return;
+        }
+        if (!f || !isMarkdown(f)) return this.toast("Preview is for Markdown, HTML, CSV, JSON and YAML files");
         const k = `${this.space.id}:${f}`;
         if (this.mdSource[k]) delete this.mdSource[k];
         else this.mdSource[k] = true;
@@ -2968,6 +2983,15 @@ export class AppState {
         return this.openLink(a.id);
       case "page-edit":
         return this.editPage(!this.pageEditing);
+      case "copy-path": {
+        const f = this.cui.file;
+        if (!f) return this.toast("No file open");
+        // ops imports app, so it is loaded on demand.
+        return void import("./ops.svelte").then(({ ops, splitKey }) => {
+          const { repo, path } = splitKey(f);
+          return ops.copyAbsolute(repo, path);
+        });
+      }
       case "hide-terminals":
         for (const d of ["top", "bottom"] as const) if (this.isTermOpen(d)) this.setTermOpen(d, false);
         return;

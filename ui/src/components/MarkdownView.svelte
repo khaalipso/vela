@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Rendered Markdown of the open file, with its own find bar (Ctrl F). V shows the source.
+  // Rendered Markdown of the open file, with its own find bar (Ctrl F). Ctrl S shows the source.
   import DOMPurify from "dompurify";
   import { marked } from "marked";
   import { tick, untrack } from "svelte";

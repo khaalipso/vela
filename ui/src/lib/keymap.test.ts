@@ -193,8 +193,8 @@ describe("overlays", () => {
     expect(resolveKey(key("e"), ctx({ view: "space" }))).not.toEqual({ type: "page-edit" });
   });
 
-  it("Esc in a terminal hides the terminals", () => {
-    expect(resolveKey(key("Escape"), ctx({ view: "code", typing: true, inTerm: true }))).toEqual({ type: "hide-terminals" });
+  it("Esc in a terminal is left to the shell", () => {
+    expect(resolveKey(key("Escape"), ctx({ view: "code", typing: true, inTerm: true }))).toBeNull();
   });
 
   it("composer: Tab cycles the role, Shift Tab the harness, Ctrl Up/Down the tier, Enter sends", () => {
@@ -345,12 +345,20 @@ describe("find and split", () => {
 });
 
 describe("keys the terminal leaves to the app", () => {
-  it("Esc and Ctrl Up / Down go to the app, the rest stays with the shell", () => {
-    expect(appOwnsTermKey(key("Escape"))).toBe(true);
+  it("Ctrl Up / Down go to the app, the rest (Esc included) stays with the shell", () => {
+    expect(appOwnsTermKey(key("Escape"))).toBe(false);
     expect(appOwnsTermKey(key("ArrowDown", { ctrlKey: true }))).toBe(true);
     expect(appOwnsTermKey(key("ArrowUp", { metaKey: true }))).toBe(true);
     expect(appOwnsTermKey(key("ArrowDown"))).toBe(false);
     expect(appOwnsTermKey(key("ArrowUp", { ctrlKey: true, shiftKey: true }))).toBe(false);
     expect(appOwnsTermKey(key("ArrowLeft", { ctrlKey: true }))).toBe(false);
+  });
+});
+
+describe("copy path", () => {
+  it("Ctrl Shift C in the code view copies the path of the open file", () => {
+    expect(resolveKey(key("C", { ctrlKey: true, shiftKey: true }), ctx({ view: "code" }))).toEqual({ type: "copy-path" });
+    expect(resolveKey(key("c", { metaKey: true, shiftKey: true }), ctx({ view: "code", typing: true }))).toEqual({ type: "copy-path" });
+    expect(resolveKey(key("C", { ctrlKey: true, shiftKey: true }), ctx({ view: "code", inTerm: true }))).toBeNull();
   });
 });

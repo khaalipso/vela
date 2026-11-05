@@ -3,8 +3,10 @@
     import { isHtml, isMarkdown } from "../lib/app.svelte";
     import { inlineAssets } from "../lib/htmlpreview";
   import { colorOfRepo } from "../lib/colors";
+  import { dataKind } from "../lib/datafile";
   // The Markdown renderer is loaded with the first preview.
   const markdownView = () => import("./MarkdownView.svelte");
+  const dataView = () => import("./DataView.svelte");
   import { EditorView } from "@codemirror/view";
   import { onDestroy, onMount, tick } from "svelte";
   import { oldestToDrop, tabLabels } from "../lib/tabs";
@@ -51,10 +53,13 @@
   const current = $derived(pane === "main" ? app.cui.file : (app.cui.split ?? ""));
   const active = $derived(app.activePane === pane || (pane === "main" && !app.cui.split));
   const rev = $derived(app.contentRev[app.space.id] ?? 0);
-  /** A Markdown file shows rendered unless V asked for its source. */
+  /** A Markdown file shows rendered unless Ctrl S asked for its source. */
   const preview = $derived(!!current && isMarkdown(current) && !app.mdSource[`${app.space.id}:${current}`]);
   /** An HTML file shows as the page it is once asked to (the bar's button, or Preview in a menu). */
   const rendered = $derived(!!current && isHtml(current) && !!app.htmlRendered[`${app.space.id}:${current}`]);
+  /** A CSV, JSON or YAML file shows as a table or tree (CSV by default), until Ctrl S asks for the source. */
+  const kind = $derived(current ? dataKind(current) : null);
+  const tabular = $derived(!!kind && app.showsData(current));
   let page = $state("");
   // The page with its local CSS and JS inlined; read again when the file changes.
   $effect(() => {
@@ -386,7 +391,7 @@
     {#if pane === "main" && !app.filesOpen}<button class="btn" onclick={() => app.dispatch({ type: "toggle-files" })}>Show files <kbd>B</kbd></button>{/if}
   </div>
 {/if}
-{#if current && mine.length && !preview}
+{#if current && mine.length && !preview && !tabular}
   <div class="chgbar" aria-label="Your changes in this file">
     <span class="cdot unst"></span><span>{mine.length - stagedN} not staged</span>
     <span class="cdot stg"></span><span>{stagedN} staged</span>
@@ -405,14 +410,25 @@
 {#if current && isMarkdown(current)}
   <div class="mdbar">
     <span>{preview ? "Preview" : "Source"}</span>
-    <button class="btn" onclick={() => app.dispatch({ type: "toggle-preview" })}>{preview ? "Show source" : "Show preview"} <kbd>V</kbd></button>
+    <button class="btn" onclick={() => app.dispatch({ type: "toggle-preview" })}>{preview ? "Show source" : "Show preview"} <kbd>Ctrl S</kbd></button>
   </div>
 {/if}
 {#if current && isHtml(current)}
   <div class="mdbar">
     <span>{rendered ? "Preview" : "Source"}</span>
-    <button class="btn" onclick={() => app.dispatch({ type: "toggle-preview" })}>{rendered ? "Show source" : "Show preview"} <kbd>V</kbd></button>
+    <button class="btn" onclick={() => app.dispatch({ type: "toggle-preview" })}>{rendered ? "Show source" : "Show preview"} <kbd>Ctrl S</kbd></button>
   </div>
+{/if}
+{#if current && kind}
+  <div class="mdbar">
+    <span>{tabular ? (kind === "csv" ? "Table" : "Tree") : "Source"}</span>
+    <button class="btn" onclick={() => app.dispatch({ type: "toggle-preview" })}>{tabular ? "Show source" : kind === "csv" ? "Show table" : "Show tree"} <kbd>Ctrl S</kbd></button>
+  </div>
+{/if}
+{#if tabular && kind}
+  {#await dataView() then { default: DataView }}
+    <DataView {text} {kind} name={current} />
+  {/await}
 {/if}
 {#if rendered}
   <iframe class="page" title="Preview of {current}" sandbox="allow-scripts allow-forms allow-popups" srcdoc={page}></iframe>
@@ -441,7 +457,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="code"
-  class:hidden={!current || preview || rendered}
+  class:hidden={!current || preview || rendered || tabular}
   bind:this={host}
   oncontextmenu={editorContext}
   onkeydowncapture={(e) => {
