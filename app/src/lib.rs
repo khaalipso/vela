@@ -193,6 +193,7 @@ pub fn run() {
             c::question,
             c::answer_agent,
             c::cancel_agent,
+            c::delete_agent,
             c::agent_log,
             c::agent_usage,
             c::accept_proposal,

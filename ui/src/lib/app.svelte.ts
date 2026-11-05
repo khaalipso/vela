@@ -27,7 +27,7 @@ import { emptyArchive, handoffText, isArchived, lastActivity, matchesAgent, type
 import { findConflicts } from "./conflicts";
 import type { Pane } from "./mergeview";
 import { composeMessage, cycleType, mergeAll, moveHunk, splitHunk } from "./commitplan";
-import { fileKey, plural, roleLabel, ROLES, toolLabel, uniq } from "./format";
+import { agentName, fileKey, plural, roleLabel, ROLES, toolLabel, uniq } from "./format";
 import { emptyHist, placeOf, record, step as navStep, type NavHist, type Place } from "./navhist";
 import { expandPasted } from "./paste";
 import { VIEWS, type Action, type Overlay, type View } from "./keymap";
@@ -2343,6 +2343,33 @@ export class AppState {
     this.composerText = a.prompt ?? "";
     this.openComposer();
     this.composerWide = (a.prompt ?? "").length > 160 || this.view === "agents";
+  }
+
+  /** Asks, then deletes a conversation for good (worktrees, branches and log); the archive only hides it. */
+  askDeleteAgent(a: Agent) {
+    const name = agentName(a.id);
+    this.sheet = {
+      kind: "confirm",
+      title: `Delete ${name}?`,
+      body: "The conversation, its log and its worktrees are removed from disk. This cannot be undone; archive it to keep it out of the way instead.",
+      items: [],
+      confirmLabel: "Delete",
+      danger: true,
+      run: async () => {
+        try {
+          await this.backend.deleteAgent(this.space.id, a.id);
+          this.editArchive((st) => {
+            st.pinned = st.pinned.filter((x) => x !== a.id);
+            st.archived = st.archived.filter((x) => x !== a.id);
+          });
+          if (this.agentSel[this.space.id] === a.id) delete this.agentSel[this.space.id];
+          this.toast(`Deleted ${name}`);
+        } catch (e) {
+          this.fail(e);
+        }
+        await this.loadAgents(this.space.id);
+      },
+    };
   }
 
   async cancelAgent(agentId: string) {

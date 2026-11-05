@@ -86,6 +86,16 @@
     return () => window.removeEventListener("wheel", onWheel);
   });
 
+  /** A real link (http, https) in any text of the app opens in the default browser, never inside the app. */
+  function onLinkClick(e: MouseEvent) {
+    if (e.defaultPrevented || e.button !== 0) return;
+    const a = (e.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+    const href = a?.getAttribute("href") ?? "";
+    if (!a || !isHttpUrl(href)) return;
+    e.preventDefault();
+    void app.backend.openUrl(href).catch((err) => app.fail(err));
+  }
+
   function onPaste(e: ClipboardEvent) {
     if (!app.ready || !app.spaces.length || app.overlay || isTyping(e.target as HTMLElement | null)) return;
     const text = e.clipboardData?.getData("text/plain") ?? "";
@@ -148,7 +158,7 @@
   const surfaceKey = $derived(app.ready && app.spaces.length ? `${app.space.id}:${app.view}:${app.space.window ?? 1}` : "");
 </script>
 
-<svelte:window onkeyup={(e) => (e.key === "Control" || e.key === "Shift" || e.key === "Meta") && app.hideNav()} onmouseup={onMouse} onmousedown={onMouse} onauxclick={onMouse} onkeydown={onKeydown} onpaste={onPaste} oncontextmenu={onGlobalContextMenu} />
+<svelte:window onkeyup={(e) => (e.key === "Control" || e.key === "Shift" || e.key === "Meta") && app.hideNav()} onmouseup={onMouse} onmousedown={onMouse} onauxclick={onMouse} onkeydown={onKeydown} onclick={onLinkClick} onpaste={onPaste} oncontextmenu={onGlobalContextMenu} />
 
 {#if !app.ready}
   {#if app.bootError}

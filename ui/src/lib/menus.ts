@@ -360,6 +360,7 @@ export function agentMenu(a: Agent): MenuEntry[] {
       ? it("Restore", { icon: "restore", run: () => app.restoreAgent(a) })
       : it("Archive", { icon: "archive", disabled: busy ? "It is at work or waits for you" : false, run: () => app.archiveAgent(a) }),
     it(app.agentPinned(a) ? "Unpin" : "Pin", { icon: "pin", run: () => app.togglePinAgent(a) }),
+    it("Delete…", { icon: "trash", danger: true, disabled: busy ? "It is at work or waits for you" : false, run: () => app.askDeleteAgent(a) }),
   ]);
 }
 

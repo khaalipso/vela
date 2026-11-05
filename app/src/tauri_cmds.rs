@@ -1010,6 +1010,20 @@ pub async fn answer_agent(
 }
 
 #[tauri::command]
+pub async fn delete_agent(
+    vela: State<'_, Vela>,
+    agents: State<'_, Arc<AgentManager>>,
+    space_id: String,
+    agent: String,
+) -> AppResult<()> {
+    let agents = agents.inner().clone();
+    blocking(&vela, move |v| {
+        commands::delete_agent(v, &agents, &space_id, &agent)
+    })
+    .await
+}
+
+#[tauri::command]
 pub fn cancel_agent(agents: State<'_, Arc<AgentManager>>, space_id: String, agent: String) -> bool {
     commands::cancel_agent(&agents, &space_id, &agent)
 }

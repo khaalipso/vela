@@ -1013,6 +1013,17 @@ pub fn answer_agent(
     Ok(agents.answer(vela, &space, agent, text, emit)?)
 }
 
+/// Delete an agent that is not running: its worktrees, branches, registry entry and log.
+pub fn delete_agent(
+    vela: &Vela,
+    agents: &AgentManager,
+    id: &str,
+    agent: &str,
+) -> AppResult<()> {
+    let space = load(vela, id)?;
+    Ok(agents.delete(vela, &space, agent)?)
+}
+
 /// Kill a running agent. Returns whether it was running.
 pub fn cancel_agent(agents: &AgentManager, id: &str, agent: &str) -> bool {
     agents.cancel(id, agent)

@@ -1222,6 +1222,15 @@ impl AgentManager {
         worktree::remove(vela, space, agent_id, &entry.agent.worktrees)?;
         registry::remove(vela, &space.id, agent_id)
     }
+
+    /// Delete an agent that is not running for good: [`discard`](Self::discard), and its log too.
+    pub fn delete(&self, vela: &Vela, space: &Space, agent_id: &str) -> Result<()> {
+        self.discard(vela, space, agent_id)?;
+        match std::fs::remove_file(registry::log_file(vela, &space.id, agent_id)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+            _ => Ok(()),
+        }
+    }
 }
 
 #[cfg(test)]

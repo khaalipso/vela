@@ -495,6 +495,8 @@ export interface Backend {
   answerAgentText(spaceId: string, agentId: string, text: string): Promise<void>;
   /** Kill a running agent. */
   cancelAgent(spaceId: string, agentId: string): Promise<void>;
+  /** Delete an agent that is not running: its worktrees, its branches and its log. */
+  deleteAgent(spaceId: string, agentId: string): Promise<void>;
   /** Everything the agent did and said, oldest first. */
   agentLog(spaceId: string, agentId: string): Promise<AgentLogEntry[]>;
   /** Events of the agents, as they happen. */
@@ -1327,6 +1329,14 @@ export class MockBackend implements Backend {
       a.summary = `Done: ${text}`;
       this.emit(spaceId);
     });
+  }
+
+  async deleteAgent(spaceId: string, agentId: string): Promise<void> {
+    const s = this.sp(spaceId);
+    const a = s.agents.find((x) => x.id === agentId);
+    if (a && (a.status === "working" || a.status === "waiting")) throw new Error(`${agentId} is still running`);
+    s.agents = s.agents.filter((x) => x.id !== agentId);
+    this.emit(spaceId);
   }
 
   async cancelAgent(spaceId: string, agentId: string): Promise<void> {
@@ -2798,6 +2808,9 @@ export class TauriBackend implements Backend {
   }
   async answerAgentText(spaceId: string, agentId: string, text: string) {
     await call<Agent>("answer_agent", { spaceId, agent: agentId, text });
+  }
+  async deleteAgent(spaceId: string, agentId: string) {
+    await call<void>("delete_agent", { spaceId, agent: agentId });
   }
   async cancelAgent(spaceId: string, agentId: string) {
     await call<boolean>("cancel_agent", { spaceId, agent: agentId });
